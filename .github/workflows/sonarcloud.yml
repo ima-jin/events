@@ -149,9 +149,15 @@ jobs:
         id: pr
         run: |
           meta=sonar-payload/.sonar-pr-meta.json
-          echo "number=$(jq -r '.prNumber' "$meta")" >> "$GITHUB_OUTPUT"
-          echo "headRef=$(jq -r '.headRef' "$meta")" >> "$GITHUB_OUTPUT"
-          echo "baseRef=$(jq -r '.baseRef' "$meta")" >> "$GITHUB_OUTPUT"
+          # Fail loudly: without PR metadata the scanner would silently fall back
+          # to a branch analysis and never evaluate the PR's quality gate.
+          if [ ! -f "$meta" ]; then
+            echo "::error::$meta is missing from the sonar-payload artifact — refusing to run a non-PR analysis."
+            exit 1
+          fi
+          echo "number=$(jq -er '.prNumber' "$meta")" >> "$GITHUB_OUTPUT"
+          echo "headRef=$(jq -er '.headRef' "$meta")" >> "$GITHUB_OUTPUT"
+          echo "baseRef=$(jq -er '.baseRef' "$meta")" >> "$GITHUB_OUTPUT"
 
       - name: SonarCloud Scan
         uses: SonarSource/sonarcloud-github-action@ffc3010689be73b8e5ae0c57ce35968afd7909e8 # v5.0.0

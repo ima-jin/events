@@ -6,7 +6,7 @@ import './globals.css';
 
 export const metadata: Metadata = {
   title: 'Imajin App Template',
-  description: 'A third-party app on Imajin — forked from ima-jin/imajin-app-template.',
+  description: 'Events and ticketing — a third-party app on Imajin, forked from ima-jin/imajin-app-template.',
 };
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {

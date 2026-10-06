@@ -1,18 +1,3 @@
-<!--
-  ┌─────────────────────────────────────────────────────────────────────┐
-  │  FORK CHECKLIST — fill this in first, then delete this comment block  │
-  │                                                                       │
-  │  APP NAME:        <e.g. AgriFortress>                                 │
-  │  APP DID:         <did:imajin:… — from app registration>             │
-  │  SCOPES:          <e.g. supply:read, supply:write>                    │
-  │  DOMAIN:          <e.g. integrity.imajin.ai>                          │
-  │  KERNEL:          <prod: https://jin.imajin.ai | dev: https://dev-jin.imajin.ai> │
-  │  REFERENCE APP:   ima-jin/imajin-scorecard                            │
-  │                                                                       │
-  │  Then: fill the "This App" section, keep everything else, delete me.  │
-  └─────────────────────────────────────────────────────────────────────┘
--->
-
 # AGENTS.md — Third-Party App on Imajin
 
 This repo is a **standalone, arms-length application** that composes the Imajin platform through its
@@ -193,15 +178,19 @@ Full text: `ima-jin/conventions/ISSUE-CONVENTIONS.md`. This §7 is kept in sync 
 
 ---
 
-## 8. This App (fork fills this in)
+## 8. This App
 
-> Replace this whole section in the fork. Keep §1–§7 intact.
-
-- **What it is:** _<one-line purpose>_
-- **App DID:** _<did:imajin:…>_
-- **Scopes:** _<e.g. supply:read, supply:write>_
-- **Domain:** _<e.g. app.imajin.ai>_
-- **The real-world loop it instruments:** _<who → who, what changes hands, the one paid leg>_
-- **Domain events it emits (via kernel API):** _<e.g. supply.declared → supply.received>_
-- **Connectors it consumes:** _<e.g. QuickBooks (user self-authorizes)>_
-- **Scope guardrails specific to this app:** _<the "do not build X" list — keep it provable, not comprehensive>_
+- **What it is:** Events and ticketing for Imajin — events, ticket types, orders, tickets, transfers, queues,
+  invites, and campaign pledges — extracted from the kernel monorepo's `apps/events` into its own repo (ima-jin/imajin-ai#1988).
+- **App DID:** _assigned at registration (#1988 step 2) — see `docs/REGISTRATION.md`_
+- **Scopes:** _assigned at registration (#1988 step 2)_
+- **Domain:** _assigned at registration (#1988 step 2)_
+- **Database:** owns exactly one Postgres schema, `APP_DB_SCHEMA=events` (8 tables, see `src/db/schema.ts`). The
+  baseline in `migrations/0000_events_schema.sql` reproduces the kernel's final `events` schema (ima-jin/imajin-ai#2514).
+  Cross-schema access is a contract violation — see `docs/MIGRATIONS.md`.
+- **Status:** step 1 of 5 (#1988) — schema/migrations only. App routes, UI and kernel-API wiring are ported in later steps.
+- **Scope guardrails specific to this app:**
+  - Do not add tables outside the `events` schema, and never reference `auth`, `profile`, `dykil`, `learn`, or any
+    other kernel/app schema — identities (`*_did`) and cross-app ids (`course_slug`, `registration_form_id`,
+    `pod_id`) are plain text columns, resolved through the kernel's public API, never joined.
+  - Do not edit an applied migration; change `src/db/schema.ts` and run `pnpm db:generate`.
