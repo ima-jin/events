@@ -216,3 +216,7 @@ jobs:
           name: sonar-payload
           path: /tmp/sonar-payload
           retention-days: 1
+          # upload-artifact@v4 skips dotfiles by default, which silently dropped
+          # .sonar-pr-meta.json and made the Sonar workflow run a plain branch
+          # analysis instead of a pull-request analysis.
+          include-hidden-files: true
