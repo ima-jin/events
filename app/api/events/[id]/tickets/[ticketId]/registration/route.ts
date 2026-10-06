@@ -5,8 +5,8 @@ import { eq, and } from 'drizzle-orm';
 const log = createLogger('events');
 import { requireAuth, resolveActingDid } from '@/lib/auth';
 import { isEventOrganizer } from '@/lib/organizer';
-import { db, tickets } from '@/db';
-import { getClient } from '@/db';
+import { db, tickets, ticketTypes } from '@/db';
+import { getSurveyForm, getSurveyResponse } from '@/lib/surveys';
 
 export async function GET(
   request: NextRequest,
@@ -22,7 +22,7 @@ export async function GET(
   const { id: eventId, ticketId } = await params;
 
   try {
-    const orgCheck = await isEventOrganizer(eventId, did);
+    const orgCheck = await isEventOrganizer(eventId, did, request);
     if (!orgCheck.authorized) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
@@ -36,33 +36,34 @@ export async function GET(
       return NextResponse.json({ error: 'Ticket not found' }, { status: 404 });
     }
 
-    const sql = getClient();
-    const rows = await sql`
-      SELECT sr.id, sr.survey_id, sr.answers, s.fields
-      FROM dykil.survey_responses sr
-      JOIN dykil.surveys s ON s.id = sr.survey_id
-      WHERE sr.ticket_id = ${ticketId}
-      LIMIT 1
-    `;
+    const [ticketType] = await db
+      .select({ formId: ticketTypes.registrationFormId })
+      .from(ticketTypes)
+      .where(eq(ticketTypes.id, ticket.ticketTypeId))
+      .limit(1);
+    const formId = ticketType?.formId ?? null;
 
-    if (rows.length === 0) {
+    // Survey data comes from dykil's public API (never its tables).
+    const response = await getSurveyResponse(formId, ticketId);
+
+    if (!response) {
       return NextResponse.json({ registration: null, questions: [] });
     }
 
-    const row = rows[0];
     const registration = {
-      id: row.id,
+      id: response.id,
       ticketId,
-      formId: row.survey_id,
-      responseId: row.id,
-      name: row.answers?.full_name || row.answers?.name || null,
-      email: row.answers?.email || null,
+      formId: response.surveyId,
+      responseId: response.id,
+      name: response.answers.full_name || response.answers.name || null,
+      email: response.answers.email || null,
     };
 
     let questions: Array<{ question: string; answer: unknown }> = [];
 
     // fields can be { elements: [...] } or directly an array
-    const rawFields = row.fields || {};
+    const form = formId ? await getSurveyForm(formId) : null;
+    const rawFields = (form?.fields ?? {}) as { elements?: Array<{ name: string; title?: string }> };
     let fields: Array<{ name: string; title?: string }>;
     if (Array.isArray(rawFields)) {
       fields = rawFields;
@@ -71,7 +72,7 @@ export async function GET(
     } else {
       fields = [];
     }
-    const answers: Record<string, unknown> = row.answers || {};
+    const answers: Record<string, unknown> = response.answers || {};
 
     questions = fields
       .filter((f) => f.name in answers)

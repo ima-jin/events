@@ -1,3 +1,4 @@
+import { serviceUrl, backfillContactEmail as backfillKernelContactEmail } from '@/lib/kernel';
 /**
  * Shared checkout logic for Stripe checkout, E-Transfer checkout, and payment webhook.
  *
@@ -305,7 +306,7 @@ export async function loadPublishedEvent(
  * routes.
  */
 export function syncBuyerToEventChatFireAndForget(eventDid: string, buyerDid: string, log: Logger): void {
-  const chatUrl = process.env.CHAT_SERVICE_URL || process.env.CHAT_URL;
+  const chatUrl = serviceUrl('chat');
   if (!chatUrl) return;
 
   fetch(`${chatUrl}/api/d/${encodeURIComponent(eventDid)}/members`, {
@@ -569,7 +570,7 @@ export async function resolveCheckoutIdentity(
  * Canonical for checkout soft-DID minting.
  */
 async function createSoftDidFromEmail(email: string, name?: string): Promise<string> {
-  const authUrl = process.env.AUTH_SERVICE_URL || process.env.AUTH_URL || process.env.NEXT_PUBLIC_AUTH_URL;
+  const authUrl = (serviceUrl('auth') ?? '') || process.env.NEXT_PUBLIC_AUTH_URL;
   const response = await fetch(`${authUrl}/api/session/soft`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -583,17 +584,12 @@ async function createSoftDidFromEmail(email: string, name?: string): Promise<str
 }
 
 /**
- * Backfill profile.profiles.contact_email (distinct from the auth.identities
- * store handled by backfillContactEmail — both are load-bearing for notify
- * resolution order: profile → auth → www).
+ * Backfill the DID's contact email via the kernel (NULL-guarded server-side).
+ * This app never writes `profile.profiles` / `auth.identities` directly.
  */
 async function backfillProfileContactEmail(did: string, email: string, log: any): Promise<void> {
-  try {
-    const normalizedEmail = email.toLowerCase().trim();
-    await db.execute(
-      sql`UPDATE profile.profiles SET contact_email = ${normalizedEmail} WHERE did = ${did} AND (contact_email IS NULL OR contact_email = '')`
-    );
-  } catch (error) {
-    log.error({ err: String(error) }, 'backfillProfileContactEmail error');
+  const ok = await backfillKernelContactEmail(did, email);
+  if (!ok) {
+    log.warn({ did }, 'backfillProfileContactEmail: kernel refused or unreachable (non-fatal)');
   }
 }

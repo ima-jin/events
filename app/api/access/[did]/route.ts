@@ -1,10 +1,11 @@
-import { SESSION_COOKIE_NAME } from "@imajin/config";
+import { serviceUrl } from '@/lib/kernel';
+import { SESSION_COOKIE_NAME } from '@ima-jin/config';
 import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@ima-jin/logger';
 
 const log = createLogger('events');
 
-const AUTH_SERVICE_URL = process.env.AUTH_URL || process.env.AUTH_SERVICE_URL || 'http://localhost:3001';
+const AUTH_SERVICE_URL = process.env.AUTH_URL || (serviceUrl('auth') ?? '');
 
 /**
  * GET /api/access/[did] - Proxy access check to auth service (server-to-server).

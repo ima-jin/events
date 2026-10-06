@@ -2,7 +2,8 @@
 import { createLogger } from '@ima-jin/logger';
 import { requireAuth, resolveActingDid } from '@/lib/auth';
 import { requireAppAuth } from '@ima-jin/auth';
-import { resolveIdentitiesForDids } from '@imajin/auth'; // TODO(2515): unported
+import { resolveProfiles as resolveIdentitiesForDids } from '@/lib/kernel';
+import { getSurveyResponsesForTickets } from '@/lib/surveys';
 import { corsHeaders } from '@ima-jin/config';
 
 const log = createLogger('events');
@@ -41,7 +42,7 @@ export async function GET(
   const { id } = await params;
 
   try {
-    const orgCheck = await isEventOrganizer(id, did);
+    const orgCheck = await isEventOrganizer(id, did, request);
     if (!orgCheck.authorized) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
@@ -52,26 +53,24 @@ export async function GET(
              t.payment_method, t.payment_id, t.hold_expires_at, t.registration_status,
              t.last_email_sent_at,
              tt.name as ticket_type,
-             sr.answers as survey_answers,
+             tt.registration_form_id,
              o.fair_settlement, o.amount_total,
              o.buyer_email,
              o.buyer_did
       FROM events.tickets t
       JOIN events.ticket_types tt ON t.ticket_type_id = tt.id
-      LEFT JOIN LATERAL (
-        SELECT answers FROM dykil.survey_responses
-        WHERE ticket_id = t.id
-        ORDER BY created_at DESC LIMIT 1
-      ) sr ON true
       LEFT JOIN events.orders o ON t.order_id = o.id
       WHERE t.event_id = ${id}
       ORDER BY t.created_at DESC
     `;
 
-    // Batch-resolve unique owner/buyer DIDs via the profile service's batched
-    // /api/resolve route (#1998) — replaces the raw auth.identities /
-    // auth.credentials joins this query used to run for itself, plus the
-    // separate per-DID AUTH_SERVICE_URL /api/lookup HTTP call.
+    // Survey answers come from dykil's public API (never its tables).
+    const surveyByTicket = await getSurveyResponsesForTickets(
+      ticketRows.map((t: any) => ({ ticketId: t.id, formId: t.registration_form_id }))
+    );
+
+    // Batch-resolve unique owner/buyer DIDs via the kernel's batched
+    // profile resolve route (src/lib/kernel.ts).
     const uniqueDids = [...new Set(
       ticketRows.flatMap((t: any) => [t.owner_did, t.buyer_did]).filter(Boolean)
     )] as string[];
@@ -81,7 +80,7 @@ export async function GET(
       const ownerResolved = t.owner_did ? resolvedMap.get(t.owner_did) : undefined;
       const buyerResolved = t.buyer_did ? resolvedMap.get(t.buyer_did) : undefined;
 
-      const surveyAnswers = t.survey_answers || {};
+      const surveyAnswers = surveyByTicket.get(t.id)?.answers ?? {};
       const resolved = resolveAttendee({
         surveyName: surveyAnswers.full_name || surveyAnswers.name || null,
         surveyEmail: surveyAnswers.email || null,

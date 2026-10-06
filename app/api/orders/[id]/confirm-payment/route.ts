@@ -42,7 +42,7 @@ export async function POST(
     }
 
     // Verify caller is an event organizer
-    const orgCheck = await isEventOrganizer(order.eventId, did);
+    const orgCheck = await isEventOrganizer(order.eventId, did, request);
     if (!orgCheck.authorized) {
       return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
     }

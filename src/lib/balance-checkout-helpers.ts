@@ -3,7 +3,7 @@
  * Extracted from app/api/checkout/balance/route.ts to reduce cognitive complexity.
  */
 
-import { getClient } from '@/db';
+import { getContactEmail as getKernelContactEmail } from '@/lib/kernel';
 import { publish } from '@/lib/domain-events';
 import { eventUrl, buildPublicUrlAbsolute } from '@ima-jin/config';
 import type { Logger } from '@ima-jin/logger';
@@ -69,11 +69,7 @@ export function normalizeBalanceCart(body: {
  */
 export async function resolveBalanceBuyerEmail(buyerDid: string, log: Logger): Promise<string | undefined> {
   try {
-    const pgClient = getClient();
-    const rows = await pgClient<{ contact_email: string | null }[]>`
-      SELECT contact_email FROM auth.identities WHERE id = ${buyerDid} LIMIT 1
-    `;
-    return rows[0]?.contact_email ?? undefined;
+    return (await getKernelContactEmail(buyerDid)) ?? undefined;
   } catch (err) {
     log.warn({ err: String(err) }, 'Failed to resolve buyer email');
     return undefined;

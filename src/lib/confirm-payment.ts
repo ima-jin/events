@@ -1,3 +1,4 @@
+import { createOnboardToken, publicServiceUrl, resolveProfiles } from '@/lib/kernel';
 /**
  * Shared confirmation logic for e-Transfer payments.
  * Used by both the per-ticket and per-order confirm-payment routes.
@@ -6,17 +7,14 @@
 import { createLogger } from '@ima-jin/logger';
 import { publish } from '@/lib/domain-events';
 import { db, tickets, ticketTypes, events, orders } from '@/db';
-import { getClient } from '@/db';
-import { randomBytes } from 'node:crypto';
 import { generateQRCode } from '@/lib/email';
 import { eq, sql, and, inArray } from 'drizzle-orm';
 
 const log = createLogger('events');
 import { eventUrl, eventRegisterUrl, eventMyTicketsUrl, buildPublicUrlAbsolute } from '@ima-jin/config';
-const AUTH_URL = process.env.NEXT_PUBLIC_AUTH_URL || process.env.AUTH_URL || buildPublicUrlAbsolute('auth');
+const AUTH_URL = publicServiceUrl('auth');
 const EVENTS_URL = buildPublicUrlAbsolute('events');
 
-type SqlClient = ReturnType<typeof getClient>;
 type Event = typeof events.$inferSelect;
 type Ticket = typeof tickets.$inferSelect;
 
@@ -99,7 +97,7 @@ export async function confirmHeldTickets(
   // Send buyer emails
   if (event) {
     try {
-      await sendConfirmationEmails(event, confirmedTickets, orderId, getClient());
+      await sendConfirmationEmails(event, confirmedTickets, orderId);
     } catch (emailErr) {
       log.error({ err: String(emailErr) }, 'EMT confirm email block failed');
     }
@@ -108,30 +106,18 @@ export async function confirmHeldTickets(
   return { confirmedTickets, orderId };
 }
 
-/** Resolve buyer contact details from multiple fallback sources. */
+/** Resolve buyer contact details from the kernel profile resolver, falling back to the order's buyer email. */
 async function resolveBuyerContact(
   buyerDid: string | null,
   orderId: string | null,
-  authSql: SqlClient,
 ): Promise<{ email: string | null; name: string | null }> {
   let customerEmail: string | null = null;
   let customerName: string | null = null;
 
   if (buyerDid) {
-    const rows = await authSql<{ contact_email: string | null; name: string | null }[]>`
-      SELECT contact_email, name FROM auth.identities WHERE id = ${buyerDid} LIMIT 1
-    `;
-    customerEmail = rows[0]?.contact_email ?? null;
-    customerName = rows[0]?.name ?? null;
-
-    if (!customerEmail) {
-      const credRows = await authSql<{ value: string }[]>`
-        SELECT value FROM auth.credentials
-        WHERE did = ${buyerDid} AND type = 'email'
-        ORDER BY created_at DESC LIMIT 1
-      `;
-      customerEmail = credRows[0]?.value ?? null;
-    }
+    const profile = (await resolveProfiles([buyerDid])).get(buyerDid);
+    customerEmail = profile?.email ?? null;
+    customerName = profile?.displayName ?? null;
   }
 
   if (!customerEmail && orderId) {
@@ -168,45 +154,14 @@ async function buildTicketSummary(confirmedTickets: Ticket[]) {
   return { typesById, summary, totalCents };
 }
 
-/** Create a magic-link onboard token for the buyer. Returns null on failure (non-fatal). */
-async function createOnboardToken(
-  customerEmail: string,
-  customerName: string | null,
-  redirectUrl: string,
-  eventTitle: string,
-  authSql: SqlClient,
-): Promise<string | null> {
-  try {
-    const token = randomBytes(36).toString('hex');
-    const onboardId = `obt_${randomBytes(8).toString('hex')}`;
-    await authSql`
-      INSERT INTO auth.onboard_tokens (id, email, name, token, redirect_url, context, expires_at)
-      VALUES (
-        ${onboardId},
-        ${customerEmail.toLowerCase().trim()},
-        ${customerName || null},
-        ${token},
-        ${redirectUrl},
-        ${'access your ticket for ' + eventTitle},
-        ${new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()}
-      )
-    `;
-    return token;
-  } catch (err) {
-    log.error({ err: String(err) }, 'Onboard token creation failed (non-fatal)');
-    return null;
-  }
-}
-
 /** Publish the receipt + ticket-bundle emails for a confirmed EMT purchase. */
 async function sendConfirmationEmails(
   event: Event,
   confirmedTickets: Ticket[],
   orderId: string | null,
-  authSql: SqlClient,
 ): Promise<void> {
   const buyerDid = confirmedTickets[0].ownerDid;
-  const { email: customerEmail, name: customerName } = await resolveBuyerContact(buyerDid, orderId, authSql);
+  const { email: customerEmail, name: customerName } = await resolveBuyerContact(buyerDid, orderId);
 
   if (!customerEmail) {
     log.warn({ buyerDid, orderId }, 'No buyer email available on EMT confirm; skipping receipt + ticket emails');
@@ -235,7 +190,7 @@ async function sendConfirmationEmails(
   const onboardRedirectUrl = ctaTicket
     ? eventRegisterUrl(EVENTS_URL, event.id, ctaTicket.id)
     : eventUrl(EVENTS_URL, event.id);
-  const onboardToken = await createOnboardToken(customerEmail, customerName, onboardRedirectUrl, event.title, authSql);
+  const onboardToken = await createOnboardToken();
   const magicLink = onboardToken
     ? `${AUTH_URL}/api/onboard/verify?token=${onboardToken}`
     : eventMyTicketsUrl(EVENTS_URL, event.id);

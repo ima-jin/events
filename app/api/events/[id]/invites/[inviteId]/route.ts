@@ -20,7 +20,7 @@ export async function DELETE(
   const { id, inviteId } = await params;
   const did = resolveActingDid(authResult.identity);
 
-  const check = await isEventOrganizer(id, did);
+  const check = await isEventOrganizer(id, did, request);
   if (!check.authorized) {
     return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
   }

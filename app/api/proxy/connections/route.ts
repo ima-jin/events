@@ -1,6 +1,7 @@
+import { serviceUrl } from '@/lib/kernel';
 import { NextRequest, NextResponse } from 'next/server';
 
-const CONNECTIONS_SERVICE_URL = process.env.CONNECTIONS_SERVICE_URL || 'http://localhost:3003';
+const CONNECTIONS_SERVICE_URL = (serviceUrl('connections') ?? '');
 
 export async function GET(request: NextRequest) {
   try {

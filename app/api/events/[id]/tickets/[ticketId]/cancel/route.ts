@@ -27,7 +27,7 @@ export async function POST(
   const { id: eventId, ticketId } = await params;
 
   // Verify event ownership (creator or cohost)
-  const orgCheck = await isEventOrganizer(eventId, actingDid);
+  const orgCheck = await isEventOrganizer(eventId, actingDid, request);
   if (!orgCheck.authorized) {
     return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
   }

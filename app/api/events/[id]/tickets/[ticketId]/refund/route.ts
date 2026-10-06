@@ -1,3 +1,4 @@
+import { serviceUrl } from '@/lib/kernel';
 ﻿import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@ima-jin/logger';
 import { db, events, ticketTypes } from '@/db';
@@ -5,7 +6,8 @@ import { isEventOrganizer } from '@/lib/organizer';
 
 const log = createLogger('events');
 import { requireAuth, resolveActingDid } from '@/lib/auth';
-import { resolveEmailForDid } from '@imajin/auth'; // TODO(2515): unported
+import { getContactEmail as resolveEmailForDid } from '@/lib/kernel';
+import { getSurveyResponseForTicket } from '@/lib/ticket-survey';
 import { eq, sql } from 'drizzle-orm';
 import { getClient } from '@/db';
 import { publish } from '@/lib/domain-events';
@@ -13,7 +15,7 @@ import { eventUrl, buildPublicUrlAbsolute } from '@ima-jin/config';
 
 const sqlClient = getClient();
 
-const PAY_SERVICE_URL = process.env.PAY_SERVICE_URL!;
+const PAY_SERVICE_URL = (serviceUrl('pay') ?? '');
 const PAY_SERVICE_API_KEY = process.env.PAY_SERVICE_API_KEY!;
 
 interface RefundableTicket {
@@ -95,9 +97,7 @@ async function markTicketRefunded(ticketId: string, manualRefundRequired: boolea
 
 /** Resolve the customer's notification email: survey response takes precedence over the owner DID lookup. */
 async function resolveRefundCustomerEmail(ticketId: string, ownerDid: string | null): Promise<string | null> {
-  const [surveyResponse] = await sqlClient`
-    SELECT answers FROM dykil.survey_responses WHERE ticket_id = ${ticketId} LIMIT 1
-  `;
+  const surveyResponse = await getSurveyResponseForTicket(ticketId);
 
   if (surveyResponse?.answers?.email) {
     return surveyResponse.answers.email;
@@ -215,7 +215,7 @@ export async function POST(
     }
 
     // Refund is organizer-only (creator or cohost)
-    const orgCheck = await isEventOrganizer(id, did);
+    const orgCheck = await isEventOrganizer(id, did, request);
     if (!orgCheck.authorized) {
       return NextResponse.json({ error: 'Only event organizers can issue refunds' }, { status: 403 });
     }

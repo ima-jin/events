@@ -1,4 +1,5 @@
 import { requireSessionOrAppToken } from '@ima-jin/auth';
+import { getIdentityTier } from '@/lib/kernel';
 
 /**
  * The events app's single auth entry point (refs ima-jin/imajin-ai#1974).
@@ -18,6 +19,8 @@ export const EVENTS_WRITE_SCOPE = 'events:write';
 export interface EventsIdentity {
   /** DID of the authenticated caller (the token's `sub`, or the session's DID). */
   id: string;
+  /** Identity tier — only populated by {@link requireHardDID}. */
+  tier?: string;
   /** Scopes granted to this call. Always empty on the cookie path. */
   scopes: string[];
   via: 'token' | 'cookie';
@@ -96,4 +99,41 @@ export function resolveActingDid(identity: EventsIdentity): string {
 /** Standard JSON-able body for an {@link AuthError}. */
 export function authErrorBody(authError: AuthError): { error: string } {
   return { error: authError.error };
+}
+
+/** DIDs allowed to use platform-admin routes: `NODE_DID` plus `EVENTS_ADMIN_DIDS` (comma-separated). */
+function adminDids(): Set<string> {
+  const dids = (process.env.EVENTS_ADMIN_DIDS ?? '').split(',').map((d) => d.trim());
+  if (process.env.NODE_DID) dids.push(process.env.NODE_DID);
+  return new Set(dids.filter(Boolean));
+}
+
+/**
+ * Authenticate the caller and require them to be a platform admin. The kernel
+ * version compared the session's act-as DID with `NODE_DID`; act-as is not part
+ * of the app-token contract, so admins are listed explicitly instead.
+ */
+export async function requireAdmin(request: Request): Promise<AuthSuccess | AuthError> {
+  const result = await requireAuth(request);
+  if ('error' in result) return result;
+  if (!adminDids().has(result.identity.id)) {
+    return { error: 'Admin access required', status: 403 };
+  }
+  return result;
+}
+
+/**
+ * Authenticate the caller and require a full ("hard") identity — soft
+ * (email-only) DIDs are rejected. The tier comes from the kernel's public
+ * registry resolver; an unresolvable tier is treated as soft (fail closed).
+ */
+export async function requireHardDID(request: Request): Promise<AuthSuccess | AuthError> {
+  const result = await requireAuth(request);
+  if ('error' in result) return result;
+
+  const tier = await getIdentityTier(result.identity.id);
+  if (!tier || tier === 'soft') {
+    return { error: 'This action requires a full identity (hard DID)', status: 403 };
+  }
+  return { identity: { ...result.identity, tier } };
 }

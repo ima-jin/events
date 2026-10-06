@@ -1,10 +1,11 @@
+import { serviceUrl } from '@/lib/kernel';
 /**
  * Helpers for cohost management routes.
  * Extracted from app/api/events/[id]/cohosts/route.ts to reduce cognitive complexity.
  */
 
-const PROFILE_SERVICE_URL = process.env.PROFILE_SERVICE_URL || 'http://localhost:3005';
-const AUTH_SERVICE_URL = process.env.AUTH_SERVICE_URL || 'http://localhost:3001';
+const PROFILE_SERVICE_URL = (serviceUrl('profile') ?? '');
+const AUTH_SERVICE_URL = (serviceUrl('auth') ?? '');
 
 export interface CoHostProfileData {
   name?: string;

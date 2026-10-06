@@ -1,3 +1,4 @@
+import { serviceUrl } from '@/lib/kernel';
 ﻿import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@ima-jin/logger';
 import { db, events } from '@/db';
@@ -7,8 +8,8 @@ const log = createLogger('events');
 import { eq } from 'drizzle-orm';
 import { resolveCoHostDid, type ResolveCoHostResult } from '@/lib/cohost-helpers';
 
-const AUTH_SERVICE_URL = process.env.AUTH_SERVICE_URL || 'http://localhost:3001';
-const CONNECTIONS_SERVICE_URL = process.env.CONNECTIONS_SERVICE_URL || 'http://localhost:3003';
+const AUTH_SERVICE_URL = (serviceUrl('auth') ?? '');
+const CONNECTIONS_SERVICE_URL = (serviceUrl('connections') ?? '');
 
 async function resolveProfile(did: string): Promise<{ did: string; name: string | null; handle: string | null; avatar: string | null }> {
   try {
@@ -143,7 +144,7 @@ async function ensurePodMembership(podId: string, coHostDid: string, cookie: str
 
 /** Best-effort: adds the new cohost to the event's chat conversation as an admin. Non-fatal on failure. */
 async function syncCohostToChat(coHostDid: string, eventDid: string | null): Promise<void> {
-  const CHAT_URL = process.env.CHAT_SERVICE_URL || process.env.CHAT_URL;
+  const CHAT_URL = serviceUrl('chat');
   if (!CHAT_URL || !eventDid) return;
 
   try {

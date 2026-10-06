@@ -17,6 +17,7 @@ import { db, tickets, events } from '@/db';
 
 const log = createLogger('events');
 import { getClient } from '@/db';
+import { listMemberPodIds } from '@/lib/kernel';
 import { eq, and, inArray, gt } from 'drizzle-orm';
 
 export const dynamic = 'force-dynamic';
@@ -83,17 +84,15 @@ export async function GET(
         )
       );
 
-    // 3. Events this DID is a cohost of (via pod_members)
+    // 3. Events this DID is a cohost of (pod membership from the kernel's public API)
+    const sql = getClient();
     let cohostRows: EventRow[] = [];
     try {
-      const sql = getClient();
-      const podEvents = await sql`
+      const podIds = await listMemberPodIds(request.headers.get('cookie'));
+      const podEvents = podIds.length === 0 ? [] : await sql`
         SELECT e.id as event_id, e.title, e.starts_at, e.ends_at, e.venue, e.access_mode, e.image_url
-        FROM connections.pod_members pm
-        JOIN events.events e ON e.pod_id = pm.pod_id
-        WHERE pm.did = ${ownerDid}
-          AND pm.role IN ('cohost', 'owner', 'host')
-          AND pm.removed_at IS NULL
+        FROM events.events e
+        WHERE e.pod_id = ANY(${podIds})
           AND e.status IN ('draft', 'published')
           AND e.starts_at > ${now.toISOString()}
       `;

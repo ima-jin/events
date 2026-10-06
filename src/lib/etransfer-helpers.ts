@@ -6,13 +6,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, tickets, orders } from '@/db';
 import { eq, and } from 'drizzle-orm';
-import { getClient } from '@/db';
+import { getContactEmail as getKernelContactEmail, serviceUrl, publicServiceUrl } from '@/lib/kernel';
 import { publish } from '@/lib/domain-events';
 import { eventUrl, eventMyTicketsUrl, buildPublicUrlAbsolute } from '@ima-jin/config';
 import type { Logger } from '@ima-jin/logger';
 import { resolveCheckoutIdentity, type CartItem } from '@/lib/checkout-common';
 
-const AUTH_URL = process.env.AUTH_SERVICE_URL || process.env.AUTH_URL || 'http://localhost:3001';
+const AUTH_URL = (serviceUrl('auth') ?? '');
 const MAX_QUANTITY = 20;
 
 export interface ETransferCartItem {
@@ -300,11 +300,7 @@ export async function resolveBuyerEmailFromDb(
 ): Promise<string | undefined> {
   if (ownerEmail) return ownerEmail;
   try {
-    const sql = getClient();
-    const rows = await sql<{ contact_email: string | null }[]>`
-      SELECT contact_email FROM auth.identities WHERE id = ${ownerDid} LIMIT 1
-    `;
-    return rows[0]?.contact_email ?? undefined;
+    return (await getKernelContactEmail(ownerDid)) ?? undefined;
   } catch (err) {
     log.warn({ err: String(err) }, 'Failed to resolve buyer email for reservation');
     return undefined;

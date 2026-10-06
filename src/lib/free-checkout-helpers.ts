@@ -1,3 +1,4 @@
+import { serviceUrl } from '@/lib/kernel';
 /**
  * Helpers for the free (RSVP) checkout route.
  * Extracted from app/api/checkout/free/route.ts to reduce cognitive complexity.
@@ -11,12 +12,12 @@ import { resolveCheckoutIdentity } from '@/lib/checkout-common';
 import { eventUrl } from '@ima-jin/config';
 import { generateQRCode } from '@/lib/email';
 import { publish } from '@/lib/domain-events';
-import { getClient } from '@/db';
+import { createOnboardToken, getIdentityTier } from '@/lib/kernel';
 import { randomBytes } from 'node:crypto';
 import type { Logger } from '@ima-jin/logger';
 import type { TicketType, Ticket, EventInvite } from '@/db/schema';
 
-const AUTH_URL = process.env.AUTH_SERVICE_URL || process.env.AUTH_URL || 'http://localhost:3001';
+const AUTH_URL = (serviceUrl('auth') ?? '');
 
 // ---------------------------------------------------------------------------
 // Ticket type resolution
@@ -78,7 +79,7 @@ export async function resolveFreeRsvpOwner(
 ): Promise<FreeRsvpOwner | NextResponse> {
   if (!body.email) {
     const probe = await optionalAuth(request);
-    if (!probe || probe.tier === 'soft') {
+    if (!probe || (await getIdentityTier(probe.id)) === 'soft') {
       return NextResponse.json(
         { error: 'Please provide an email address to RSVP' },
         { status: 400 },
@@ -195,6 +196,11 @@ export async function createFreeTicket(params: CreateFreeTicketParams): Promise<
 // Confirmation email
 // ---------------------------------------------------------------------------
 
+/**
+ * gap(kernel): a registered app cannot mint an onboard token (see
+ * `createOnboardToken` in src/lib/kernel.ts), so the confirmation email goes
+ * out without a magic link when none is available.
+ */
 async function createFreeOnboardMagicLink(
   email: string,
   name: string | undefined,
@@ -203,24 +209,10 @@ async function createFreeOnboardMagicLink(
   log: Logger,
 ): Promise<string | undefined> {
   try {
-    const authSql = getClient();
-    const onboardToken = randomBytes(36).toString('hex');
-    const onboardId = `obt_${randomBytes(8).toString('hex')}`;
-    await authSql`
-      INSERT INTO auth.onboard_tokens (id, email, name, token, redirect_url, context, expires_at)
-      VALUES (
-        ${onboardId},
-        ${email.toLowerCase().trim()},
-        ${name || null},
-        ${onboardToken},
-        ${redirectUrl},
-        ${context},
-        ${new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()}
-      )
-    `;
-    return `${AUTH_URL}/api/onboard/verify?token=${onboardToken}`;
+    const token = await createOnboardToken();
+    return token ? `${AUTH_URL}/api/onboard/verify?token=${token}` : undefined;
   } catch (err) {
-    log.error({ err: String(err) }, 'Onboard token creation failed (non-fatal)');
+    log.error({ err: String(err), email, name, redirectUrl, context }, 'Onboard token creation failed (non-fatal)');
     return undefined;
   }
 }
