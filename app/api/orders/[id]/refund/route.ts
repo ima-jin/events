@@ -1,3 +1,4 @@
+import { serviceUrl } from '@/lib/kernel';
 ﻿/**
  * POST /api/orders/[id]/refund
  *
@@ -21,7 +22,7 @@ import { publish } from '@/lib/domain-events';
 
 const log = createLogger('events');
 
-const PAY_SERVICE_URL = process.env.PAY_SERVICE_URL!;
+const PAY_SERVICE_URL = (serviceUrl('pay') ?? '');
 const PAY_SERVICE_API_KEY = process.env.PAY_SERVICE_API_KEY!;
 
 export async function POST(
@@ -48,7 +49,7 @@ export async function POST(
       return NextResponse.json({ error: 'Order already refunded' }, { status: 400 });
     }
 
-    const orgCheck = await isEventOrganizer(order.eventId, did);
+    const orgCheck = await isEventOrganizer(order.eventId, did, request);
     if (!orgCheck.authorized) {
       return NextResponse.json({ error: 'Only event organizers can issue refunds' }, { status: 403 });
     }

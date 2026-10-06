@@ -1,20 +1,21 @@
+import { appAuthHeaders, serviceUrl } from '@/lib/kernel';
 import { NextResponse } from 'next/server';
 import { withLogger, type Logger } from '@ima-jin/logger';
 import { publish } from '@/lib/domain-events';
 import { db, events, ticketTypes } from '@/db';
 import { resolveActingDid } from '@/lib/auth';
 import { requireAppAuth } from '@ima-jin/auth';
-import { requireHardDID, type Identity } from '@imajin/auth'; // TODO(2515): unported
+import { requireHardDID, type EventsIdentity } from '@/lib/auth';
 import { corsHeaders, getNodeSelf, getForestScopeConfig } from '@ima-jin/config';
 import { buildFairManifest } from '@ima-jin/fair';
 import { and, asc, desc, eq, gt } from 'drizzle-orm';
 import { randomBytes } from 'node:crypto';
 
-const AUTH_URL = process.env.AUTH_SERVICE_URL!;
+const AUTH_URL = (serviceUrl('auth') ?? '');
 
 interface EventCreatorAuth {
   did: string;
-  identity: Identity;
+  identity: EventsIdentity;
 }
 
 /** Authenticate the event creator via app-DID auth (if present) or hard-DID auth, otherwise return the error response. */
@@ -25,7 +26,7 @@ async function authenticateEventCreator(request: Request, cors: HeadersInit): Pr
       return NextResponse.json({ error: appResult.error }, { status: appResult.status, headers: cors });
     }
     const did = appResult.appAuth.userDid;
-    return { did, identity: { id: did, scope: 'actor' } };
+    return { did, identity: { id: did, scopes: appResult.appAuth.scopes, via: 'token' } };
   }
 
   const authResult = await requireHardDID(request);
@@ -139,14 +140,10 @@ async function createEventChat(params: {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ memberDid: creatorDid, role: 'admin' }),
     });
-    // Update conversation name (the POST creates with empty name)
-    const { getClient: getChatClient } = await import('@imajin/db');
-    const chatSql = getChatClient();
-    await chatSql`
-      UPDATE chat.conversations_v2 
-      SET name = ${title}, created_by = ${creatorId}
-      WHERE did = ${eventDid}
-    `;
+    // gap(kernel): the kernel version also set the conversation's name and
+    // creator with a direct UPDATE on chat.conversations_v2. There is no
+    // public chat route for that, so the conversation keeps the name the
+    // chat service assigns — see docs/KERNEL-GAPS.md.
     log.info({ eventDid, creatorId }, 'Created event chat with creator as admin');
   } catch (chatError) {
     log.warn({ err: String(chatError) }, 'Event chat creation failed (non-fatal)');
@@ -154,12 +151,11 @@ async function createEventChat(params: {
 
   // Sync name display policy to chat conversation context
   try {
-    const internalKey = process.env.AUTH_INTERNAL_API_KEY;
     await fetch(`${chatUrl}/api/d/${encodeURIComponent(eventDid)}/context`, {
       method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',
-        ...(internalKey ? { 'Authorization': `Bearer ${internalKey}` } : {}),
+        ...appAuthHeaders(),
       },
       body: JSON.stringify({ context: { nameDisplayPolicy: nameDisplayPolicy || 'attendee_choice' } }),
     });
@@ -219,7 +215,9 @@ export const POST = withLogger('events', async (request, { log, correlationId })
 
     // Load node config (via the registry, #2000) and optional scope config for fair manifest
     const nodeSelf = await getNodeSelf();
-    const scopeDid = identity.actingAs || null;
+    // gap(kernel): act-as (forest scope) is not part of the app-token contract,
+    // so events are never created on behalf of a scope DID here.
+    const scopeDid: string | null = null;
     const scopeFeeBps = await resolveScopeFeeBps(scopeDid);
 
     // Auto-generate .fair attribution manifest
@@ -292,7 +290,7 @@ export const POST = withLogger('events', async (request, { log, correlationId })
     const createdTicketTypes = await createTicketTypesForEvent(event.id, ticketTypesInput);
 
     // Create event chat conversation and add creator as admin
-    const CHAT_URL = process.env.CHAT_SERVICE_URL || process.env.CHAT_URL;
+    const CHAT_URL = serviceUrl('chat');
     if (CHAT_URL) {
       await createEventChat({
         chatUrl: CHAT_URL,

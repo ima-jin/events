@@ -1,3 +1,4 @@
+import { serviceUrl } from '@/lib/kernel';
 ﻿/**
  * POST /api/campaign/{eventId}/settle
  *
@@ -22,7 +23,7 @@ import { eq, and } from 'drizzle-orm';
 import { corsHeaders, rateLimit, getClientIP } from '@ima-jin/config';
 import { withLogger } from '@ima-jin/logger';
 
-const PAY_SERVICE_URL = process.env.PAY_SERVICE_URL!;
+const PAY_SERVICE_URL = (serviceUrl('pay') ?? '');
 const PAY_SERVICE_API_KEY = process.env.PAY_SERVICE_API_KEY!;
 
 export async function OPTIONS(request: NextRequest) {

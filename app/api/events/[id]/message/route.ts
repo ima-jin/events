@@ -1,3 +1,4 @@
+import { serviceUrl } from '@/lib/kernel';
 ﻿import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@ima-jin/logger';
 import { requireAuth, resolveActingDid } from '@/lib/auth';
@@ -11,7 +12,7 @@ export const dynamic = 'force-dynamic';
 
 const sql = getClient();
 
-const NOTIFY_URL = process.env.NOTIFY_SERVICE_URL || process.env.NOTIFY_URL || 'http://localhost:3008';
+const NOTIFY_URL = (serviceUrl('notify') ?? '');
 const NOTIFY_WEBHOOK_SECRET = process.env.NOTIFY_WEBHOOK_SECRET;
 
 interface MessageFilter {
@@ -25,7 +26,7 @@ async function checkAuth(request: NextRequest, eventId: string) {
     return { error: authResult.error, status: authResult.status };
   }
   const did = resolveActingDid(authResult.identity);
-  const orgCheck = await isEventOrganizer(eventId, did);
+  const orgCheck = await isEventOrganizer(eventId, did, request);
   if (!orgCheck.authorized) {
     return { error: 'Forbidden', status: 403 };
   }
@@ -140,7 +141,7 @@ export async function POST(
   const did = resolveActingDid(identity);
   const { id } = await params;
 
-  const orgCheck = await isEventOrganizer(id, did);
+  const orgCheck = await isEventOrganizer(id, did, request);
   if (!orgCheck.authorized) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
@@ -183,7 +184,7 @@ export async function POST(
   const fullSubject = `${event.title}: ${subject}`;
 
   // Resolve organizer email for reply-to
-  const AUTH_SERVICE_URL = process.env.AUTH_SERVICE_URL || 'http://localhost:3001';
+  const AUTH_SERVICE_URL = (serviceUrl('auth') ?? '');
   let organizerEmail: string | undefined;
   try {
     const contactRes = await fetch(

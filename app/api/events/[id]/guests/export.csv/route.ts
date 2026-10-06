@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@ima-jin/logger';
 import { requireAuth, resolveActingDid } from '@/lib/auth';
-import { resolveIdentitiesForDids } from '@imajin/auth'; // TODO(2515): unported
+import { resolveProfiles as resolveIdentitiesForDids } from '@/lib/kernel';
+import { getSurveyResponsesForTickets } from '@/lib/surveys';
 import { isEventOrganizer } from '@/lib/organizer';
 import { getClient } from '@/db';
 import { resolveAttendee } from '@/lib/attendee';
 import {
-  warnDuplicateSurveyResponses,
   loadSurveyFormData,
   buildSurveyValues,
   csvRow,
@@ -71,7 +71,7 @@ export async function GET(
   const summaryMode = url.searchParams.get('summary') === '1';
 
   try {
-    const orgCheck = await isEventOrganizer(id, did);
+    const orgCheck = await isEventOrganizer(id, did, request);
     if (!orgCheck.authorized) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
@@ -100,9 +100,6 @@ export async function GET(
         t.order_id,
         tt.name AS ticket_type,
         tt.registration_form_id,
-        sr.id AS survey_response_id,
-        sr.survey_id AS survey_form_id,
-        sr.answers AS survey_answers,
         o.payment_id AS order_payment_id,
         o.stripe_session_id,
         o.buyer_email,
@@ -110,20 +107,10 @@ export async function GET(
       FROM events.tickets t
       JOIN events.ticket_types tt ON t.ticket_type_id = tt.id
       LEFT JOIN events.orders o ON t.order_id = o.id
-      LEFT JOIN LATERAL (
-        SELECT id, survey_id, answers
-        FROM dykil.survey_responses
-        WHERE ticket_id = t.id
-        ORDER BY created_at DESC LIMIT 1
-      ) sr ON true
       WHERE t.event_id = ${id}
       ${statusFilter}
       ORDER BY t.created_at DESC
     `;
-
-    // Detect duplicate survey responses and warn
-    const ticketIds = ticketRows.map((t: any) => t.id);
-    await warnDuplicateSurveyResponses(ticketIds, sql, log);
 
     if (summaryMode) {
       const total = ticketRows.length;
@@ -143,11 +130,17 @@ export async function GET(
     )] as string[];
     const resolvedMap = await resolveIdentitiesForDids(uniqueDids);
 
+    // Survey answers come from dykil's public API (never its tables); dykil
+    // returns the most recent response per ticket.
+    const surveyByTicket = await getSurveyResponsesForTickets(
+      ticketRows.map((t: any) => ({ ticketId: t.id, formId: t.registration_form_id }))
+    );
+
     // Find distinct form IDs used by this event's ticket types
     const formIds = [...new Set(ticketRows.map((t: any) => t.registration_form_id).filter(Boolean))] as string[];
 
     // Fetch form definitions and build survey column list
-    const { surveyColumns, formFieldMap } = await loadSurveyFormData(formIds, sql);
+    const { surveyColumns, formFieldMap } = await loadSurveyFormData(formIds);
 
     // Build CSV
     const dateStr = new Date().toISOString().split('T')[0];
@@ -177,7 +170,8 @@ export async function GET(
       const ownerResolved = t.owner_did ? resolvedMap.get(t.owner_did) : undefined;
       const buyerResolved = t.buyer_did ? resolvedMap.get(t.buyer_did) : undefined;
 
-      const surveyAnswers = t.survey_answers || {};
+      const surveyResponse = surveyByTicket.get(t.id);
+      const surveyAnswers = surveyResponse?.answers ?? {};
       const surveyName = surveyAnswers.full_name || surveyAnswers.name || null;
       const surveyEmail = surveyAnswers.email || null;
 
@@ -222,7 +216,7 @@ export async function GET(
 
       // Survey answers
       const surveyValues = buildSurveyValues(
-        { survey_form_id: t.survey_form_id, survey_answers: surveyAnswers as any },
+        { survey_form_id: surveyResponse?.surveyId ?? null, survey_answers: surveyAnswers as any },
         surveyColumns,
         formFieldMap,
       );

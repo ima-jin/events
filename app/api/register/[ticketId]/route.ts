@@ -14,7 +14,7 @@ import { NextResponse } from 'next/server';
 import { withLogger, type Logger } from '@ima-jin/logger';
 import { db, tickets, events, ticketTypes } from '@/db';
 import { eq } from 'drizzle-orm';
-import { getClient } from '@/db';
+import { getSurveyResponseForTicket } from '@/lib/ticket-survey';
 import { publish } from '@/lib/domain-events';
 import { generateQRCode } from '@/lib/email';
 import { eventUrl, buildPublicUrlAbsolute } from '@ima-jin/config';
@@ -52,12 +52,7 @@ async function loadPendingTicket(ticketId: string, log: Logger): Promise<Registr
 
 /** Verify a Dykil survey response exists for the ticket, or the error response when it doesn't. */
 async function loadTicketSurveyResponse(ticketId: string, log: Logger): Promise<{ id: string; answers: Record<string, unknown> } | NextResponse> {
-  const sql = getClient();
-  const [surveyResponse] = await sql<
-    { id: string; answers: Record<string, unknown> }[]
-  >`
-    SELECT id, answers FROM dykil.survey_responses WHERE ticket_id = ${ticketId} LIMIT 1
-  `;
+  const surveyResponse = await getSurveyResponseForTicket(ticketId);
 
   if (!surveyResponse) {
     log.warn({ ticketId }, 'no survey response found for ticket');
@@ -251,13 +246,7 @@ export const POST = withLogger('events', async (request, { log }) => {
 export const GET = withLogger('events', async (request) => {
   const ticketId = request.nextUrl.pathname.split('/').pop()!;
 
-  const sql = getClient();
-  const [response] = await sql`
-    SELECT id, survey_id, answers, created_at
-    FROM dykil.survey_responses
-    WHERE ticket_id = ${ticketId}
-    LIMIT 1
-  `;
+  const response = await getSurveyResponseForTicket(ticketId);
 
   if (!response) {
     return NextResponse.json({ error: 'Registration not found' }, { status: 404 });
@@ -267,11 +256,10 @@ export const GET = withLogger('events', async (request) => {
   const registration = {
     id: response.id,
     ticketId,
-    formId: response.survey_id,
+    formId: response.surveyId,
     responseId: response.id,
     name: response.answers?.full_name || response.answers?.name || null,
     email: response.answers?.email || null,
-    registeredAt: response.created_at,
   };
 
   return NextResponse.json({ registration });

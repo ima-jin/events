@@ -1,3 +1,4 @@
+import { serviceUrl } from '@/lib/kernel';
 ﻿import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@ima-jin/logger';
 import { publish } from '@/lib/domain-events';
@@ -231,7 +232,7 @@ export async function PUT(
     }
 
     // Check authorization: must be creator, admin, or cohost
-    const orgCheck = await isEventOrganizer(id, did);
+    const orgCheck = await isEventOrganizer(id, did, request);
     if (!orgCheck.authorized) {
       return NextResponse.json({ error: 'Not authorized to update this event' }, { status: 403 });
     }
@@ -252,7 +253,7 @@ export async function PUT(
       .returning();
 
     // Sync name display policy to chat conversation context if it changed
-    const CHAT_URL = process.env.CHAT_SERVICE_URL || process.env.CHAT_URL;
+    const CHAT_URL = serviceUrl('chat');
     if (body.nameDisplayPolicy !== undefined && updated && CHAT_URL) {
       await syncNamePolicyToChat(CHAT_URL, updated.did, body.nameDisplayPolicy);
     }

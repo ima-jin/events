@@ -5,9 +5,8 @@ import { db, tickets, ticketTypes, events } from '@/db';
 const log = createLogger('events');
 import { requireAuth, resolveActingDid } from '@/lib/auth';
 import { eq, and } from 'drizzle-orm';
-import { getClient } from '@/db';
+import { isPodMember } from '@/lib/kernel';
 
-const sql = getClient();
 
 /**
  * GET /api/events/:id/my-ticket - Check if user has access to this event
@@ -60,14 +59,12 @@ export async function GET(
 
       // Pod membership check (host/cohost/owner roles)
       if (!isOrganizer && event[0].podId) {
-        const podRole = await sql`
-          SELECT role FROM connections.pod_members
-          WHERE pod_id = ${event[0].podId}
-            AND did = ${did}
-            AND role IN ('owner', 'host', 'cohost')
-          LIMIT 1
-        `;
-        isOrganizer = podRole.length > 0;
+        isOrganizer = await isPodMember(
+          event[0].podId,
+          did,
+          ['owner', 'host', 'cohost'],
+          request.headers.get('cookie')
+        );
       }
     }
 

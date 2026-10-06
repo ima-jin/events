@@ -1,12 +1,13 @@
+import { serviceUrl } from '@/lib/kernel';
 import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@ima-jin/logger';
-import { requireAdmin } from '@imajin/auth'; // TODO(2515): unported
+import { requireAdmin } from '@/lib/auth';
 import { getClient } from '@/db';
 import { csvRow } from '../../../../../src/lib/guest-export-helpers';
 
 const log = createLogger('events');
 const sql = getClient();
-const AUTH_SERVICE_URL = process.env.AUTH_SERVICE_URL || 'http://localhost:3001';
+const AUTH_SERVICE_URL = (serviceUrl('auth') ?? '');
 
 async function resolveHandle(did: string): Promise<string | null> {
   try {
@@ -24,9 +25,9 @@ async function resolveHandle(did: string): Promise<string | null> {
  * GET /api/admin/events/export.csv — export all events overview as CSV
  */
 export async function GET(request: NextRequest) {
-  const session = await requireAdmin();
-  if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const adminResult = await requireAdmin(request);
+  if ('error' in adminResult) {
+    return NextResponse.json({ error: adminResult.error }, { status: adminResult.status });
   }
 
   try {

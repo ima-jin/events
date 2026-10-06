@@ -1,3 +1,4 @@
+import { serviceUrl } from '@/lib/kernel';
 ﻿/**
  * GET /api/balance
  *
@@ -16,7 +17,7 @@ import { requireAuth, resolveActingDid } from '@/lib/auth';
 // used to hardcode a duplicated /pay segment that pay.yaml never
 // documented, resolving to /pay/pay/api/balance/{did} → 404, silently
 // masked by the `{balance: 0}` catch-all below (#2137, sibling of #2002).
-const PAY_SERVICE_URL = process.env.PAY_SERVICE_URL!;
+const PAY_SERVICE_URL = (serviceUrl('pay') ?? '');
 
 export const GET = withLogger('events', async (request, { log }) => {
   try {

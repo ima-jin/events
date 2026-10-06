@@ -1,18 +1,20 @@
 import { db, events } from '@/db';
 import { eq } from 'drizzle-orm';
-import { getClient } from '@/db';
-
-const sql = getClient();
+import { isPodMember } from '@/lib/kernel';
 
 /**
  * Check if a DID is an organizer of an event.
- * An organizer is: the creator or a cohost (via pod_members).
+ * An organizer is: the creator or a cohost (via the kernel's pod membership).
+ *
+ * Pass the incoming `request` so the caller's own session cookie can be
+ * forwarded to the kernel's pod-membership route (see `isPodMember`).
  *
  * Returns { authorized: true, role } or { authorized: false }.
  */
 export async function isEventOrganizer(
   eventId: string,
-  did: string
+  did: string,
+  request?: Request
 ): Promise<{ authorized: true; role: 'creator' | 'cohost' } | { authorized: false }> {
   const [event] = await db
     .select({ creatorDid: events.creatorDid, podId: events.podId })
@@ -26,15 +28,8 @@ export async function isEventOrganizer(
     return { authorized: true, role: 'creator' };
   }
 
-  if (event.podId) {
-    const cohostRows = await sql`
-      SELECT did FROM connections.pod_members
-      WHERE pod_id = ${event.podId} AND did = ${did} AND role IN ('owner', 'cohost') AND removed_at IS NULL
-      LIMIT 1
-    `;
-    if (cohostRows.length > 0) {
-      return { authorized: true, role: 'cohost' };
-    }
+  if (event.podId && (await isPodMember(event.podId, did, undefined, request?.headers.get('cookie')))) {
+    return { authorized: true, role: 'cohost' };
   }
 
   return { authorized: false };

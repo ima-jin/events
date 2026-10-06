@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@ima-jin/logger';
 import { publish } from '@/lib/domain-events';
 import { requireAuth, resolveActingDid } from '@/lib/auth';
-import { evaluateEligibility } from '@imajin/auth'; // TODO(2515): unported
+import { evaluateEligibility } from '@/lib/kernel';
 import { isEventOrganizer } from '@/lib/organizer';
 import { getClient } from '@/db';
 
@@ -26,7 +26,7 @@ export async function POST(
   const { id, ticketId } = await params;
 
   try {
-    const orgCheck = await isEventOrganizer(id, did);
+    const orgCheck = await isEventOrganizer(id, did, request);
     if (!orgCheck.authorized) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }

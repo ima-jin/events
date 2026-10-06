@@ -1,3 +1,4 @@
+import { serviceUrl } from '@/lib/kernel';
 ﻿/**
  * POST /api/campaign/pledge
  *
@@ -25,7 +26,7 @@ import { corsHeaders, rateLimit, getClientIP } from '@ima-jin/config';
 import { withLogger } from '@ima-jin/logger';
 import { randomBytes } from 'node:crypto';
 
-const PAY_SERVICE_URL = process.env.PAY_SERVICE_URL!;
+const PAY_SERVICE_URL = (serviceUrl('pay') ?? '');
 
 export async function OPTIONS(request: NextRequest) {
   return new NextResponse(null, { status: 204, headers: corsHeaders(request) });

@@ -1,3 +1,4 @@
+import { serviceUrl } from '@/lib/kernel';
 /**
  * POST /api/checkout
  *
@@ -25,7 +26,7 @@ import {
   requestPayCheckoutSession,
 } from '@/lib/checkout-helpers';
 
-const PAY_SERVICE_URL = process.env.PAY_SERVICE_URL!;
+const PAY_SERVICE_URL = (serviceUrl('pay') ?? '');
 const EVENTS_URL = process.env.NEXT_PUBLIC_EVENTS_URL!;
 
 interface CheckoutRequest {

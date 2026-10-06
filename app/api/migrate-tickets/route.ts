@@ -1,27 +1,38 @@
+import { serviceUrl, getIdentityTier } from '@/lib/kernel';
 /**
  * POST /events/api/migrate-tickets
  *
- * Internal endpoint: migrate tickets from soft DIDs to a hard DID.
- * Called by kernel/onboard/verify after email verification.
- * Idempotent — safe to call multiple times.
+ * Migrate tickets from soft DIDs to a hard DID after the kernel verifies the
+ * buyer's email. Idempotent — safe to call multiple times.
+ *
+ * Auth: a scoped app token carrying `events:write` (`requireAppAuth`). The
+ * kernel version accepted an optional shared `INTERNAL_SECRET` and failed OPEN
+ * when it was unset; this one always fails closed.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@ima-jin/logger';
 import { db, tickets } from '@/db';
-import { and, sql } from 'drizzle-orm';
+import { and, inArray, sql } from 'drizzle-orm';
+import { requireAppAuth } from '@ima-jin/auth';
 
 const log = createLogger('events');
 
-const INTERNAL_SECRET = process.env.INTERNAL_SECRET;
+/** Owner DIDs whose kernel tier is soft (or unknown) — only those tickets migrate. */
+async function filterSoftDids(ownerDids: string[], hardDid: string): Promise<string[]> {
+  const soft: string[] = [];
+  for (const did of ownerDids) {
+    if (did === hardDid) continue;
+    const tier = await getIdentityTier(did);
+    if (!tier || tier === 'soft') soft.push(did);
+  }
+  return soft;
+}
 
 export async function POST(request: NextRequest) {
-  // Validate shared secret if configured
-  if (INTERNAL_SECRET) {
-    const authHeader = request.headers.get('authorization');
-    if (authHeader !== `Bearer ${INTERNAL_SECRET}`) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+  const appResult = await requireAppAuth(request, { scope: 'events:write' });
+  if ('error' in appResult) {
+    return NextResponse.json({ error: appResult.error }, { status: appResult.status });
   }
 
   try {
@@ -33,45 +44,38 @@ export async function POST(request: NextRequest) {
 
     const normalizedEmail = email.toLowerCase().trim();
 
-    // Find all tickets across all events where:
-    // - purchaseEmail matches
-    // - owner is a soft DID (tier = 'soft' in auth.identities)
-    // - owner is not already the hard DID
-    const softTickets = await db
+    // Candidate tickets: purchaseEmail matches and the owner is not already
+    // the hard DID. Softness is then checked against the kernel's public
+    // identity tier (never `auth.identities` directly).
+    const candidates = await db
       .select({ id: tickets.id, ownerDid: tickets.ownerDid })
       .from(tickets)
       .where(
         and(
           sql`${tickets.metadata}->>'purchaseEmail' = ${normalizedEmail}`,
-          sql`${tickets.ownerDid} != ${hardDid}`,
-          sql`EXISTS (
-            SELECT 1 FROM auth.identities
-            WHERE auth.identities.id = ${tickets.ownerDid}
-            AND (auth.identities.tier = 'soft' OR auth.identities.tier IS NULL)
-          )`
+          sql`${tickets.ownerDid} != ${hardDid}`
         )
       );
+
+    const softDids = await filterSoftDids(
+      Array.from(new Set(candidates.map((t) => t.ownerDid).filter((did): did is string => Boolean(did)))),
+      hardDid
+    );
+    const softTickets = candidates.filter((t) => t.ownerDid !== null && softDids.includes(t.ownerDid));
 
     if (softTickets.length === 0) {
       log.info({ email: normalizedEmail, hardDid }, 'No soft DID tickets to migrate');
       return NextResponse.json({ migrated: 0 });
     }
 
-    const softDids = Array.from(new Set(softTickets.map(t => t.ownerDid)));
-
     // Migrate all matching tickets to hard DID
     await db
       .update(tickets)
       .set({ ownerDid: hardDid })
       .where(
-        and(
-          sql`${tickets.metadata}->>'purchaseEmail' = ${normalizedEmail}`,
-          sql`${tickets.ownerDid} != ${hardDid}`,
-          sql`EXISTS (
-            SELECT 1 FROM auth.identities
-            WHERE auth.identities.id = ${tickets.ownerDid}
-            AND (auth.identities.tier = 'soft' OR auth.identities.tier IS NULL)
-          )`
+        inArray(
+          tickets.id,
+          softTickets.map((t) => t.id)
         )
       );
 
@@ -81,7 +85,7 @@ export async function POST(request: NextRequest) {
     );
 
     // Migrate chat participation for each soft DID
-    const CHAT_URL = process.env.CHAT_SERVICE_URL || process.env.CHAT_URL;
+    const CHAT_URL = serviceUrl('chat');
     if (CHAT_URL) {
       for (const softDid of softDids) {
         try {

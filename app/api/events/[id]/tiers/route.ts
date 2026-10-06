@@ -84,7 +84,7 @@ export async function POST(
 
   try {
     // Check authorization
-    const orgCheck = await isEventOrganizer(id, did);
+    const orgCheck = await isEventOrganizer(id, did, request);
     if (!orgCheck.authorized) {
       return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
     }
@@ -164,7 +164,7 @@ export async function PUT(
   const { id } = await params;
 
   try {
-    const orgCheck = await isEventOrganizer(id, did);
+    const orgCheck = await isEventOrganizer(id, did, request);
     if (!orgCheck.authorized) {
       return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
     }

@@ -14,7 +14,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@ima-jin/logger';
 import { requireAuth, resolveActingDid } from '@/lib/auth';
-import { resolveIdentitiesForDids } from '@imajin/auth'; // TODO(2515): unported
+import { resolveProfiles as resolveIdentitiesForDids } from '@/lib/kernel';
+import { getSurveyResponsesForTickets, type SurveyAnswers } from '@/lib/surveys';
 import { isEventOrganizer } from '@/lib/organizer';
 import { getClient } from '@/db';
 import { csvRow } from '../../../../../src/lib/guest-export-helpers';
@@ -99,9 +100,12 @@ type Sale = {
 async function fetchOrderSales(eventId: string, fallbackCurrency: string | null): Promise<Sale[]> {
   /*
    * Fetch all orders for this event, joined with:
-   *   - auth.identities (buyer name / handle)
-   *   - pay.transactions (stripe session id when available)
-   *   - events.tickets + ticket_types + dykil.survey_responses
+   *   - events.tickets + ticket_types
+   * Buyer name/handle come from the kernel's profile resolve route and
+   * attendee names from dykil's public API — never their tables.
+   * (gap(kernel): the `pay.transactions` join that supplied `transactionId`
+   * has no public per-order route, so `transactionId` is null — see
+   * docs/KERNEL-GAPS.md.)
    */
   const orderRows = await sql`
     SELECT
@@ -117,32 +121,28 @@ async function fetchOrderSales(eventId: string, fallbackCurrency: string | null)
       t.id AS ticket_id,
       t.status AS ticket_status,
       tt.name AS ticket_type_name,
-      COALESCE(sr.answers->>'full_name', sr.answers->>'name') AS attendee_name,
-      sr.answers->>'email' AS attendee_email,
-      tx.id AS transaction_id,
-      tx.amount AS tx_amount,
-      tx.status AS tx_status,
-      tx.stripe_id AS tx_stripe_id,
-      tx.metadata AS tx_metadata
+      tt.registration_form_id
     FROM events.orders o
-    LEFT JOIN pay.transactions tx ON tx.stripe_id = o.stripe_session_id
     LEFT JOIN events.tickets t ON t.order_id = o.id
     LEFT JOIN events.ticket_types tt ON tt.id = t.ticket_type_id
-    LEFT JOIN dykil.survey_responses sr ON sr.ticket_id = t.id
     WHERE o.event_id = ${eventId}
     ORDER BY o.created_at DESC, t.created_at ASC
   `;
 
-  // Batch-resolve buyer DIDs via the profile service's batched /api/resolve
-  // route (#1998) — replaces the raw auth.identities / auth.credentials
-  // joins this query used to run for itself.
+  const surveyByTicket = await getSurveyResponsesForTickets(
+    orderRows
+      .filter((r: any) => r.ticket_id)
+      .map((r: any) => ({ ticketId: r.ticket_id, formId: r.registration_form_id }))
+  );
+
+  // Batch-resolve buyer DIDs via the kernel's batched profile resolve route.
   const buyerDids = [...new Set(orderRows.map((r: any) => r.buyer_did).filter(Boolean))] as string[];
   const buyerResolvedMap = await resolveIdentitiesForDids(buyerDids);
 
   function buildSaleFromOrderRow(row: typeof orderRows[number]): Sale {
     const buyerResolved = lookupResolved(row.buyer_did, buyerResolvedMap);
     return {
-      transactionId: row.transaction_id ?? null,
+      transactionId: null,
       orderId: row.order_id,
       buyer: {
         did: row.buyer_did ?? null,
@@ -155,7 +155,7 @@ async function fetchOrderSales(eventId: string, fallbackCurrency: string | null)
       currency: row.currency ?? fallbackCurrency ?? 'USD',
       status: row.order_status ?? 'completed',
       paymentMethod: row.payment_method ?? null,
-      stripeSessionId: row.stripe_session_id ?? row.tx_stripe_id ?? null,
+      stripeSessionId: row.stripe_session_id ?? null,
       createdAt: row.purchased_at
         ? new Date(row.purchased_at).toISOString()
         : new Date(row.created_at).toISOString(),
@@ -175,7 +175,7 @@ async function fetchOrderSales(eventId: string, fallbackCurrency: string | null)
       sale.tickets.push({
         id: row.ticket_id,
         type: row.ticket_type_name ?? 'Unknown',
-        attendeeName: row.attendee_name ?? null,
+        attendeeName: attendeeNameOf(surveyByTicket.get(row.ticket_id)?.answers),
         status: row.ticket_status ?? 'unknown',
       });
     }
@@ -186,6 +186,11 @@ async function fetchOrderSales(eventId: string, fallbackCurrency: string | null)
     ...sale,
     status: computeOrderStatus(sale.tickets),
   }));
+}
+
+/** Attendee display name from survey answers (`full_name` preferred, then `name`). */
+function attendeeNameOf(answers: SurveyAnswers | undefined): string | null {
+  return answers?.full_name || answers?.name || null;
 }
 
 /** Fetch orphan tickets (no order_id) — these predate the orders system — with resolved owner identities. */
@@ -201,15 +206,22 @@ async function fetchOrphanSales(eventId: string, fallbackCurrency: string) {
       t.payment_method,
       t.payment_id,
       tt.name AS ticket_type_name,
-      COALESCE(sr.answers->>'full_name', sr.answers->>'name') AS attendee_name,
-      sr.answers->>'email' AS attendee_email
+      tt.registration_form_id
     FROM events.tickets t
     LEFT JOIN events.ticket_types tt ON tt.id = t.ticket_type_id
-    LEFT JOIN dykil.survey_responses sr ON sr.ticket_id = t.id
     WHERE t.event_id = ${eventId}
       AND t.order_id IS NULL
     ORDER BY t.purchased_at DESC NULLS LAST, t.created_at DESC
   `;
+
+  const orphanSurveys = await getSurveyResponsesForTickets(
+    orphanRows.map((r: any) => ({ ticketId: r.ticket_id, formId: r.registration_form_id }))
+  );
+  for (const r of orphanRows as any[]) {
+    const answers = orphanSurveys.get(r.ticket_id)?.answers;
+    r.attendee_name = attendeeNameOf(answers);
+    r.attendee_email = answers?.email ?? null;
+  }
 
   // Batch-resolve orphan ticket owner DIDs the same way as order buyers.
   const orphanOwnerDids = [...new Set(orphanRows.map((r: any) => r.owner_did).filter(Boolean))] as string[];
@@ -389,7 +401,7 @@ export async function GET(
   const { id: eventId } = await params;
 
   try {
-    const orgCheck = await isEventOrganizer(eventId, did);
+    const orgCheck = await isEventOrganizer(eventId, did, request);
     if (!orgCheck.authorized) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }

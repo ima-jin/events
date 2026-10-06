@@ -35,7 +35,29 @@ function kernelBaseUrl(): string | null {
   return url.slice(0, end);
 }
 
-function appHeaders(): Record<string, string> {
+export type KernelService = 'auth' | 'connections' | 'profile' | 'pay' | 'chat' | 'notify';
+
+/**
+ * Base URL of a kernel-hosted service. A per-service override
+ * (`AUTH_SERVICE_URL`, `PAY_SERVICE_URL`, ...) wins; otherwise the service is
+ * the kernel's path-prefixed route group (`${IMAJIN_KERNEL_URL}/pay`). Null
+ * when neither is configured — callers treat that as "service not configured".
+ */
+export function serviceUrl(service: KernelService): string | null {
+  const explicit = process.env[`${service.toUpperCase()}_SERVICE_URL`];
+  if (explicit) return explicit;
+  const base = kernelBaseUrl();
+  return base ? `${base}/${service}` : null;
+}
+
+/** Browser-facing base URL of a kernel service (for links in emails / redirects). */
+export function publicServiceUrl(service: KernelService): string {
+  const base = process.env.NEXT_PUBLIC_IMAJIN_AUTH_URL ?? process.env.IMAJIN_AUTH_URL ?? '';
+  return `${base}/${service}`;
+}
+
+/** This app's registration credentials as kernel app-auth headers. */
+export function appAuthHeaders(): Record<string, string> {
   const headers: Record<string, string> = {};
   const appDid = process.env.IMAJIN_APP_DID;
   const attestationId = process.env.IMAJIN_APP_ATTESTATION_ID;
@@ -61,7 +83,7 @@ export async function kernelFetch<T>(path: string, options: KernelFetchOptions =
       method: options.method ?? 'GET',
       headers: {
         ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
-        ...appHeaders(),
+        ...appAuthHeaders(),
         ...options.headers,
       },
       body: hasBody ? JSON.stringify(options.body) : undefined,
@@ -101,13 +123,12 @@ export async function resolveProfiles(dids: string[]): Promise<Map<string, Resol
 
   for (let i = 0; i < unique.length; i += MAX_RESOLVE_BATCH) {
     const batch = unique.slice(i, i + MAX_RESOLVE_BATCH);
-    const data = await kernelFetch<{ profiles?: ResolvedProfile[] } | ResolvedProfile[]>(
+    const data = await kernelFetch<{ results?: ResolvedProfile[] }>(
       '/profile/api/resolve',
       { method: 'POST', body: { dids: batch } }
     );
-    const entries = Array.isArray(data) ? data : (data?.profiles ?? []);
-    for (const entry of entries) {
-      result.set(entry.did, entry);
+    for (const entry of data?.results ?? []) {
+      if (entry?.did) result.set(entry.did, entry);
     }
   }
   return result;
@@ -129,14 +150,81 @@ export async function getIdentityTier(did: string): Promise<string | null> {
 
 // ─── Pods (co-host membership) ────────────────────────────────────────────
 
-/** True when `did` is an active owner/cohost of the pod. */
-export async function isPodOrganizer(podId: string, did: string, callerCookie?: string | null): Promise<boolean> {
-  const data = await kernelFetch<{
-    members?: { did: string; role: string; removedAt?: string | null }[];
-  }>(`/connections/api/pods/${encodeURIComponent(podId)}`, {
-    headers: callerCookie ? { Cookie: callerCookie } : undefined,
-  });
-  return (data?.members ?? []).some(
-    (m) => m.did === did && ['owner', 'cohost'].includes(m.role) && !m.removedAt
+export const ORGANIZER_POD_ROLES = ['owner', 'cohost'] as const;
+
+interface PodMember {
+  did: string;
+  role: string;
+  removedAt?: string | null;
+}
+
+/**
+ * True when `did` is an active member of the pod with one of `roles`.
+ *
+ * gap(kernel): `GET /connections/api/pods/{id}` is session-authenticated, so
+ * this only resolves when the caller's own cookie can be forwarded. An
+ * app-token-only caller fails closed (not an organizer) until the kernel
+ * exposes an app-auth pod-membership route. See docs/KERNEL-GAPS.md.
+ */
+export async function isPodMember(
+  podId: string,
+  did: string,
+  roles: readonly string[] = ORGANIZER_POD_ROLES,
+  callerCookie?: string | null
+): Promise<boolean> {
+  const data = await kernelFetch<{ members?: PodMember[] }>(
+    `/connections/api/pods/${encodeURIComponent(podId)}`,
+    { headers: callerCookie ? { Cookie: callerCookie } : undefined }
   );
+  return (data?.members ?? []).some((m) => m.did === did && roles.includes(m.role) && !m.removedAt);
+}
+
+/**
+ * Pod ids the caller belongs to (`GET /connections/api/pods`, caller-scoped).
+ * gap(kernel): there is no route for "pods DID X belongs to" for a third
+ * party, so this returns [] unless `callerCookie` belongs to `did` itself.
+ */
+export async function listMemberPodIds(callerCookie?: string | null): Promise<string[]> {
+  if (!callerCookie) return [];
+  const data = await kernelFetch<{ pods?: { id: string }[] }>('/connections/api/pods', {
+    headers: { Cookie: callerCookie },
+  });
+  return (data?.pods ?? []).map((pod) => pod.id);
+}
+
+// ─── Eligibility / contact backfill / onboarding ──────────────────────────
+// gap(kernel): these are gated by a kernel-internal API key today, so a
+// registered app may be refused. They are best-effort in the kernel version
+// too; here they call the documented route and degrade to a no-op when the
+// kernel refuses. See docs/KERNEL-GAPS.md.
+
+/** Ask the kernel to (re)evaluate a DID's tier eligibility after check-in. */
+export async function evaluateEligibility(did: string): Promise<{ upgraded?: boolean } | null> {
+  return kernelFetch<{ upgraded?: boolean }>('/auth/api/eligibility/evaluate', {
+    method: 'POST',
+    body: { did },
+  });
+}
+
+/** Backfill a DID's contact email (NULL-guarded server-side — never overwrites). */
+export async function backfillContactEmail(did: string, email: string): Promise<boolean> {
+  const result = await kernelFetch<{ ok?: boolean }>(
+    `/auth/api/identity/${encodeURIComponent(did)}/contact`,
+    { method: 'POST', body: { email } }
+  );
+  return result !== null;
+}
+
+/**
+ * Mint a magic-link onboard token to embed in a buyer's ticket email.
+ *
+ * gap(kernel): the kernel version inserted a row into `auth.onboard_tokens`
+ * directly. The public `POST /auth/api/onboard` is NOT a substitute — it
+ * sends its own verification email and returns no token — so there is no
+ * public way for a registered app to mint one. Always resolves to null; every
+ * caller already treats a missing token as non-fatal (the email is sent
+ * without the magic link). See docs/KERNEL-GAPS.md.
+ */
+export async function createOnboardToken(): Promise<string | null> {
+  return null;
 }

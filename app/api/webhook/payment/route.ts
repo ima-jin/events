@@ -1,3 +1,4 @@
+import { serviceUrl, publicServiceUrl } from '@/lib/kernel';
 /**
  * POST /api/webhook/payment
  *
@@ -29,7 +30,7 @@ import {
 // Shared secret between pay service and events service.
 // In production, use proper service-to-service auth.
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET!;
-const AUTH_URL = process.env.AUTH_SERVICE_URL || process.env.AUTH_URL || 'http://localhost:3003';
+const AUTH_URL = (serviceUrl('auth') ?? '');
 
 /**
  * Resolve or create a soft DID via the auth service.
@@ -62,24 +63,12 @@ async function createSoftDidSession(email: string, name?: string): Promise<{ did
 }
 
 /**
- * Attach email to an existing hard DID profile (if not already set).
- * Direct DB update — events and profile share the same Postgres database.
+ * Attach email to an existing hard DID profile (if not already set), via the
+ * kernel (NULL-guarded server-side). This app never writes `profile.profiles`.
  */
 async function attachEmailToProfile(did: string, email: string): Promise<void> {
-  try {
-    const normalizedEmail = email.toLowerCase().trim();
-    const result = await db.execute(
-      sql`UPDATE profile.profiles SET contact_email = ${normalizedEmail} WHERE did = ${did} AND (contact_email IS NULL OR contact_email = '')`
-    );
-    const rowCount = (result as any)?.rowCount ?? (result as any)?.count ?? 0;
-    if (rowCount > 0) {
-      log.info({ did, email: normalizedEmail }, 'Attached email to hard DID');
-    } else {
-      log.info({ did }, 'Hard DID already has an email — skipped');
-    }
-  } catch (error) {
-    log.error({ err: String(error) }, 'attachEmailToProfile error');
-  }
+  await backfillContactEmail(did, email, log);
+  log.info({ did }, 'Requested contact email attach for hard DID');
 }
 
 /**
@@ -117,7 +106,7 @@ async function migrateSoftDidToHard(email: string, hardDid: string, eventId: str
 
     log.info({ count: softTickets.length, softDids, hardDid }, 'Migrated tickets from soft DIDs to hard DID');
 
-    const CHAT_URL = process.env.CHAT_SERVICE_URL || process.env.CHAT_URL;
+    const CHAT_URL = serviceUrl('chat');
     if (CHAT_URL) {
       for (const softDid of softDids) {
         try {
@@ -276,7 +265,7 @@ async function resolveWebhookRegistrationInfo(
   customerName: string | null | undefined,
 ): Promise<WebhookRegistrationInfo> {
   const EVENTS_URL = buildPublicUrlAbsolute('events');
-  const eventsAuthUrl = process.env.NEXT_PUBLIC_AUTH_URL || process.env.AUTH_URL || buildPublicUrlAbsolute('auth');
+  const eventsAuthUrl = publicServiceUrl('auth');
 
   const registrationPendingTickets = createdTickets.filter((t) => t.registrationStatus === 'pending');
   const ctaTicket = registrationPendingTickets[0] ?? null;
@@ -409,7 +398,7 @@ async function handleCheckoutCompleted(payload: PaymentWebhookPayload) {
   log.info({ count: createdTickets.length, orderId, customerEmail }, 'Order + tickets created');
 
   // Add buyer to event chat conversation_members (non-fatal). Event DID = conversation DID.
-  const CHAT_URL = process.env.CHAT_SERVICE_URL || process.env.CHAT_URL;
+  const CHAT_URL = serviceUrl('chat');
   if (CHAT_URL) {
     await syncBuyerToEventChat(CHAT_URL, event.did, ownerDid, log);
   }

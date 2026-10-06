@@ -1,10 +1,11 @@
+import { publicServiceUrl } from '@/lib/kernel';
 /**
  * Helpers for the Stripe payment webhook.
  * Extracted from app/api/webhook/payment/route.ts to reduce cognitive complexity.
  */
 
 import { randomBytes } from 'node:crypto';
-import { getClient } from '@/db';
+import { createOnboardToken as createKernelOnboardToken } from '@/lib/kernel';
 import { publish } from '@/lib/domain-events';
 import { eventUrl, buildPublicUrlAbsolute } from '@ima-jin/config';
 import { generateQRCode } from '@/lib/email';
@@ -52,37 +53,19 @@ export function parseCartFromMetadata(metadata: PaymentMetadata): CartEntry[] {
 // ---------------------------------------------------------------------------
 
 /**
- * Create an onboard token for the buyer so their confirmation email contains
- * a magic link. Returns null on failure (non-fatal — email is still sent).
+ * Create an onboard token for the buyer so their confirmation email can
+ * contain a magic link. Returns null on failure (non-fatal — email is still
+ * sent). gap(kernel): a registered app cannot mint one today, so this
+ * resolves to null — see `createOnboardToken` in src/lib/kernel.ts.
  */
 export async function createOnboardToken(
-  customerEmail: string,
-  customerName: string | null | undefined,
-  onboardRedirectUrl: string,
-  eventTitle: string,
-  log: any,
+  _customerEmail: string,
+  _customerName: string | null | undefined,
+  _onboardRedirectUrl: string,
+  _eventTitle: string,
+  _log: unknown,
 ): Promise<string | null> {
-  try {
-    const authSql = getClient();
-    const token = randomBytes(36).toString('hex');
-    const onboardId = `obt_${randomBytes(8).toString('hex')}`;
-    await authSql`
-      INSERT INTO auth.onboard_tokens (id, email, name, token, redirect_url, context, expires_at)
-      VALUES (
-        ${onboardId},
-        ${customerEmail.toLowerCase().trim()},
-        ${customerName || null},
-        ${token},
-        ${onboardRedirectUrl},
-        ${'access your ticket for ' + eventTitle},
-        ${new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()}
-      )
-    `;
-    return token;
-  } catch (err) {
-    log.error({ customerEmail, err: String(err) }, '[webhook] Onboard token creation failed (non-fatal)');
-    return null;
-  }
+  return createKernelOnboardToken();
 }
 
 // ---------------------------------------------------------------------------
@@ -158,7 +141,7 @@ export async function publishConfirmationEmails(params: ConfirmationEmailParams)
   } = params;
 
   const EVENTS_URL = buildPublicUrlAbsolute('events');
-  const AUTH_URL = process.env.NEXT_PUBLIC_AUTH_URL || process.env.AUTH_URL || buildPublicUrlAbsolute('auth');
+  const AUTH_URL = publicServiceUrl('auth');
   const eventDate = new Date(event.startsAt);
   const formattedEventDate = eventDate.toLocaleDateString('en-US', {
     weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',

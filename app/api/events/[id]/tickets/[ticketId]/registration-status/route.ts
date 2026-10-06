@@ -38,7 +38,7 @@ export async function GET(
     }
 
     // Auth: ticket owner OR event organizer
-    const orgCheck = await isEventOrganizer(eventId, did);
+    const orgCheck = await isEventOrganizer(eventId, did, request);
     if (ticket.ownerDid !== did && !orgCheck.authorized) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }

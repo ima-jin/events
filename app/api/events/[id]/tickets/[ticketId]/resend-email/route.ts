@@ -1,11 +1,12 @@
+import { serviceUrl } from '@/lib/kernel';
 ﻿import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@ima-jin/logger';
-import { randomBytes } from 'node:crypto';
 
 const log = createLogger('events');
 import { eq, and } from 'drizzle-orm';
 import { requireAuth, resolveActingDid } from '@/lib/auth';
-import { resolveEmailForDid } from '@imajin/auth'; // TODO(2515): unported
+import { getContactEmail as resolveEmailForDid } from '@/lib/kernel';
+import { getSurveyResponseForTicket } from '@/lib/ticket-survey';
 import { isEventOrganizer } from '@/lib/organizer';
 import { db, tickets, events, ticketTypes } from '@/db';
 import { getClient } from '@/db';
@@ -14,7 +15,6 @@ import { publish } from '@/lib/domain-events';
 
 import { eventUrl, eventRegisterUrl, eventMyTicketsUrl, buildPublicUrlAbsolute } from '@ima-jin/config';
 
-const AUTH_URL = process.env.AUTH_URL || process.env.AUTH_SERVICE_URL || 'https://auth.imajin.ai';
 const EVENTS_URL = buildPublicUrlAbsolute('events');
 
 function redactEmail(email: string): string {
@@ -82,10 +82,7 @@ async function loadResendContext(eventId: string, ticketId: string): Promise<Res
     return NextResponse.json({ error: 'Ticket type not found' }, { status: 404 });
   }
 
-  const sqlClient = getClient();
-  const [surveyResponse] = await sqlClient`
-    SELECT answers FROM dykil.survey_responses WHERE ticket_id = ${ticketId} LIMIT 1
-  `;
+  const surveyResponse = (await getSurveyResponseForTicket(ticketId)) ?? undefined;
 
   return { ticket, event, ticketType, surveyResponse };
 }
@@ -106,31 +103,19 @@ async function resolveResendCustomerEmail(surveyResponse: ResendEmailContext['su
   return null;
 }
 
-/** Mint a fresh onboard magic-link token for the customer and return the full link. */
-async function mintResendMagicLink(ctx: ResendEmailContext, customerEmail: string): Promise<string> {
-  const { ticket, event, surveyResponse } = ctx;
-  const authSql = getClient();
-  const onboardToken = randomBytes(36).toString('hex');
-  const onboardId = `obt_${randomBytes(8).toString('hex')}`;
-  // Deep link to the specific ticket's registration page
-  const redirectUrl = ticket.registrationStatus === 'pending'
+/**
+ * Deep link to the ticket's registration (or my-tickets) page for the email.
+ *
+ * gap(kernel): the kernel version minted an `auth.onboard_tokens` magic link
+ * here so a soft-DID buyer could sign in from the email. A registered app
+ * cannot mint one (see `createOnboardToken` in src/lib/kernel.ts), so the
+ * email carries the plain deep link — the buyer signs in on arrival.
+ */
+function resendTicketLink(ctx: ResendEmailContext): string {
+  const { ticket, event } = ctx;
+  return ticket.registrationStatus === 'pending'
     ? eventRegisterUrl(EVENTS_URL, event.id, ticket.id)
     : eventMyTicketsUrl(EVENTS_URL, event.id);
-
-  await authSql`
-    INSERT INTO auth.onboard_tokens (id, email, name, token, redirect_url, context, expires_at)
-    VALUES (
-      ${onboardId},
-      ${customerEmail.toLowerCase().trim()},
-      ${surveyResponse?.answers?.full_name || surveyResponse?.answers?.name || null},
-      ${onboardToken},
-      ${redirectUrl},
-      ${'access your ticket for ' + event.title},
-      ${new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()}
-    )
-  `;
-
-  return `${AUTH_URL}/api/onboard/verify?token=${onboardToken}`;
 }
 
 function formatEventDateTime(startsAt: string | Date): { formattedEventDate: string; formattedEventTime: string } {
@@ -227,7 +212,7 @@ export async function POST(
   const { id: eventId, ticketId } = await params;
 
   try {
-    const orgCheck = await isEventOrganizer(eventId, did);
+    const orgCheck = await isEventOrganizer(eventId, did, request);
     if (!orgCheck.authorized) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
@@ -243,7 +228,7 @@ export async function POST(
       );
     }
 
-    const magicLink = await mintResendMagicLink(ctx, customerEmail);
+    const magicLink = resendTicketLink(ctx);
     await publishResendNotification(ctx, did, customerEmail, magicLink);
 
     // Record the send timestamp

@@ -3,7 +3,8 @@
  * Extracted from app/api/events/[id]/guests/export.csv/route.ts to reduce cognitive complexity.
  */
 
-import type postgres from 'postgres';
+import { getSurveyForms } from './surveys';
+
 
 // ---------------------------------------------------------------------------
 // CSV field escaping (shared by every CSV export route — events/sales,
@@ -27,35 +28,6 @@ export function csvRow(values: unknown[]): string {
 }
 
 // ---------------------------------------------------------------------------
-// Duplicate survey detection
-// ---------------------------------------------------------------------------
-
-/**
- * Warn when a ticket has more than one survey response (only the most-recent
- * one is exported). Non-fatal — just logs and continues.
- */
-export async function warnDuplicateSurveyResponses(
-  ticketIds: string[],
-  sql: postgres.Sql,
-  log: any,
-): Promise<void> {
-  if (ticketIds.length === 0) return;
-  const dupRows = await sql`
-    SELECT ticket_id, COUNT(*) as cnt
-    FROM dykil.survey_responses
-    WHERE ticket_id = ANY(${ticketIds})
-    GROUP BY ticket_id
-    HAVING COUNT(*) > 1
-  `;
-  for (const row of dupRows) {
-    log.warn(
-      { ticketId: row.ticket_id, count: Number(row.cnt) },
-      'Ticket has multiple survey responses; using most recent',
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Survey form metadata
 // ---------------------------------------------------------------------------
 
@@ -71,21 +43,20 @@ export interface SurveyFormData {
 }
 
 /**
- * Fetch survey form definitions from the DB and build:
+ * Fetch survey form definitions from dykil's public API and build:
  * - `surveyColumns`: ordered list of "Survey: <label>" column header strings
  * - `formFieldMap`: map from form ID to its field list
  */
 export async function loadSurveyFormData(
   formIds: string[],
-  sql: postgres.Sql,
 ): Promise<SurveyFormData> {
   const surveyColumns: string[] = [];
   const formFieldMap = new Map<string, SurveyField[]>();
 
   if (formIds.length === 0) return { surveyColumns, formFieldMap };
 
-  const formRows = await sql`SELECT id, fields FROM dykil.surveys WHERE id = ANY(${formIds})`;
-  for (const row of formRows) {
+  const forms = await getSurveyForms(formIds);
+  for (const row of forms.values()) {
     const mappedFields = extractSurveyFields(row.fields);
     formFieldMap.set(row.id, mappedFields);
     for (const f of mappedFields) {

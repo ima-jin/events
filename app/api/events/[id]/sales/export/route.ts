@@ -1,7 +1,7 @@
 ﻿import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@ima-jin/logger';
 import { requireAuth, resolveActingDid } from '@/lib/auth';
-import { resolveIdentitiesForDids } from '@imajin/auth'; // TODO(2515): unported
+import { resolveProfiles as resolveIdentitiesForDids } from '@/lib/kernel';
 import { isEventOrganizer } from '@/lib/organizer';
 import { getClient } from '@/db';
 import { csvRow } from '../../../../../../src/lib/guest-export-helpers';
@@ -40,7 +40,7 @@ export async function GET(
   const format = searchParams.get('format') || 'csv';
 
   try {
-    const orgCheck = await isEventOrganizer(id, did);
+    const orgCheck = await isEventOrganizer(id, did, request);
     if (!orgCheck.authorized) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
