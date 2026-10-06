@@ -37,4 +37,10 @@ export default defineConfig({
     url: process.env.DATABASE_URL!,
   },
   schemaFilter: [appSchemaName],
+  // Keep drizzle's own migration-tracking table inside this app's schema —
+  // the default is a `drizzle` schema, which would be state outside what the
+  // app owns (see docs/MIGRATIONS.md).
+  migrations: {
+    schema: appSchemaName,
+  },
 });
