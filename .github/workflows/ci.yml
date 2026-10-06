@@ -37,6 +37,61 @@ jobs:
           fi
           echo "Markdown clean — no BEL/form-feed/lone-CR control characters."
 
+  migrations:
+    # Proves the app's own migration runner (`pnpm db:migrate`) creates the
+    # APP_DB_SCHEMA schema and every table in it from an empty database, and
+    # that it creates nothing outside that schema (docs/MIGRATIONS.md).
+    name: Migrations (Postgres)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: events_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      APP_DB_SCHEMA: events
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/events_ci
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Run migrations
+        run: pnpm db:migrate
+
+      - name: Verify schema and tables
+        run: scripts/verify-migrations.sh "$DATABASE_URL" "$APP_DB_SCHEMA"
+
+      - name: Re-run migrations (idempotent)
+        run: pnpm db:migrate
+
+      - name: Fail if schema.ts and migrations have drifted
+        run: |
+          pnpm db:generate --name ci_drift_check
+          if [ -n "$(git status --porcelain migrations)" ]; then
+            echo "::error::src/db/schema.ts has changes not captured in migrations/ — run 'pnpm db:generate' and commit the result."
+            git status --porcelain migrations
+            exit 1
+          fi
+
   test-build:
     name: Test + build
     runs-on: ubuntu-latest

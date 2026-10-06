@@ -28,7 +28,7 @@ The kernel verifies both and returns `{ appDid, userDid, scopes }` — that trip
 
 ## Getting started
 
-1. **Use this template** (GitHub's "Use this template" button, or `git clone` + a new remote).
+1. **Clone this repo** (`git clone https://github.com/ima-jin/events`).
 2. **Register this app with the kernel** — see [`docs/REGISTRATION.md`](./docs/REGISTRATION.md).
    You'll get back this app's `appDid` and registry `id`.
 3. **Set env**: `cp .env.example .env.local`, then fill in `IMAJIN_APP_DID`,
@@ -41,7 +41,7 @@ The kernel verifies both and returns `{ appDid, userDid, scopes }` — that trip
    [`docs/MIGRATIONS.md`](./docs/MIGRATIONS.md)):
    ```bash
    pnpm install
-   pnpm db:migrate
+   pnpm db:migrate   # creates the `events` schema (APP_DB_SCHEMA) and all 8 events tables
    ```
 5. **Run it**:
    ```bash
