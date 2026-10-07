@@ -140,13 +140,13 @@ K15 per table:
 |-----|--------|-----|
 | I01 | Kernel pay `notifyEventsService` to `/api/webhook/payment` | D05 delivery to the R65 receiver (G16); kernel hard-wired env webhook removed (G02) |
 | I02 | Kernel bus `settlement.completed` webhook to `/api/webhook/settlement` | Removed (D04, G19); kernel reactor and `EVENTS_SERVICE_URL` webhook retired (G02) |
-| I03 | Kernel `onboard/verify` to `/events/api/migrate-tickets` | Removed (D10); kernel call deleted (G07) |
+| I03 | Kernel `onboard/verify` to `/events/api/migrate-tickets` | Removed (D10); kernel call deleted (G20, after G07) |
 | I04 | Kernel chat `resolveConversationName` to `/api/events/by-did/{did}` | Lobby context carries the title; kernel call deleted (G11). R49 stays available |
 | I05 | Kernel LLM presence tools | Re-pointed to the public read with a scoped token, or the tool is dropped until registry discovery exists (G10) |
 | I06 | Kernel chat access reads `events.tickets` and `events.events` | Kernel decides by chat membership alone, which events maintains through the Chat port (G12). Blocks the prune |
 | I07 | Kernel nav and profile tabs via `EVENTS_SERVICE_URL` | Registry-driven app links (G15) |
-| I08 | Kernel bus chains for 17 events types | Retired after cutover (G02); events no longer publishes into the bus |
-| I09 | Kernel notify templates and settings pages for 7 `event:*` scopes | Templates move to this repo (D02); the scopes stay registered so users can still opt out per scope (G03) |
+| I08 | Kernel bus chains for 16 of the 17 events types | Retired after cutover (G02); events no longer publishes into the bus. Kernel migrations and scripts that carry or mention events are cleaned up at the prune (G22) |
+| I09 | Kernel notify templates and settings pages for 7 `event:*` scopes | Templates move to this repo (D02) and the kernel copies are removed (G21); the scopes stay registered so users can still opt out per scope (G03) |
 | I10 | Dykil ticket gate | Unchanged contract (R16) |
 
 ## 5. Packages and imports
