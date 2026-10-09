@@ -16,5 +16,7 @@ around the boundary, and the gap is recorded here. Each is a `gap(kernel)` marke
 | Onboard magic link in ticket emails | `src/lib/kernel.ts` `createOnboardToken` | Always `null` (emails go out without the magic link). | A route that mints an onboard token for a registered app. |
 | Act-as / delegation (forest scope) | `src/lib/auth.ts` `resolveActingDid` | Always the caller's own DID. | Delegation overlay in the app-token contract. |
 | Chat sync (member add/migrate, name policy) | `src/lib/event-update-helpers.ts`, webhook, cohosts, event routes | Calls the chat service with this app's `X-App-DID` / `X-App-Authorization`; no kernel-internal shared key. May be refused. | App-auth chat endpoints for registered apps. |
+| Pay webhook correlation | `app/api/webhook/payment/route.ts` | Settlement needs the checkout's kernel `transactionId` on the `checkout.completed` webhook; without it settlement is skipped and logged loudly. | `transactionId` in the pay webhook payload (imajin-ai#2741 decision a). |
 
+Settlement (`/pay/api/settle`) uses events' **own app-service token** and is not a gap — see `src/lib/pay-settle.ts`.
 Refunds and campaign charge-pledges still use the shared `PAY_SERVICE_API_KEY` (out of scope, imajin-ai#2735).

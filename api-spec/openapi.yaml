@@ -958,3 +958,72 @@ paths:
                   balance: { type: number }
                   currency: { type: string }
                   unavailable: { type: boolean }
+
+  /api/webhook/payment:
+    post:
+      tags: [webhooks]
+      operationId: paymentWebhook
+      summary: Checkout-completed webhook from the pay service
+      description: Creates the order and tickets for a completed Stripe checkout. Authenticated with the shared `WEBHOOK_SECRET`.
+      security:
+        - webhookBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+              description: Pay service payload (session id, payment id, amounts and checkout metadata incl. `eventId`, `cart`, `buyerDid`).
+      responses:
+        "200":
+          description: Processed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  received: { type: boolean }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /api/webhook/settlement:
+    post:
+      tags: [webhooks]
+      operationId: settlementWebhook
+      summary: .fair settlement snapshot webhook
+      description: >
+        Stores the resolved .fair settlement on the order. Authenticated with the shared `WEBHOOK_SECRET` in
+        the `x-webhook-secret` header. The body may be bare or wrapped in a bus envelope (`{ payload }`).
+      security:
+        - webhookSecretHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [orderId]
+              properties:
+                orderId: { type: string }
+                eventId: { type: string }
+                buyerDid: { type: string }
+                amount: { type: integer }
+                currency: { type: string }
+                totalAmount: { type: integer }
+                netAmount: { type: integer }
+                fees: { type: array, items: { type: object } }
+                chain: { type: array, items: { type: object } }
+                payload: { type: object, description: Bus-envelope form; the settlement fields live here }
+      responses:
+        "200":
+          description: Snapshot saved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  received: { type: boolean }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500": { $ref: "#/components/responses/ServerError" }
