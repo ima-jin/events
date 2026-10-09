@@ -19,9 +19,9 @@ import { db, pledges } from '@/db';
 import { eq, and, sql } from 'drizzle-orm';
 import { corsHeaders } from '@ima-jin/config';
 import { withLogger } from '@ima-jin/logger';
-import { campaignOptions, loadCampaignEvent, pathEventId, campaignFailure } from '@/lib/campaign-route';
+import { loadCampaignEvent, pathEventId, campaignFailure } from '@/lib/campaign-route';
 
-export const OPTIONS = campaignOptions;
+export { campaignOptions as OPTIONS } from '@/lib/campaign-route';
 
 export const GET = withLogger('events', async (request: NextRequest, { log }) => {
   const cors = corsHeaders(request);

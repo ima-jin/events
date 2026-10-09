@@ -22,11 +22,11 @@ import { db, pledges } from '@/db';
 import { eq, and } from 'drizzle-orm';
 import { corsHeaders } from '@ima-jin/config';
 import { withLogger } from '@ima-jin/logger';
-import { campaignOptions, limitRequests, campaignFailure } from '@/lib/campaign-route';
+import { limitRequests, campaignFailure } from '@/lib/campaign-route';
 import { authenticateActing } from '@/lib/route-helpers';
 
 
-export const OPTIONS = campaignOptions;
+export { campaignOptions as OPTIONS } from '@/lib/campaign-route';
 
 export const POST = withLogger('events', async (request: NextRequest, { log }) => {
   const cors = corsHeaders(request);

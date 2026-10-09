@@ -10,10 +10,10 @@ import { db, pledges } from '@/db';
 import { eq, and } from 'drizzle-orm';
 import { corsHeaders } from '@ima-jin/config';
 import { withLogger } from '@ima-jin/logger';
-import { campaignOptions, pathEventId, campaignFailure } from '@/lib/campaign-route';
+import { pathEventId, campaignFailure } from '@/lib/campaign-route';
 import { authenticateActing } from '@/lib/route-helpers';
 
-export const OPTIONS = campaignOptions;
+export { campaignOptions as OPTIONS } from '@/lib/campaign-route';
 
 export const GET = withLogger('events', async (request: NextRequest, { log }) => {
   const cors = corsHeaders(request);

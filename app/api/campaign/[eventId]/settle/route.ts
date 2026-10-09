@@ -21,13 +21,13 @@ import { db, pledges } from '@/db';
 import { eq, and } from 'drizzle-orm';
 import { corsHeaders } from '@ima-jin/config';
 import { withLogger } from '@ima-jin/logger';
-import { campaignOptions, limitRequests, loadCampaignEvent, pathEventId, campaignFailure } from '@/lib/campaign-route';
+import { limitRequests, loadCampaignEvent, pathEventId, campaignFailure } from '@/lib/campaign-route';
 import { authenticateActing } from '@/lib/route-helpers';
 
 const PAY_SERVICE_URL = (serviceUrl('pay') ?? '');
 const PAY_SERVICE_API_KEY = process.env.PAY_SERVICE_API_KEY!;
 
-export const OPTIONS = campaignOptions;
+export { campaignOptions as OPTIONS } from '@/lib/campaign-route';
 
 export const POST = withLogger('events', async (request: NextRequest, { log }) => {
   const cors = corsHeaders(request);

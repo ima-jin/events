@@ -100,8 +100,8 @@ async function resolveScopeFeeBps(scopeDid: string | null): Promise<number | nul
 }
 
 /** Insert the ticket types provided at event-creation time, returning the created rows. */
-async function createTicketTypesForEvent(eventId: string, ticketTypesInput: unknown): Promise<Array<typeof ticketTypes.$inferSelect>> {
-  if (!Array.isArray(ticketTypesInput) || ticketTypesInput.length === 0) return [];
+function createTicketTypesForEvent(eventId: string, ticketTypesInput: unknown): Promise<Array<typeof ticketTypes.$inferSelect>> {
+  if (!Array.isArray(ticketTypesInput) || ticketTypesInput.length === 0) return Promise.resolve([]);
 
   // One multi-row insert; `returning()` yields the rows in input order.
   return db.insert(ticketTypes).values(
