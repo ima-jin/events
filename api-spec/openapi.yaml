@@ -313,6 +313,39 @@ components:
             deadline: { type: string, format: date-time }
             quantity: { type: integer }
             message: { type: string }
+    Guest:
+      type: object
+      properties:
+        id: { type: string }
+        status: { type: string }
+        ownerDid: { type: string, nullable: true }
+        pricePaid: { type: integer, nullable: true }
+        currency: { type: string, nullable: true }
+        purchasedAt: { type: string, format: date-time, nullable: true }
+        usedAt: { type: string, format: date-time, nullable: true }
+        ticketType: { type: string }
+        paymentMethod: { type: string, nullable: true }
+        paymentId: { type: string, nullable: true }
+        holdExpiresAt: { type: string, format: date-time, nullable: true }
+        profile:
+          type: object
+          nullable: true
+          properties:
+            name: { type: string, nullable: true }
+            handle: { type: string, nullable: true }
+            avatar: { type: string, nullable: true }
+            email: { type: string, nullable: true }
+        registrationStatus: { type: string, nullable: true }
+        attendeeName: { type: string, nullable: true }
+        resolvedName: { type: string, nullable: true }
+        resolvedEmail: { type: string, nullable: true }
+        guestOf: { type: string, nullable: true }
+        lastEmailSentAt: { type: string, format: date-time, nullable: true }
+        fairSettlement: { type: object, nullable: true }
+        orderAmountTotal: { type: integer, nullable: true }
+    CsvFile:
+      type: string
+      description: UTF-8 CSV with a leading BOM.
 
 paths:
   /api/health:
@@ -670,6 +703,137 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/ServerError" }
 
+  /api/events/{id}/guests:
+    parameters:
+      - $ref: "#/components/parameters/EventId"
+    get:
+      tags: [events]
+      operationId: listGuests
+      summary: List all tickets with resolved attendee info (creator or cohost)
+      security:
+        - appToken: [events:read]
+        - cookieAuth: []
+        - appDidHeader: []
+          appAuthorizationHeader: []
+      responses:
+        "200":
+          description: Guests
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  guests:
+                    type: array
+                    items: { $ref: "#/components/schemas/Guest" }
+                  isOwner: { type: boolean }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /api/events/{id}/guests/export.csv:
+    parameters:
+      - $ref: "#/components/parameters/EventId"
+    get:
+      tags: [exports]
+      operationId: exportGuestsCsv
+      summary: Export the guest list as CSV (creator or cohost)
+      security:
+        - appToken: [events:read]
+        - cookieAuth: []
+      parameters:
+        - name: includeCancelled
+          in: query
+          schema: { type: string, enum: ["1"] }
+          description: "`1` to include cancelled and refunded tickets"
+        - name: summary
+          in: query
+          schema: { type: string, enum: ["1"] }
+          description: "`1` to return a JSON summary instead of CSV"
+      responses:
+        "200":
+          description: CSV attachment, or the JSON summary when `summary=1`
+          content:
+            text/csv:
+              schema: { $ref: "#/components/schemas/CsvFile" }
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total: { type: integer }
+                  valid: { type: integer }
+                  pendingRegistration: { type: integer }
+                  completeRegistration: { type: integer }
+                  cancelled: { type: integer }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /api/events/{id}/sales:
+    parameters:
+      - $ref: "#/components/parameters/EventId"
+    get:
+      tags: [exports]
+      operationId: listSales
+      summary: Sales (orders and orphan tickets) with summary; optional CSV export (creator or cohost)
+      security:
+        - appToken: [events:read]
+        - cookieAuth: []
+      parameters:
+        - name: format
+          in: query
+          schema: { type: string, enum: [csv, xlsx] }
+          description: "`csv` or `xlsx` return a CSV download (no xlsx library); omit for JSON"
+      responses:
+        "200":
+          description: Sales JSON, or a CSV attachment when `format` is set
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sales: { type: array, items: { type: object, additionalProperties: true } }
+                  orphans: { type: array, items: { type: object }, description: Always empty (orphans are merged into `sales`) }
+                  orphanOrders: { type: array, items: { type: object }, description: Always empty }
+                  summary:
+                    type: object
+                    properties:
+                      totalSales: { type: integer }
+                      totalRevenue: { type: integer }
+                      avgOrderValue: { type: integer }
+                      totalOrders: { type: integer }
+            text/csv:
+              schema: { $ref: "#/components/schemas/CsvFile" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /api/events/{id}/sales/export:
+    parameters:
+      - $ref: "#/components/parameters/EventId"
+    get:
+      tags: [exports]
+      operationId: exportSales
+      summary: Export sales as CSV (creator or cohost)
+      security:
+        - appToken: [events:read]
+        - cookieAuth: []
+      parameters:
+        - { name: format, in: query, schema: { type: string, default: csv, enum: [csv, xlsx] } }
+      responses:
+        "200":
+          description: CSV attachment
+          content:
+            text/csv:
+              schema: { $ref: "#/components/schemas/CsvFile" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  # ───────────────────────── tiers ─────────────────────────
   /api/events/{id}/tiers:
     parameters:
       - $ref: "#/components/parameters/EventId"
@@ -1133,6 +1297,57 @@ paths:
         "500": { $ref: "#/components/responses/ServerError" }
         "502": { $ref: "#/components/responses/BadGateway" }
 
+  /api/attending/{did}:
+    get:
+      tags: [events]
+      operationId: listAttendingEvents
+      summary: Upcoming events a DID attends, created or cohosts (profile page feed)
+      description: >
+        Public. Invite-only events are included only for the profile owner's own events, or when
+        `viewer_did` also holds a ticket.
+      x-public: true
+      security: []
+      parameters:
+        - { name: did, in: path, required: true, schema: { type: string } }
+        - { name: viewer_did, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: Upcoming events, soonest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    eventId: { type: string }
+                    title: { type: string }
+                    startDate: { type: string, format: date-time }
+                    endDate: { type: string, format: date-time, nullable: true }
+                    venue: { type: string, nullable: true }
+                    imageUrl: { type: string, nullable: true }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /api/admin/events/export.csv:
+    get:
+      tags: [exports]
+      operationId: exportAllEventsCsv
+      summary: Platform-wide events overview as CSV (platform admins only)
+      description: Admins are `NODE_DID` plus the DIDs in `EVENTS_ADMIN_DIDS`.
+      security:
+        - appToken: [events:read]
+        - cookieAuth: []
+      responses:
+        "200":
+          description: CSV attachment
+          content:
+            text/csv:
+              schema: { $ref: "#/components/schemas/CsvFile" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  # ───────────────────────── proxies ─────────────────────────
   /api/balance:
     get:
       tags: [proxy]
