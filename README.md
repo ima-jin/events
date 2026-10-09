@@ -60,8 +60,9 @@ checkout's `transaction_id` and the `fair_manifest`; `alreadySettled: true` is s
 
 Operator prerequisites before ticket checkout works: (1) register events and provision its signing key
 (`IMAJIN_KERNEL_URL`, `IMAJIN_APP_DID`, one-time `IMAJIN_APP_CLAIM_CODE`); (2) approve `pay:settle` via the
-`apps:service-scopes` card; (3) deploy the kernel contract (imajin-ai#2695); (4) the pay `checkout.completed` webhook
-must carry the kernel `transactionId` — until it does, events logs
+`apps:service-scopes` card; (3) deploy the kernel contract (imajin-ai#2695) and the kernel build that adds `transactionId` to the pay
+`checkout.completed` webhook (imajin-ai#2741; it looks the `pay.transactions` row up by the Stripe session and sends
+its id — the key `/pay/api/settle` needs). If a webhook arrives without it, events logs
 `Pay webhook carried no transactionId — order NOT settled` and skips settlement. Without 1–2, checkout for an event
 with a `.fair` chain fails closed (503). See also [`docs/KERNEL-GAPS.md`](./docs/KERNEL-GAPS.md).
 
