@@ -18,37 +18,22 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { requireAuth, resolveActingDid } from '@/lib/auth';
 import { db, pledges } from '@/db';
 import { eq, and } from 'drizzle-orm';
-import { corsHeaders, rateLimit, getClientIP } from '@ima-jin/config';
+import { corsHeaders } from '@ima-jin/config';
+import { authenticateDid, preflight, rateLimitResponse } from '@/lib/campaign-route';
 import { withLogger } from '@ima-jin/logger';
 
-export function OPTIONS(request: NextRequest) {
-  return new NextResponse(null, { status: 204, headers: corsHeaders(request) });
-}
+export const OPTIONS = preflight;
 
 export const POST = withLogger('events', async (request: NextRequest, { log }) => {
   const cors = corsHeaders(request);
 
-  const ip = getClientIP(request);
-  const rl = rateLimit(ip, 20, 60_000);
-  if (rl.limited) {
-    return NextResponse.json(
-      { error: 'Too many requests', retryAfter: rl.retryAfter },
-      { status: 429, headers: { ...cors, 'Retry-After': String(rl.retryAfter) } }
-    );
-  }
+  const limited = rateLimitResponse(request, 20, cors);
+  if (limited) return limited;
 
-  const authResult = await requireAuth(request);
-  if ('error' in authResult) {
-    return NextResponse.json(
-      { error: authResult.error },
-      { status: authResult.status, headers: cors }
-    );
-  }
-
-  const did = resolveActingDid(authResult.identity);
+  const did = await authenticateDid(request, cors);
+  if (did instanceof NextResponse) return did;
 
   try {
     const body = await request.json();

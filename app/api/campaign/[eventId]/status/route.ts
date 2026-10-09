@@ -15,41 +15,25 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { db, events, pledges } from '@/db';
+import { db, pledges } from '@/db';
 import { eq, and, sql } from 'drizzle-orm';
 import { corsHeaders } from '@ima-jin/config';
+import { findEvent, jsonError, pathEventId, preflight } from '@/lib/campaign-route';
 import { withLogger } from '@ima-jin/logger';
 
-export function OPTIONS(request: NextRequest) {
-  return new NextResponse(null, { status: 204, headers: corsHeaders(request) });
-}
+export const OPTIONS = preflight;
 
 export const GET = withLogger('events', async (request: NextRequest, { log }) => {
   const cors = corsHeaders(request);
 
   try {
-    const url = new URL(request.url);
-    const pathParts = url.pathname.split('/');
-    const eventId = pathParts.at(-2); // /api/campaign/{eventId}/status
+    const eventId = pathEventId(request);
+    if (!eventId) return jsonError('eventId is required', 400, cors);
 
-    if (!eventId) {
-      return NextResponse.json({ error: 'eventId is required' }, { status: 400, headers: cors });
-    }
+    const event = await findEvent(eventId);
+    if (!event) return jsonError('Event not found', 404, cors);
 
-    // Fetch event
-    const [event] = await db
-      .select()
-      .from(events)
-      .where(eq(events.id, eventId))
-      .limit(1);
-
-    if (!event) {
-      return NextResponse.json({ error: 'Event not found' }, { status: 404, headers: cors });
-    }
-
-    if (event.eventType !== 'campaign') {
-      return NextResponse.json({ error: 'Not a campaign event' }, { status: 400, headers: cors });
-    }
+    if (event.eventType !== 'campaign') return jsonError('Not a campaign event', 400, cors);
 
     // Sum confirmed + charged pledges
     const pledgeRows = await db

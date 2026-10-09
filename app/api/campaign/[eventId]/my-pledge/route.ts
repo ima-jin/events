@@ -6,37 +6,23 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { requireAuth, resolveActingDid } from '@/lib/auth';
 import { db, pledges } from '@/db';
 import { eq, and } from 'drizzle-orm';
 import { corsHeaders } from '@ima-jin/config';
+import { authenticateDid, jsonError, pathEventId, preflight } from '@/lib/campaign-route';
 import { withLogger } from '@ima-jin/logger';
 
-export function OPTIONS(request: NextRequest) {
-  return new NextResponse(null, { status: 204, headers: corsHeaders(request) });
-}
+export const OPTIONS = preflight;
 
 export const GET = withLogger('events', async (request: NextRequest, { log }) => {
   const cors = corsHeaders(request);
 
-  const authResult = await requireAuth(request);
-  if ('error' in authResult) {
-    return NextResponse.json(
-      { error: authResult.error },
-      { status: authResult.status, headers: cors }
-    );
-  }
-
-  const did = resolveActingDid(authResult.identity);
+  const did = await authenticateDid(request, cors);
+  if (did instanceof NextResponse) return did;
 
   try {
-    const url = new URL(request.url);
-    const pathParts = url.pathname.split('/');
-    const eventId = pathParts.at(-2); // /api/campaign/{eventId}/my-pledge
-
-    if (!eventId) {
-      return NextResponse.json({ error: 'eventId is required' }, { status: 400, headers: cors });
-    }
+    const eventId = pathEventId(request);
+    if (!eventId) return jsonError('eventId is required', 400, cors);
 
     const [pledge] = await db
       .select({
