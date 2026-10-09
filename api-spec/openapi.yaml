@@ -777,6 +777,40 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/ServerError" }
 
+  /api/events/{id}/access:
+    parameters:
+      - $ref: "#/components/parameters/EventId"
+    get:
+      tags: [events]
+      operationId: checkTicketHolderAccess
+      summary: Does a DID hold a ticket for this event? (composable ticket-holder gate)
+      description: >
+        Answers exactly `{ "hasAccess": boolean }` — never ticket data. Requires a scoped app token with
+        `events:read`; session cookies and the legacy headers are NOT accepted. A ticket counts when its
+        status is `sold` or `used`.
+      security:
+        - appToken: [events:read]
+      parameters:
+        - name: did
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Gate result
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [hasAccess]
+                properties:
+                  hasAccess: { type: boolean }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
   /api/events/{id}/cohosts:
     parameters:
       - $ref: "#/components/parameters/EventId"
@@ -1158,6 +1192,50 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/ServerError" }
         "502": { $ref: "#/components/responses/BadGateway" }
+
+  /api/events/{id}/my-ticket:
+    parameters:
+      - $ref: "#/components/parameters/EventId"
+    get:
+      tags: [tickets]
+      operationId: getMyTicket
+      summary: Does the caller hold a ticket for, or organize, this event?
+      description: >
+        Never fails with an auth error: an unauthenticated caller (or any internal error) gets
+        `hasTicket: false, hasAccess: false` with status 200.
+      security:
+        - appToken: [events:read]
+        - cookieAuth: []
+        - {}
+      responses:
+        "200":
+          description: Access summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  hasTicket: { type: boolean }
+                  hasAccess: { type: boolean }
+                  isOrganizer: { type: boolean }
+                  ticketId: { type: string, nullable: true }
+                  tickets:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        status: { type: string }
+                        purchasedAt: { type: string, format: date-time, nullable: true }
+                        pricePaid: { type: integer, nullable: true }
+                        currency: { type: string, nullable: true }
+                        ticketType:
+                          type: object
+                          nullable: true
+                          properties:
+                            name: { type: string }
+                            description: { type: string, nullable: true }
+                            perks: { type: array, items: { type: string } }
 
   /api/events/{id}/queue:
     parameters:
@@ -1688,6 +1766,26 @@ paths:
                   lastEmailSentAt: { type: string, format: date-time }
         "500": { $ref: "#/components/responses/ServerError" }
 
+  /api/tickets/{id}/qr:
+    get:
+      tags: [tickets]
+      operationId: getTicketQr
+      summary: QR code (data URI) encoding a ticket id
+      x-public: true
+      security: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: QR code
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  qrCodeDataUri: { type: string }
+        "500": { $ref: "#/components/responses/ServerError" }
+
   /api/tickets/{id}/confirm-payment:
     post:
       tags: [tickets]
@@ -1717,6 +1815,53 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/ServerError" }
 
+  /api/register/{ticketId}:
+    parameters:
+      - $ref: "#/components/parameters/TicketId"
+    get:
+      tags: [tickets]
+      operationId: getRegistration
+      summary: Registration (survey response) for a ticket
+      description: Unauthenticated — the unguessable ticket id is the capability.
+      x-public: true
+      security: []
+      responses:
+        "200":
+          description: Registration
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  registration: { $ref: "#/components/schemas/Registration" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [tickets]
+      operationId: completeRegistration
+      summary: Mark a ticket's registration complete once its survey response exists
+      description: >
+        Unauthenticated — the ticket id is the capability. Flips `registrationStatus` from `pending` to
+        `complete` and emits the confirmation events/email.
+      x-public: true
+      security: []
+      responses:
+        "200":
+          description: Registration completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  qrCodeDataUri: { type: string, nullable: true }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Ticket registration status is not `pending`
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  # ───────────────────────── checkout & orders ─────────────────────────
   /api/checkout:
     post:
       tags: [checkout]
@@ -2278,6 +2423,27 @@ paths:
         "500": { $ref: "#/components/responses/ServerError" }
 
   # ───────────────────────── proxies ─────────────────────────
+  /api/access/{did}:
+    get:
+      tags: [proxy]
+      operationId: proxyAccessCheck
+      summary: Same-origin proxy of the kernel auth service's access check
+      description: >
+        Forwards the caller's session cookie to the kernel and relays its status and body. Requires the
+        session cookie to be present (the kernel does the actual authorization).
+      security:
+        - cookieAuth: []
+      parameters:
+        - { name: did, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Kernel response, relayed verbatim (any status from the kernel is passed through)
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
   /api/balance:
     get:
       tags: [proxy]
@@ -2308,6 +2474,84 @@ paths:
                   currency: { type: string }
                   unavailable: { type: boolean }
 
+  /api/proxy/connections:
+    get:
+      tags: [proxy]
+      operationId: proxyConnections
+      summary: Same-origin proxy of the kernel connections list
+      description: Forwards the caller's cookie; the kernel enforces authentication.
+      x-public: true
+      security: []
+      responses:
+        "200":
+          description: Kernel response, relayed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  connections: { type: array, items: { type: object } }
+        "502": { $ref: "#/components/responses/BadGateway" }
+
+  # ───────────────────────── media ─────────────────────────
+  /api/upload:
+    post:
+      tags: [media]
+      operationId: uploadEventImage
+      summary: Upload an event cover image (JPEG/PNG/GIF/WebP, max 10 MB)
+      description: >
+        Currently performs no authentication check (kernel parity); the file is stored on the app's local
+        media volume and served back through `/api/media/...`.
+      x-public: true
+      security: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [image]
+              properties:
+                image: { type: string, format: binary }
+      responses:
+        "200":
+          description: Upload stored
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url: { type: string, description: "`/api/media/events/<file>?v=<timestamp>`" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /api/media/{path}:
+    get:
+      tags: [media]
+      operationId: getMedia
+      summary: Serve a stored media file
+      x-public: true
+      security: []
+      parameters:
+        - name: path
+          in: path
+          required: true
+          description: Catch-all file path (`[...path]`), for example `events/event-123.jpg`
+          schema: { type: string }
+          allowReserved: true
+      responses:
+        "200":
+          description: "Image bytes (`Cache-Control: public, max-age=3600`)"
+          content:
+            image/jpeg: { schema: { type: string, format: binary } }
+            image/png: { schema: { type: string, format: binary } }
+            image/gif: { schema: { type: string, format: binary } }
+            image/webp: { schema: { type: string, format: binary } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  # ───────────────────────── webhooks ─────────────────────────
   /api/webhook/payment:
     post:
       tags: [webhooks]
