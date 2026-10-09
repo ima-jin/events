@@ -106,6 +106,11 @@ components:
       required: true
       schema: { type: string }
       description: Event id (`evt_...`)
+    TicketId:
+      name: ticketId
+      in: path
+      required: true
+      schema: { type: string }
   responses:
     BadRequest:
       description: Invalid or missing input
@@ -251,6 +256,28 @@ components:
         maxPerOrder: { type: integer, nullable: true }
         accessCode: { type: string, nullable: true }
         createdAt: { type: string, format: date-time }
+    Ticket:
+      type: object
+      description: Row of `events.tickets`.
+      properties:
+        id: { type: string }
+        eventId: { type: string }
+        ticketTypeId: { type: string }
+        ownerDid: { type: string, nullable: true }
+        orderId: { type: string, nullable: true }
+        status:
+          type: string
+          enum: [available, held, valid, used, cancelled, refund_pending, refunded]
+        pricePaid: { type: integer, nullable: true }
+        currency: { type: string, nullable: true }
+        paymentMethod: { type: string, nullable: true, enum: [stripe, etransfer, balance, free] }
+        heldBy: { type: string, nullable: true }
+        heldUntil: { type: string, format: date-time, nullable: true }
+        holdExpiresAt: { type: string, format: date-time, nullable: true }
+        registrationStatus: { type: string, enum: [not_required, pending, complete] }
+        purchasedAt: { type: string, format: date-time, nullable: true }
+        usedAt: { type: string, format: date-time, nullable: true }
+        lastEmailSentAt: { type: string, format: date-time, nullable: true }
     CartItem:
       type: object
       required: [ticketTypeId, quantity]
@@ -786,6 +813,128 @@ paths:
         "500": { $ref: "#/components/responses/ServerError" }
 
   # ───────────────────────── tickets ─────────────────────────
+  /api/events/{id}/tickets/{ticketId}/cancel:
+    parameters:
+      - $ref: "#/components/parameters/EventId"
+      - $ref: "#/components/parameters/TicketId"
+    post:
+      tags: [tickets]
+      operationId: cancelTicket
+      summary: Cancel a held or available (unconfirmed) ticket (creator or cohost)
+      security:
+        - appToken: [events:write]
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Ticket cancelled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ticket: { $ref: "#/components/schemas/Ticket" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/events/{id}/tickets/{ticketId}/mark-refund-sent:
+    parameters:
+      - $ref: "#/components/parameters/EventId"
+      - $ref: "#/components/parameters/TicketId"
+    post:
+      tags: [tickets]
+      operationId: markRefundSent
+      summary: Complete a pending e-Transfer refund (`refund_pending` → `refunded`)
+      security:
+        - appToken: [events:write]
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Refund marked as sent
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ticket:
+                    type: object
+                    properties:
+                      id: { type: string }
+                      status: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /api/events/{id}/tickets/{ticketId}/refund:
+    parameters:
+      - $ref: "#/components/parameters/EventId"
+      - $ref: "#/components/parameters/TicketId"
+    post:
+      tags: [tickets]
+      operationId: refundTicket
+      summary: Refund a valid ticket (creator or cohost)
+      description: >
+        Stripe tickets are refunded through the pay service first. e-Transfer tickets move to
+        `refund_pending` and the response carries `manualRefundRequired`. Free tickets skip the pay service.
+      security:
+        - appToken: [events:write]
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Ticket refunded or refund pending
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ticket:
+                    type: object
+                    properties:
+                      id: { type: string }
+                      status: { type: string }
+                  manualRefundRequired: { type: boolean }
+                  refundEmail: { type: string }
+                  refundAmount: { type: string }
+                  refundCurrency: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+
+  /api/tickets/{id}/confirm-payment:
+    post:
+      tags: [tickets]
+      operationId: confirmTicketPayment
+      deprecated: true
+      summary: Confirm an e-Transfer hold for a ticket (use the order-level route instead)
+      description: Creator or cohost only. Kept for orphan tickets without an order.
+      security:
+        - appToken: [events:write]
+        - cookieAuth: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Held tickets confirmed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ticket: { $ref: "#/components/schemas/Ticket" }
+                  confirmedCount: { type: integer }
+                  orderId: { type: string, nullable: true }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
   /api/checkout:
     post:
       tags: [checkout]
@@ -928,6 +1077,61 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
         "429": { $ref: "#/components/responses/RateLimited" }
         "500": { $ref: "#/components/responses/ServerError" }
+
+  /api/orders/{id}/confirm-payment:
+    post:
+      tags: [orders]
+      operationId: confirmOrderPayment
+      summary: Confirm an order's e-Transfer payment (creator or cohost)
+      security:
+        - appToken: [events:write]
+        - cookieAuth: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string }, description: Order id }
+      responses:
+        "200":
+          description: All held e-Transfer tickets of the order confirmed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  confirmedCount: { type: integer }
+                  orderId: { type: string }
+                  tickets: { type: array, items: { type: string } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /api/orders/{id}/refund:
+    post:
+      tags: [orders]
+      operationId: refundOrder
+      summary: Refund every valid/used ticket in an order (creator or cohost)
+      security:
+        - appToken: [events:write]
+        - cookieAuth: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string }, description: Order id }
+      responses:
+        "200":
+          description: Order refunded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  orderId: { type: string }
+                  refundedTickets: { type: integer }
+                  status: { type: string, enum: [refunded] }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+        "502": { $ref: "#/components/responses/BadGateway" }
 
   /api/balance:
     get:
