@@ -3,7 +3,7 @@ import { createLogger } from '@ima-jin/logger';
 import { db, tickets, ticketTypes } from '@/db';
 
 const log = createLogger('events');
-import { requireAuth } from '@/lib/auth';
+import { requireActor } from '@/lib/route-guards';
 import { eq, and, lt } from 'drizzle-orm';
 
 const DEFAULT_HOLD_HOURS = 72;
@@ -15,12 +15,10 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const authResult = await requireAuth(request);
-  if ('error' in authResult) {
-    return NextResponse.json({ error: authResult.error }, { status: authResult.status });
-  }
+  const actor = await requireActor(request);
+  if (actor instanceof NextResponse) return actor;
 
-  const { identity } = authResult;
+  const { identity } = actor;
   const { id } = await params;
 
   try {
@@ -134,12 +132,10 @@ export async function POST(
  * DELETE /api/events/[id]/hold - Release a hold
  */
 export async function DELETE(request: NextRequest) {
-  const authResult = await requireAuth(request);
-  if ('error' in authResult) {
-    return NextResponse.json({ error: authResult.error }, { status: authResult.status });
-  }
+  const actor = await requireActor(request);
+  if (actor instanceof NextResponse) return actor;
 
-  const { identity } = authResult;
+  const { identity } = actor;
 
   try {
     const { searchParams } = new URL(request.url);

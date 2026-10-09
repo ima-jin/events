@@ -3,7 +3,7 @@ import { createLogger } from '@ima-jin/logger';
 import { db, ticketQueue, ticketTypes } from '@/db';
 
 const log = createLogger('events');
-import { requireAuth, resolveActingDid } from '@/lib/auth';
+import { requireActor } from '@/lib/route-guards';
 import { eq, and, max } from 'drizzle-orm';
 import { randomBytes } from 'node:crypto';
 
@@ -11,13 +11,10 @@ import { randomBytes } from 'node:crypto';
  * GET /api/events/[id]/queue - Check queue position
  */
 export async function GET(request: NextRequest) {
-  const authResult = await requireAuth(request);
-  if ('error' in authResult) {
-    return NextResponse.json({ error: authResult.error }, { status: authResult.status });
-  }
+  const actor = await requireActor(request);
+  if (actor instanceof NextResponse) return actor;
 
-  const { identity } = authResult;
-  const did = resolveActingDid(identity);
+  const { did } = actor;
   const { searchParams } = new URL(request.url);
   const ticketTypeId = searchParams.get('ticketTypeId');
 
@@ -76,13 +73,10 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const authResult = await requireAuth(request);
-  if ('error' in authResult) {
-    return NextResponse.json({ error: authResult.error }, { status: authResult.status });
-  }
+  const actor = await requireActor(request);
+  if (actor instanceof NextResponse) return actor;
 
-  const { identity } = authResult;
-  const did = resolveActingDid(identity);
+  const { did } = actor;
   const { id } = await params;
 
   try {
@@ -160,13 +154,10 @@ export async function POST(
  * DELETE /api/events/[id]/queue - Leave the queue
  */
 export async function DELETE(request: NextRequest) {
-  const authResult = await requireAuth(request);
-  if ('error' in authResult) {
-    return NextResponse.json({ error: authResult.error }, { status: authResult.status });
-  }
+  const actor = await requireActor(request);
+  if (actor instanceof NextResponse) return actor;
 
-  const { identity } = authResult;
-  const did = resolveActingDid(identity);
+  const { did } = actor;
   const { searchParams } = new URL(request.url);
   const ticketTypeId = searchParams.get('ticketTypeId');
 

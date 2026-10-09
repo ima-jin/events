@@ -4,7 +4,7 @@ import { revalidatePath } from 'next/cache';
 
 const log = createLogger('events');
 import { db, events } from '@/db';
-import { requireAuth, resolveActingDid } from '@/lib/auth';
+import { requireActor } from '@/lib/route-guards';
 import { isEventOrganizer } from '@/lib/organizer';
 import { eq } from 'drizzle-orm';
 import { validateManifest } from '@ima-jin/fair';
@@ -17,13 +17,10 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const authResult = await requireAuth(request);
-  if ('error' in authResult) {
-    return NextResponse.json({ error: authResult.error }, { status: authResult.status });
-  }
+  const actor = await requireActor(request);
+  if (actor instanceof NextResponse) return actor;
 
-  const { identity } = authResult;
-  const did = resolveActingDid(identity);
+  const { did } = actor;
   const { id } = await params;
 
   try {

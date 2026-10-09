@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@ima-jin/logger';
 import { publish } from '@/lib/domain-events';
-import { requireAuth, resolveActingDid } from '@/lib/auth';
+import { requireActor } from '@/lib/route-guards';
 import { evaluateEligibility } from '@/lib/kernel';
 import { isEventOrganizer } from '@/lib/organizer';
 import { getClient } from '@/db';
@@ -48,13 +48,10 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string; ticketId: string }> }
 ) {
-  const authResult = await requireAuth(request);
-  if ('error' in authResult) {
-    return NextResponse.json({ error: authResult.error }, { status: authResult.status });
-  }
+  const actor = await requireActor(request);
+  if (actor instanceof NextResponse) return actor;
 
-  const { identity } = authResult;
-  const did = resolveActingDid(identity);
+  const { identity, did } = actor;
   const { id, ticketId } = await params;
 
   try {

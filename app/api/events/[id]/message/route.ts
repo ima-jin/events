@@ -1,10 +1,9 @@
 import { serviceUrl } from '@/lib/kernel';
 import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@ima-jin/logger';
-import { requireAuth, resolveActingDid } from '@/lib/auth';
+import { denyUnlessOrganizer, requireActor, type Actor } from '@/lib/route-guards';
 
 const log = createLogger('events');
-import { isEventOrganizer } from '@/lib/organizer';
 import { holdingTicketStatuses } from '@/lib/ticket-holding';
 import { getClient } from '@/db';
 import { eventUrl, buildPublicUrlAbsolute } from '@ima-jin/config';
@@ -21,17 +20,12 @@ interface MessageFilter {
   ticketTypeIds?: string[];
 }
 
-async function checkAuth(request: NextRequest, eventId: string) {
-  const authResult = await requireAuth(request);
-  if ('error' in authResult) {
-    return { error: authResult.error, status: authResult.status };
-  }
-  const did = resolveActingDid(authResult.identity);
-  const orgCheck = await isEventOrganizer(eventId, did, request);
-  if (!orgCheck.authorized) {
-    return { error: 'Forbidden', status: 403 };
-  }
-  return { identity: authResult.identity };
+/** Authenticate the caller and require them to organize the event; resolves to the actor or the error response. */
+async function authorizeOrganizer(request: NextRequest, eventId: string): Promise<Actor | NextResponse> {
+  const actor = await requireActor(request);
+  if (actor instanceof NextResponse) return actor;
+  const denied = await denyUnlessOrganizer(request, eventId, actor.did);
+  return denied ?? actor;
 }
 
 async function queryRecipients(eventId: string, filter?: MessageFilter) {
@@ -99,10 +93,8 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const auth = await checkAuth(request, id);
-  if ('error' in auth) {
-    return NextResponse.json({ error: auth.error }, { status: auth.status });
-  }
+  const actor = await authorizeOrganizer(request, id);
+  if (actor instanceof NextResponse) return actor;
 
   const { searchParams } = new URL(request.url);
   const filterType = searchParams.get('filterType') as MessageFilter['type'] | null;
@@ -133,19 +125,10 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const authResult = await requireAuth(request);
-  if ('error' in authResult) {
-    return NextResponse.json({ error: authResult.error }, { status: authResult.status });
-  }
-
-  const { identity } = authResult;
-  const did = resolveActingDid(identity);
   const { id } = await params;
-
-  const orgCheck = await isEventOrganizer(id, did, request);
-  if (!orgCheck.authorized) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  }
+  const actor = await authorizeOrganizer(request, id);
+  if (actor instanceof NextResponse) return actor;
+  const { identity } = actor;
 
   let body: { subject: string; markdown: string; filter?: MessageFilter };
   try {

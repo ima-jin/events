@@ -2,7 +2,7 @@ import { serviceUrl } from '@/lib/kernel';
 import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@ima-jin/logger';
 import { db, events } from '@/db';
-import { requireAuth, resolveActingDid } from '@/lib/auth';
+import { requireActor } from '@/lib/route-guards';
 
 const log = createLogger('events');
 import { eq } from 'drizzle-orm';
@@ -205,13 +205,10 @@ export async function GET(request: NextRequest, props: { params: Promise<{ id: s
  */
 export async function POST(request: NextRequest, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
-  const authResult = await requireAuth(request);
-  if ('error' in authResult) {
-    return NextResponse.json({ error: authResult.error }, { status: authResult.status });
-  }
+  const actor = await requireActor(request);
+  if (actor instanceof NextResponse) return actor;
 
-  const { identity } = authResult;
-  const did = resolveActingDid(identity);
+  const { did } = actor;
   const { id } = params;
 
   try {

@@ -6,8 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, eventInvites } from '@/db';
 import { eq } from 'drizzle-orm';
-import { requireAuth, resolveActingDid } from '@/lib/auth';
-import { isEventOrganizer } from '@/lib/organizer';
+import { requireActor, denyUnlessOrganizer } from '@/lib/route-guards';
 import { randomBytes } from 'node:crypto';
 import { eventUrl, buildPublicUrlAbsolute } from '@ima-jin/config';
 
@@ -17,17 +16,13 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const authResult = await requireAuth(request);
-  if ('error' in authResult) {
-    return NextResponse.json({ error: authResult.error }, { status: authResult.status });
-  }
+  const actor = await requireActor(request);
+  if (actor instanceof NextResponse) return actor;
 
   const { id } = await params;
-  const did = resolveActingDid(authResult.identity);
-  const check = await isEventOrganizer(id, did, request);
-  if (!check.authorized) {
-    return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
-  }
+  const { did } = actor;
+  const denied = await denyUnlessOrganizer(request, id, did, 'Not authorized');
+  if (denied) return denied;
 
   const invites = await db
     .select()
@@ -46,17 +41,13 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const authResult = await requireAuth(request);
-  if ('error' in authResult) {
-    return NextResponse.json({ error: authResult.error }, { status: authResult.status });
-  }
+  const actor = await requireActor(request);
+  if (actor instanceof NextResponse) return actor;
 
   const { id } = await params;
-  const did = resolveActingDid(authResult.identity);
-  const check = await isEventOrganizer(id, did, request);
-  if (!check.authorized) {
-    return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
-  }
+  const { did } = actor;
+  const denied = await denyUnlessOrganizer(request, id, did, 'Not authorized');
+  if (denied) return denied;
 
   const body = await request.json();
   const { label, maxUses, expiresAt } = body;
