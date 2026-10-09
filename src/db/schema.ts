@@ -5,7 +5,11 @@ import { text, timestamp, jsonb, integer, boolean, index, pgSchema } from 'drizz
  * in every deployment). It never creates tables outside this schema and never
  * reads/writes a kernel schema or another app's schema — see docs/MIGRATIONS.md.
  */
-const appSchemaName = process.env.APP_DB_SCHEMA;
+// `next build` evaluates route modules while collecting page data, with no
+// runtime env present. Nothing connects to a database during the build, so the
+// canonical name stands in there; at runtime the env var is still mandatory.
+const isNextBuild = process.env.NEXT_PHASE === 'phase-production-build';
+const appSchemaName = process.env.APP_DB_SCHEMA ?? (isNextBuild ? 'events' : undefined);
 if (!appSchemaName) {
   throw new Error('APP_DB_SCHEMA is not set — see .env.example and docs/MIGRATIONS.md.');
 }
@@ -163,7 +167,7 @@ export const tickets = eventsSchema.table('tickets', {
   currency: text('currency'),
   paymentId: text('payment_id'),                            // Reference to pay service
   
-  // Status: available, held, sold, used, cancelled
+  // Status: available, held, valid, sold, used, cancelled (valid = bought/given; sold = legacy, still counts as held)
   status: text('status').notNull().default('available'),
   
   // Hold info

@@ -18,6 +18,7 @@ import { db, tickets, events } from '@/db';
 const log = createLogger('events');
 import { getClient } from '@/db';
 import { listMemberPodIds } from '@/lib/kernel';
+import { holdingTicketStatuses } from '@/lib/ticket-holding';
 import { eq, and, inArray, gt } from 'drizzle-orm';
 
 export const dynamic = 'force-dynamic';
@@ -59,7 +60,7 @@ export async function GET(
       .where(
         and(
           eq(tickets.ownerDid, ownerDid),
-          inArray(tickets.status, ['sold', 'used']),
+          inArray(tickets.status, holdingTicketStatuses()),
           gt(events.startsAt, now)
         )
       );
@@ -137,7 +138,7 @@ export async function GET(
           .where(
             and(
               eq(tickets.ownerDid, viewerDid),
-              inArray(tickets.status, ['sold', 'used']),
+              inArray(tickets.status, holdingTicketStatuses()),
               inArray(tickets.eventId, privateEvents.map((r) => r.eventId))
             )
           );

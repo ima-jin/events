@@ -5,6 +5,7 @@ import { requireAuth, resolveActingDid } from '@/lib/auth';
 
 const log = createLogger('events');
 import { isEventOrganizer } from '@/lib/organizer';
+import { holdingTicketStatuses } from '@/lib/ticket-holding';
 import { getClient } from '@/db';
 import { eventUrl, buildPublicUrlAbsolute } from '@ima-jin/config';
 
@@ -42,7 +43,7 @@ async function queryRecipients(eventId: string, filter?: MessageFilter) {
             SELECT DISTINCT owner_did
             FROM events.tickets
             WHERE event_id = ${eventId}
-              AND status IN ('valid', 'used')
+              AND status = ANY(${holdingTicketStatuses()})
               AND owner_did IS NOT NULL
               AND ticket_type_id = ANY(${filter.ticketTypeIds})
           `;
@@ -54,7 +55,7 @@ async function queryRecipients(eventId: string, filter?: MessageFilter) {
           SELECT DISTINCT owner_did
           FROM events.tickets
           WHERE event_id = ${eventId}
-            AND status IN ('valid', 'used')
+            AND status = ANY(${holdingTicketStatuses()})
             AND owner_did IS NOT NULL
             AND registration_status = 'complete'
         `;
@@ -65,7 +66,7 @@ async function queryRecipients(eventId: string, filter?: MessageFilter) {
           SELECT DISTINCT owner_did
           FROM events.tickets
           WHERE event_id = ${eventId}
-            AND status IN ('valid', 'used')
+            AND status = ANY(${holdingTicketStatuses()})
             AND owner_did IS NOT NULL
             AND (registration_status IS NULL OR registration_status != 'complete')
         `;
@@ -81,7 +82,7 @@ async function queryRecipients(eventId: string, filter?: MessageFilter) {
     SELECT DISTINCT owner_did
     FROM events.tickets
     WHERE event_id = ${eventId}
-      AND status IN ('valid', 'used')
+      AND status = ANY(${holdingTicketStatuses()})
       AND owner_did IS NOT NULL
   `;
   return rows.map((r) => r.owner_did as string);
