@@ -6,6 +6,9 @@ const HELD_STATUSES = ['sold', 'used'];
 /** Event statuses a creator / co-host still lists on their profile. */
 const LISTED_EVENT_STATUSES = ['draft', 'published'];
 
+/** Timestamp as postgres.js returns it: a Date, or an ISO string through raw SQL. */
+export type DateLike = string | Date;
+
 /** One ticket row of the organizer guest list (ticket + type + order columns). */
 export interface GuestTicketRow {
   id: string;
@@ -13,13 +16,13 @@ export interface GuestTicketRow {
   owner_did: string | null;
   price_paid: number | null;
   currency: string | null;
-  purchased_at: string | Date | null;
-  used_at: string | Date | null;
+  purchased_at: DateLike | null;
+  used_at: DateLike | null;
   payment_method: string | null;
   payment_id: string | null;
-  hold_expires_at: string | Date | null;
+  hold_expires_at: DateLike | null;
   registration_status: string | null;
-  last_email_sent_at: string | Date | null;
+  last_email_sent_at: DateLike | null;
   ticket_type: string;
   registration_form_id: string | null;
   fair_settlement: unknown;
@@ -33,10 +36,10 @@ export interface GuestExportRow {
   id: string;
   status: string;
   owner_did: string | null;
-  purchased_at: string | Date | null;
+  purchased_at: DateLike | null;
   payment_method: string | null;
   ticket_payment_id: string | null;
-  payment_confirmed_at: string | Date | null;
+  payment_confirmed_at: DateLike | null;
   registration_status: string | null;
   order_id: string | null;
   ticket_type: string;
@@ -61,8 +64,8 @@ export interface AttendingEventRow {
 interface PodEventRecord {
   event_id: string;
   title: string;
-  starts_at: string | Date;
-  ends_at: string | Date | null;
+  starts_at: DateLike;
+  ends_at: DateLike | null;
   venue: string | null;
   access_mode: string;
   image_url: string | null;

@@ -13,6 +13,7 @@ import {
   listTicketedEvents,
   type AttendingEventRow,
   type GuestExportRow,
+  type DateLike,
   type GuestTicketRow,
 } from '@/repositories/guests-repository';
 import { isEventOrganizer } from '@/services/authorization';
@@ -22,7 +23,7 @@ const log = createLogger('events');
 
 const FORBIDDEN_MESSAGE = 'Forbidden';
 const CSV_BOM = '\uFEFF';
-const INACTIVE_STATUSES = ['cancelled', 'refunded'];
+const INACTIVE_STATUSES = new Set(['cancelled', 'refunded']);
 const EXPORT_HEADERS = [
   'Ticket ID',
   'Order ID',
@@ -45,19 +46,19 @@ export interface GuestListEntry {
   ownerDid: string | null;
   pricePaid: number | null;
   currency: string | null;
-  purchasedAt: string | Date | null;
-  usedAt: string | Date | null;
+  purchasedAt: DateLike | null;
+  usedAt: DateLike | null;
   ticketType: string;
   paymentMethod: string | null;
   paymentId: string | null;
-  holdExpiresAt: string | Date | null;
+  holdExpiresAt: DateLike | null;
   profile: { name: string | null; handle: string | null; avatar: null; email: string | null } | null;
   registrationStatus: string | null;
   attendeeName: string | null;
   resolvedName: string | null;
   resolvedEmail: string | null;
   guestOf: string | null;
-  lastEmailSentAt: string | Date | null;
+  lastEmailSentAt: DateLike | null;
   fairSettlement: unknown;
   orderAmountTotal: number | null;
 }
@@ -199,7 +200,7 @@ export async function getGuestSummary(
   options: GuestExportOptions = {},
 ): Promise<GuestSummary> {
   const { rows } = await loadExportRows(eventId, actorDid, options);
-  const cancelled = rows.filter((t) => INACTIVE_STATUSES.includes(t.status)).length;
+  const cancelled = rows.filter((t) => INACTIVE_STATUSES.has(t.status)).length;
   return {
     total: rows.length,
     valid: rows.length - cancelled,
@@ -209,7 +210,7 @@ export async function getGuestSummary(
   };
 }
 
-function proofOfPayment(method: string | null, status: string, confirmedAt: string | Date | null): string {
+function proofOfPayment(method: string | null, status: string, confirmedAt: DateLike | null): string {
   if (!method) return '';
   if (method === 'free') return 'free / n/a';
   if (method === 'etransfer') {
@@ -344,5 +345,6 @@ export async function listAttendingEvents(
     visible = [...publicEvents, ...privateEvents.filter((r) => owned.has(r.eventId) || held.has(r.eventId))];
   }
 
-  return visible.sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime()).map(toAttendingEvent);
+  const ordered = visible.toSorted((a, b) => a.startsAt.getTime() - b.startsAt.getTime());
+  return ordered.map(toAttendingEvent);
 }
