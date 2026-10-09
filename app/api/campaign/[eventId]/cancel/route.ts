@@ -13,11 +13,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuth, resolveActingDid } from '@/lib/auth';
 import { db, events, pledges } from '@/db';
-import { eq, and, sql } from 'drizzle-orm';
+import { eq, and, sql, inArray } from 'drizzle-orm';
 import { corsHeaders, rateLimit, getClientIP } from '@ima-jin/config';
 import { withLogger } from '@ima-jin/logger';
 
-export async function OPTIONS(request: NextRequest) {
+export function OPTIONS(request: NextRequest) {
   return new NextResponse(null, { status: 204, headers: corsHeaders(request) });
 }
 
@@ -85,11 +85,11 @@ export const POST = withLogger('events', async (request: NextRequest, { log }) =
         )
       );
 
-    for (const p of cancelledPledges) {
+    if (cancelledPledges.length > 0) {
       await db
         .update(pledges)
         .set({ status: 'cancelled' })
-        .where(eq(pledges.id, p.id));
+        .where(inArray(pledges.id, cancelledPledges.map((p) => p.id)));
     }
 
     // Also mark the event as cancelled

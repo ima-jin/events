@@ -28,7 +28,7 @@ import { randomBytes } from 'node:crypto';
 
 const PAY_SERVICE_URL = (serviceUrl('pay') ?? '');
 
-export async function OPTIONS(request: NextRequest) {
+export function OPTIONS(request: NextRequest) {
   return new NextResponse(null, { status: 204, headers: corsHeaders(request) });
 }
 

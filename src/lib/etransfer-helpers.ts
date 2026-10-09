@@ -240,11 +240,10 @@ export async function findExistingEtransferOrder(
       ),
     );
 
-  for (const existing of existingOrders) {
-    const result = await checkOrderMatchesCart(existing, cartMap, etransferEmail);
-    if (result) return result;
-  }
-  return null;
+  const results = await Promise.all(
+    existingOrders.map((existing) => checkOrderMatchesCart(existing, cartMap, etransferEmail))
+  );
+  return results.find((result) => result !== null) ?? null;
 }
 
 async function checkOrderMatchesCart(

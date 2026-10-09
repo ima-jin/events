@@ -13,10 +13,9 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@ima-jin/logger';
-import { db, tickets, events } from '@/db';
+import { db, tickets, events, getClient } from '@/db';
 
 const log = createLogger('events');
-import { getClient } from '@/db';
 import { listMemberPodIds } from '@/lib/kernel';
 import { holdingTicketStatuses } from '@/lib/ticket-holding';
 import { eq, and, inArray, gt } from 'drizzle-orm';

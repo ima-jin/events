@@ -198,18 +198,20 @@ export async function validateCart(
 
   const typesById = await fetchTicketTypesById(eventId);
 
-  for (const item of items) {
-    const tt = getCartItemTicketType(item, typesById);
+  const cartTypes = items.map((item) => getCartItemTicketType(item, typesById));
 
-    if (checkMaxPerOrder) {
-      const metaMax = eventMetadata?.maxTicketsPerOrder;
-      assertMaxPerOrder(item, tt, typeof metaMax === 'number' ? metaMax : undefined);
+  if (checkMaxPerOrder) {
+    const metaMax = eventMetadata?.maxTicketsPerOrder;
+    for (const [i, item] of items.entries()) {
+      assertMaxPerOrder(item, cartTypes[i], typeof metaMax === 'number' ? metaMax : undefined);
     }
-    if (releaseExpiredHolds) {
-      await releaseExpiredHoldsForItem(item);
-    }
-    if (checkAvailability) {
-      assertAvailability(item, tt, availabilityStatusCode);
+  }
+  if (releaseExpiredHolds) {
+    await Promise.all(items.map((item) => releaseExpiredHoldsForItem(item)));
+  }
+  if (checkAvailability) {
+    for (const [i, item] of items.entries()) {
+      assertAvailability(item, cartTypes[i], availabilityStatusCode);
     }
   }
 
@@ -447,35 +449,30 @@ async function insertTicketsForCart(
   params: CreateOrderWithTicketsParams,
 ): Promise<Ticket[]> {
   const { cart, typesById } = params;
-  const createdTickets: Ticket[] = [];
-  let idx = 0;
+  const specs = cart.flatMap((item) =>
+    Array.from({ length: item.quantity }, () => ({ item, tt: typesById.get(item.ticketTypeId)! }))
+  );
+  if (specs.length === 0) return [];
 
-  for (const item of cart) {
-    const tt = typesById.get(item.ticketTypeId)!;
+  const ids = specs.map((_, idx) => `tkt_${Date.now().toString(36)}_${randomBytes(3).toString('hex')}_${idx}`);
+  const signatures = await Promise.all(ids.map((ticketId) => resolveTicketSignature(ticketId, params)));
 
-    for (let i = 0; i < item.quantity; i++) {
-      const ticketId = `tkt_${Date.now().toString(36)}_${randomBytes(3).toString('hex')}_${idx++}`;
-      const signature = await resolveTicketSignature(ticketId, params);
-
-      const [ticket] = await db
-        .insert(tickets)
-        .values(buildTicketInsertValues(ticketId, item, tt, order, signature, params))
-        .returning();
-
-      createdTickets.push(ticket);
-    }
-  }
-
-  return createdTickets;
+  // One multi-row insert; `returning()` yields the rows in input order.
+  return db
+    .insert(tickets)
+    .values(specs.map(({ item, tt }, i) => buildTicketInsertValues(ids[i], item, tt, order, signatures[i], params)))
+    .returning();
 }
 
 async function incrementSoldCounts(cart: CartItem[]): Promise<void> {
-  for (const item of cart) {
-    await db
-      .update(ticketTypes)
-      .set({ sold: sql`${ticketTypes.sold} + ${item.quantity}` })
-      .where(eq(ticketTypes.id, item.ticketTypeId));
-  }
+  await Promise.all(
+    cart.map((item) =>
+      db
+        .update(ticketTypes)
+        .set({ sold: sql`${ticketTypes.sold} + ${item.quantity}` })
+        .where(eq(ticketTypes.id, item.ticketTypeId))
+    )
+  );
 }
 
 /**

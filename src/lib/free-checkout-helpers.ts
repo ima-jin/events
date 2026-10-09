@@ -1,4 +1,4 @@
-import { serviceUrl } from '@/lib/kernel';
+import { serviceUrl, createOnboardToken, getIdentityTier } from '@/lib/kernel';
 /**
  * Helpers for the free (RSVP) checkout route.
  * Extracted from app/api/checkout/free/route.ts to reduce cognitive complexity.
@@ -12,7 +12,6 @@ import { resolveCheckoutIdentity } from '@/lib/checkout-common';
 import { eventUrl } from '@ima-jin/config';
 import { generateQRCode } from '@/lib/email';
 import { publish } from '@/lib/domain-events';
-import { createOnboardToken, getIdentityTier } from '@/lib/kernel';
 import type { Logger } from '@ima-jin/logger';
 import type { TicketType, Ticket, EventInvite } from '@/db/schema';
 

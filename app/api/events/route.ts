@@ -3,9 +3,8 @@ import { NextResponse } from 'next/server';
 import { withLogger, type Logger } from '@ima-jin/logger';
 import { publish } from '@/lib/domain-events';
 import { db, events, ticketTypes } from '@/db';
-import { resolveActingDid } from '@/lib/auth';
 import { requireAppAuth } from '@ima-jin/auth';
-import { requireHardDID, type EventsIdentity } from '@/lib/auth';
+import { requireHardDID, resolveActingDid, type EventsIdentity } from '@/lib/auth';
 import { corsHeaders, getNodeSelf, getForestScopeConfig } from '@ima-jin/config';
 import { buildFairManifest } from '@ima-jin/fair';
 import { and, asc, desc, eq, gt } from 'drizzle-orm';
@@ -102,13 +101,12 @@ async function resolveScopeFeeBps(scopeDid: string | null): Promise<number | nul
 
 /** Insert the ticket types provided at event-creation time, returning the created rows. */
 async function createTicketTypesForEvent(eventId: string, ticketTypesInput: unknown): Promise<Array<typeof ticketTypes.$inferSelect>> {
-  const createdTicketTypes: Array<typeof ticketTypes.$inferSelect> = [];
-  if (!Array.isArray(ticketTypesInput)) return createdTicketTypes;
+  if (!Array.isArray(ticketTypesInput) || ticketTypesInput.length === 0) return [];
 
-  for (const tt of ticketTypesInput) {
-    const ttId = `tkt_type_${randomBytes(8).toString('hex')}`;
-    const [ticketType] = await db.insert(ticketTypes).values({
-      id: ttId,
+  // One multi-row insert; `returning()` yields the rows in input order.
+  return db.insert(ticketTypes).values(
+    ticketTypesInput.map((tt) => ({
+      id: `tkt_type_${randomBytes(8).toString('hex')}`,
       eventId,
       name: tt.name,
       description: tt.description,
@@ -116,10 +114,8 @@ async function createTicketTypesForEvent(eventId: string, ticketTypesInput: unkn
       currency: tt.currency || 'USD',
       quantity: tt.quantity,
       perks: tt.perks || [],
-    }).returning();
-    createdTicketTypes.push(ticketType);
-  }
-  return createdTicketTypes;
+    }))
+  ).returning();
 }
 
 /** Best-effort: create the event's chat conversation, add the creator as admin, and sync its name-display policy. */

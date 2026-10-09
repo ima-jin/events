@@ -107,18 +107,20 @@ async function migrateSoftDidToHard(email: string, hardDid: string, eventId: str
 
     const CHAT_URL = serviceUrl('chat');
     if (CHAT_URL) {
-      for (const softDid of softDids) {
-        try {
-          await fetch(`${CHAT_URL}/api/participants/migrate`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ fromDid: softDid, toDid: hardDid }),
-          });
-          log.info({ softDid, hardDid }, 'Migrated chat participation');
-        } catch (chatError) {
-          log.warn({ softDid, err: String(chatError) }, 'Chat migration failed (non-fatal)');
-        }
-      }
+      await Promise.all(
+        softDids.map(async (softDid) => {
+          try {
+            await fetch(`${CHAT_URL}/api/participants/migrate`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ fromDid: softDid, toDid: hardDid }),
+            });
+            log.info({ softDid, hardDid }, 'Migrated chat participation');
+          } catch (chatError) {
+            log.warn({ softDid, err: String(chatError) }, 'Chat migration failed (non-fatal)');
+          }
+        })
+      );
     }
   } catch (error) {
     log.error({ err: String(error) }, 'migrateSoftDidToHard error');
@@ -199,7 +201,7 @@ function publishWebhookTicketsPurchased(
         to: ownerDid,
         interestDids: [ownerDid],
       }
-    });
+    }).catch((err) => log.error({ ticketId: ticket.id, err: String(err) }, '[webhook] ticket.purchased publish error'));
   }
 }
 

@@ -20,13 +20,9 @@ const log = createLogger('events');
 
 /** Owner DIDs whose kernel tier is soft (or unknown) — only those tickets migrate. */
 async function filterSoftDids(ownerDids: string[], hardDid: string): Promise<string[]> {
-  const soft: string[] = [];
-  for (const did of ownerDids) {
-    if (did === hardDid) continue;
-    const tier = await getIdentityTier(did);
-    if (!tier || tier === 'soft') soft.push(did);
-  }
-  return soft;
+  const candidates = ownerDids.filter((did) => did !== hardDid);
+  const tiers = await Promise.all(candidates.map((did) => getIdentityTier(did)));
+  return candidates.filter((_, i) => !tiers[i] || tiers[i] === 'soft');
 }
 
 export async function POST(request: NextRequest) {
@@ -87,18 +83,20 @@ export async function POST(request: NextRequest) {
     // Migrate chat participation for each soft DID
     const CHAT_URL = serviceUrl('chat');
     if (CHAT_URL) {
-      for (const softDid of softDids) {
-        try {
-          await fetch(`${CHAT_URL}/api/participants/migrate`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ fromDid: softDid, toDid: hardDid }),
-          });
-          log.info({ softDid, hardDid }, 'Migrated chat participation');
-        } catch (chatError) {
-          log.warn({ softDid, err: String(chatError) }, 'Chat migration failed (non-fatal)');
-        }
-      }
+      await Promise.all(
+        softDids.map(async (softDid) => {
+          try {
+            await fetch(`${CHAT_URL}/api/participants/migrate`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ fromDid: softDid, toDid: hardDid }),
+            });
+            log.info({ softDid, hardDid }, 'Migrated chat participation');
+          } catch (chatError) {
+            log.warn({ softDid, err: String(chatError) }, 'Chat migration failed (non-fatal)');
+          }
+        })
+      );
     }
 
     return NextResponse.json({ migrated: softTickets.length });

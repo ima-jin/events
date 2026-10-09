@@ -121,12 +121,16 @@ export async function resolveProfiles(dids: string[]): Promise<Map<string, Resol
   const result = new Map<string, ResolvedProfile>();
   const unique = Array.from(new Set(dids.filter(Boolean)));
 
+  const batches: string[][] = [];
   for (let i = 0; i < unique.length; i += MAX_RESOLVE_BATCH) {
-    const batch = unique.slice(i, i + MAX_RESOLVE_BATCH);
-    const data = await kernelFetch<{ results?: ResolvedProfile[] }>(
-      '/profile/api/resolve',
-      { method: 'POST', body: { dids: batch } }
-    );
+    batches.push(unique.slice(i, i + MAX_RESOLVE_BATCH));
+  }
+  const responses = await Promise.all(
+    batches.map((dids) =>
+      kernelFetch<{ results?: ResolvedProfile[] }>('/profile/api/resolve', { method: 'POST', body: { dids } })
+    )
+  );
+  for (const data of responses) {
     for (const entry of data?.results ?? []) {
       if (entry?.did) result.set(entry.did, entry);
     }
@@ -199,7 +203,7 @@ export async function listMemberPodIds(callerCookie?: string | null): Promise<st
 // kernel refuses. See docs/KERNEL-GAPS.md.
 
 /** Ask the kernel to (re)evaluate a DID's tier eligibility after check-in. */
-export async function evaluateEligibility(did: string): Promise<{ upgraded?: boolean } | null> {
+export function evaluateEligibility(did: string): Promise<{ upgraded?: boolean } | null> {
   return kernelFetch<{ upgraded?: boolean }>('/auth/api/eligibility/evaluate', {
     method: 'POST',
     body: { did },
@@ -225,6 +229,6 @@ export async function backfillContactEmail(did: string, email: string): Promise<
  * caller already treats a missing token as non-fatal (the email is sent
  * without the magic link). See docs/KERNEL-GAPS.md.
  */
-export async function createOnboardToken(): Promise<string | null> {
-  return null;
+export function createOnboardToken(): Promise<string | null> {
+  return Promise.resolve(null);
 }

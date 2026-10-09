@@ -104,16 +104,18 @@ export async function POST(
 
     // Decrement sold counters — non-fatal
     const typeIds = [...new Set(orderTickets.map(t => t.ticketTypeId))];
-    for (const typeId of typeIds) {
-      const count = orderTickets.filter(t => t.ticketTypeId === typeId).length;
-      await db
-        .update(ticketTypes)
-        .set({ sold: sql`GREATEST(${ticketTypes.sold} - ${count}, 0)` })
-        .where(eq(ticketTypes.id, typeId))
-        .catch((err) => {
-          log.error({ err: String(err) }, '[order-refund] Failed to decrement ticket_types.sold (non-fatal)');
-        });
-    }
+    await Promise.all(
+      typeIds.map((typeId) => {
+        const count = orderTickets.filter(t => t.ticketTypeId === typeId).length;
+        return db
+          .update(ticketTypes)
+          .set({ sold: sql`GREATEST(${ticketTypes.sold} - ${count}, 0)` })
+          .where(eq(ticketTypes.id, typeId))
+          .catch((err) => {
+            log.error({ err: String(err) }, '[order-refund] Failed to decrement ticket_types.sold (non-fatal)');
+          });
+      })
+    );
 
     // Mark order as refunded
     await db

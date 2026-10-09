@@ -66,12 +66,14 @@ export async function confirmHeldTickets(
     for (const t of confirmedTickets) {
       byType.set(t.ticketTypeId, (byType.get(t.ticketTypeId) ?? 0) + 1);
     }
-    for (const [ttId, count] of byType.entries()) {
-      await db
-        .update(ticketTypes)
-        .set({ sold: sql`${ticketTypes.sold} + ${count}` })
-        .where(eq(ticketTypes.id, ttId));
-    }
+    await Promise.all(
+      [...byType.entries()].map(([ttId, count]) =>
+        db
+          .update(ticketTypes)
+          .set({ sold: sql`${ticketTypes.sold} + ${count}` })
+          .where(eq(ticketTypes.id, ttId))
+      )
+    );
   }
 
   // Fetch event for attestations + emails

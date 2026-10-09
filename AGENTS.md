@@ -188,7 +188,8 @@ Full text: `ima-jin/conventions/ISSUE-CONVENTIONS.md`. This §7 is kept in sync 
 - **Database:** owns exactly one Postgres schema, `APP_DB_SCHEMA=events` (8 tables, see `src/db/schema.ts`). The
   baseline in `migrations/0000_events_schema.sql` reproduces the kernel's final `events` schema (ima-jin/imajin-ai#2514).
   Cross-schema access is a contract violation — see `docs/MIGRATIONS.md`.
-- **Status:** step 1 of 5 (#1988) — schema/migrations only. App routes, UI and kernel-API wiring are ported in later steps.
+- **Status:** step 2 of 5 (#1988) — schema/migrations plus every kernel API route, its tests and `api-spec/openapi.yaml`
+  (see `docs/PORT-2515.md`). UI pages and the remaining kernel gaps (`docs/KERNEL-GAPS.md`) are later steps.
 - **Scope guardrails specific to this app:**
   - Do not add tables outside the `events` schema, and never reference `auth`, `profile`, `dykil`, `learn`, or any
     other kernel/app schema — identities (`*_did`) and cross-app ids (`course_slug`, `registration_form_id`,

@@ -26,7 +26,7 @@ import { withLogger } from '@ima-jin/logger';
 const PAY_SERVICE_URL = (serviceUrl('pay') ?? '');
 const PAY_SERVICE_API_KEY = process.env.PAY_SERVICE_API_KEY!;
 
-export async function OPTIONS(request: NextRequest) {
+export function OPTIONS(request: NextRequest) {
   return new NextResponse(null, { status: 204, headers: corsHeaders(request) });
 }
 
@@ -142,19 +142,15 @@ export const POST = withLogger('events', async (request: NextRequest, { log }) =
     const chargeResult = await payRes.json();
 
     // Update pledge statuses based on results
-    for (const result of chargeResult.results || []) {
-      if (result.status === 'charged') {
-        await db
-          .update(pledges)
-          .set({ status: 'charged', chargedAt: new Date() })
-          .where(eq(pledges.id, result.pledgeId));
-      } else {
-        await db
-          .update(pledges)
-          .set({ status: 'failed', failureReason: result.error || 'Charge failed' })
-          .where(eq(pledges.id, result.pledgeId));
-      }
-    }
+    await Promise.all(
+      (chargeResult.results || []).map((result: { status: string; pledgeId: string; error?: string }) => {
+        const update =
+          result.status === 'charged'
+            ? { status: 'charged', chargedAt: new Date() }
+            : { status: 'failed', failureReason: result.error || 'Charge failed' };
+        return db.update(pledges).set(update).where(eq(pledges.id, result.pledgeId));
+      })
+    );
 
     return NextResponse.json(chargeResult, { headers: cors });
   } catch (error) {

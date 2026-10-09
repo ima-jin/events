@@ -190,28 +190,24 @@ function publishPurchaseReceipt(params: ReceiptParams): void {
     eventImageUrl, anyPendingRegistration, log,
   } = params;
 
-  try {
-    publish('ticket.receipt', {
-      issuer: ownerDid, subject: ownerDid, scope: 'events',
-      payload: {
-        email: customerEmail,
-        buyerName: customerName || undefined,
-        eventTitle: event.title,
-        eventDate: formattedEventDate,
-        eventTime: formattedEventTime,
-        ticketSummary: [{ typeName: firstTypeName, quantity, unitPrice }],
-        totalPaid: formattedTotal,
-        paymentMethod: paymentId ? 'Credit Card' : 'E-Transfer',
-        registrationUrl,
-        eventImageUrl,
-        hasRegistrationRequired: anyPendingRegistration,
-        context_id: event.id,
-        context_type: 'event',
-      },
-    }).catch((err) => log.error({ customerEmail, err: String(err) }, '[webhook] Purchase receipt publish error'));
-  } catch (emailError) {
-    log.error({ customerEmail, err: String(emailError) }, '[webhook] Purchase receipt publish failed');
-  }
+  publish('ticket.receipt', {
+    issuer: ownerDid, subject: ownerDid, scope: 'events',
+    payload: {
+      email: customerEmail,
+      buyerName: customerName || undefined,
+      eventTitle: event.title,
+      eventDate: formattedEventDate,
+      eventTime: formattedEventTime,
+      ticketSummary: [{ typeName: firstTypeName, quantity, unitPrice }],
+      totalPaid: formattedTotal,
+      paymentMethod: paymentId ? 'Credit Card' : 'E-Transfer',
+      registrationUrl,
+      eventImageUrl,
+      hasRegistrationRequired: anyPendingRegistration,
+      context_id: event.id,
+      context_type: 'event',
+    },
+  }).catch((err) => log.error({ customerEmail, err: String(err) }, '[webhook] Purchase receipt publish error'));
 }
 
 interface BundleConfirmParams {
