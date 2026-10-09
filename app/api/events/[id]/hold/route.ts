@@ -133,10 +133,7 @@ export async function POST(
 /**
  * DELETE /api/events/[id]/hold - Release a hold
  */
-export async function DELETE(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function DELETE(request: NextRequest) {
   const authResult = await requireAuth(request);
   if ('error' in authResult) {
     return NextResponse.json({ error: authResult.error }, { status: authResult.status });

@@ -81,10 +81,11 @@ export async function getSurveyResponsesForTickets(
   const queue = refs.filter((r): r is { ticketId: string; formId: string } => Boolean(r.formId));
 
   async function worker(): Promise<void> {
-    for (let next = queue.shift(); next; next = queue.shift()) {
-      const response = await getSurveyResponse(next.formId, next.ticketId);
-      if (response) result.set(next.ticketId, response);
-    }
+    const next = queue.shift();
+    if (!next) return;
+    const response = await getSurveyResponse(next.formId, next.ticketId);
+    if (response) result.set(next.ticketId, response);
+    return worker();
   }
 
   await Promise.all(Array.from({ length: Math.min(LOOKUP_CONCURRENCY, queue.length) }, worker));

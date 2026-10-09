@@ -5,7 +5,7 @@
 
 import { NextResponse } from 'next/server';
 import type { Logger } from '@ima-jin/logger';
-import type { CartItem } from '@/lib/checkout-common';
+import type { CartItem, EventMetadata } from '@/lib/checkout-common';
 import type { AppCheckoutAuth } from './pay-settle';
 
 const MAX_QUANTITY = 20;
@@ -61,7 +61,7 @@ export function normalizeCheckoutCart(body: {
 export function validateCheckoutCartLimits(
   cart: CartItem[],
   typesById: Map<string, { name: string; maxPerOrder?: number | null; quantity: number | null; sold?: number | null }>,
-  eventMeta: Record<string, any>,
+  eventMeta: EventMetadata,
 ): NextResponse | null {
   for (const item of cart) {
     const tt = typesById.get(item.ticketTypeId)!;

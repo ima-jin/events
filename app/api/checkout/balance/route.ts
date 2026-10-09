@@ -133,7 +133,7 @@ export const POST = withLogger('events', async (request, { log }) => {
       ticketStatus: 'valid',
       paymentId: transactionId,
       eventDid: event.did,
-      eventPrivateKey: (event as any).privateKey,
+      eventPrivateKey: event.privateKey,
       customerEmail: buyerEmail,
       log,
       incrementSold: true,

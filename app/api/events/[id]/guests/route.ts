@@ -66,17 +66,17 @@ export async function GET(
 
     // Survey answers come from dykil's public API (never its tables).
     const surveyByTicket = await getSurveyResponsesForTickets(
-      ticketRows.map((t: any) => ({ ticketId: t.id, formId: t.registration_form_id }))
+      ticketRows.map((t) => ({ ticketId: t.id, formId: t.registration_form_id }))
     );
 
     // Batch-resolve unique owner/buyer DIDs via the kernel's batched
     // profile resolve route (src/lib/kernel.ts).
     const uniqueDids = [...new Set(
-      ticketRows.flatMap((t: any) => [t.owner_did, t.buyer_did]).filter(Boolean)
+      ticketRows.flatMap((t) => [t.owner_did, t.buyer_did]).filter(Boolean)
     )] as string[];
     const resolvedMap = await resolveIdentitiesForDids(uniqueDids);
 
-    const guests = ticketRows.map((t: any) => {
+    const guests = ticketRows.map((t) => {
       const ownerResolved = t.owner_did ? resolvedMap.get(t.owner_did) : undefined;
       const buyerResolved = t.buyer_did ? resolvedMap.get(t.buyer_did) : undefined;
 

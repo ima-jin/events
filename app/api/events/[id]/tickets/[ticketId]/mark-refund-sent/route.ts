@@ -1,12 +1,11 @@
 ﻿import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@ima-jin/logger';
-import { db, events } from '@/db';
 import { isEventOrganizer } from '@/lib/organizer';
 
 const log = createLogger('events');
 import { requireAuth, resolveActingDid } from '@/lib/auth';
 import { eq } from 'drizzle-orm';
-import { getClient } from '@/db';
+import { db, events, getClient } from '@/db';
 
 const sqlClient = getClient();
 

@@ -82,7 +82,7 @@ export async function GET(request: NextRequest) {
     `;
 
     // Batch-resolve creator handles
-    const creatorDids = [...new Set(rows.map((r: any) => r.creator_did).filter(Boolean))] as string[];
+    const creatorDids = [...new Set(rows.map((r) => r.creator_did).filter(Boolean))] as string[];
     const handleMap = new Map<string, string | null>();
     await Promise.all(
       creatorDids.map(async (did) => {

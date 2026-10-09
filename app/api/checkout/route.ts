@@ -19,6 +19,7 @@ import {
   loadPublishedEvent,
   createSoftDidFromEmail,
   CheckoutValidationError,
+  type EventMetadata,
 } from '@/lib/checkout-common';
 import { prepareAppCheckout } from '@/lib/pay-settle';
 import {
@@ -81,7 +82,7 @@ export const POST = withLogger('events', async (request, { log, correlationId })
     // validateCart: type existence + currency consistency. Max-per-order
     // and availability are checked inline below so error messages keep the
     // type-name prefix the route surfaced before this refactor.
-    const eventMeta = (event.metadata || {}) as Record<string, any>;
+    const eventMeta = (event.metadata || {}) as EventMetadata;
     const { typesById, totalQuantity, currency: cartCurrency } = await validateCart(
       body.eventId,
       cart,

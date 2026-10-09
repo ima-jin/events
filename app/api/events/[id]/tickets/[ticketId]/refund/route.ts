@@ -1,15 +1,13 @@
-import { serviceUrl } from '@/lib/kernel';
 ﻿import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@ima-jin/logger';
-import { db, events, ticketTypes } from '@/db';
 import { isEventOrganizer } from '@/lib/organizer';
 
 const log = createLogger('events');
 import { requireAuth, resolveActingDid } from '@/lib/auth';
-import { getContactEmail as resolveEmailForDid } from '@/lib/kernel';
+import { serviceUrl, getContactEmail as resolveEmailForDid } from '@/lib/kernel';
 import { getSurveyResponseForTicket } from '@/lib/ticket-survey';
 import { eq, sql } from 'drizzle-orm';
-import { getClient } from '@/db';
+import { db, events, ticketTypes, getClient } from '@/db';
 import { publish } from '@/lib/domain-events';
 import { eventUrl, buildPublicUrlAbsolute } from '@ima-jin/config';
 

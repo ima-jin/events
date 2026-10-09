@@ -114,10 +114,10 @@ export async function GET(
 
     if (summaryMode) {
       const total = ticketRows.length;
-      const valid = ticketRows.filter((t: any) => !['cancelled', 'refunded'].includes(t.status)).length;
-      const pendingRegistration = ticketRows.filter((t: any) => t.registration_status === 'pending').length;
-      const completeRegistration = ticketRows.filter((t: any) => t.registration_status === 'complete').length;
-      const cancelled = ticketRows.filter((t: any) => ['cancelled', 'refunded'].includes(t.status)).length;
+      const valid = ticketRows.filter((t) => !['cancelled', 'refunded'].includes(t.status)).length;
+      const pendingRegistration = ticketRows.filter((t) => t.registration_status === 'pending').length;
+      const completeRegistration = ticketRows.filter((t) => t.registration_status === 'complete').length;
+      const cancelled = ticketRows.filter((t) => ['cancelled', 'refunded'].includes(t.status)).length;
       return NextResponse.json({ total, valid, pendingRegistration, completeRegistration, cancelled });
     }
 
@@ -126,18 +126,18 @@ export async function GET(
     // auth.identities / auth.credentials joins this query used to run for
     // itself, plus the separate per-DID AUTH_SERVICE_URL /api/lookup call.
     const uniqueDids = [...new Set(
-      ticketRows.flatMap((t: any) => [t.owner_did, t.buyer_did]).filter(Boolean)
+      ticketRows.flatMap((t) => [t.owner_did, t.buyer_did]).filter(Boolean)
     )] as string[];
     const resolvedMap = await resolveIdentitiesForDids(uniqueDids);
 
     // Survey answers come from dykil's public API (never its tables); dykil
     // returns the most recent response per ticket.
     const surveyByTicket = await getSurveyResponsesForTickets(
-      ticketRows.map((t: any) => ({ ticketId: t.id, formId: t.registration_form_id }))
+      ticketRows.map((t) => ({ ticketId: t.id, formId: t.registration_form_id }))
     );
 
     // Find distinct form IDs used by this event's ticket types
-    const formIds = [...new Set(ticketRows.map((t: any) => t.registration_form_id).filter(Boolean))] as string[];
+    const formIds = [...new Set(ticketRows.map((t) => t.registration_form_id).filter(Boolean))] as string[];
 
     // Fetch form definitions and build survey column list
     const { surveyColumns, formFieldMap } = await loadSurveyFormData(formIds);
@@ -216,7 +216,7 @@ export async function GET(
 
       // Survey answers
       const surveyValues = buildSurveyValues(
-        { survey_form_id: surveyResponse?.surveyId ?? null, survey_answers: surveyAnswers as any },
+        { survey_form_id: surveyResponse?.surveyId ?? null, survey_answers: surveyAnswers },
         surveyColumns,
         formFieldMap,
       );

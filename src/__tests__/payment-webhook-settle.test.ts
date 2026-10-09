@@ -53,7 +53,6 @@ vi.mock('@/lib/checkout-common', () => ({ createOrderWithTickets: mocks.createOr
 vi.mock('@/lib/pay-settle', () => ({ settleCompletedOrder: mocks.settleCompletedOrder }));
 vi.mock('@/lib/webhook-payment-helpers', () => ({
   parseCartFromMetadata: () => [{ ticketTypeId: 'tt_1', quantity: 2 }],
-  createOnboardToken: vi.fn().mockResolvedValue('onboard-token'),
   syncBuyerToEventChat: vi.fn().mockResolvedValue(undefined),
   publishConfirmationEmails: mocks.publishConfirmationEmails,
 }));

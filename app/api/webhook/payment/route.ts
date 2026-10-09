@@ -1,4 +1,4 @@
-import { serviceUrl, publicServiceUrl } from '@/lib/kernel';
+import { serviceUrl, publicServiceUrl, createOnboardToken } from '@/lib/kernel';
 /**
  * POST /api/webhook/payment
  *
@@ -22,7 +22,6 @@ import * as bus from '@/lib/domain-events';
 import { settleCompletedOrder } from '@/lib/pay-settle';
 import {
   parseCartFromMetadata,
-  createOnboardToken,
   syncBuyerToEventChat,
   publishConfirmationEmails,
   type CartEntry,
@@ -109,18 +108,20 @@ async function migrateSoftDidToHard(email: string, hardDid: string, eventId: str
 
     const CHAT_URL = serviceUrl('chat');
     if (CHAT_URL) {
-      for (const softDid of softDids) {
-        try {
-          await fetch(`${CHAT_URL}/api/participants/migrate`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ fromDid: softDid, toDid: hardDid }),
-          });
-          log.info({ softDid, hardDid }, 'Migrated chat participation');
-        } catch (chatError) {
-          log.warn({ softDid, err: String(chatError) }, 'Chat migration failed (non-fatal)');
-        }
-      }
+      await Promise.all(
+        softDids.map(async (softDid) => {
+          try {
+            await fetch(`${CHAT_URL}/api/participants/migrate`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ fromDid: softDid, toDid: hardDid }),
+            });
+            log.info({ softDid, hardDid }, 'Migrated chat participation');
+          } catch (chatError) {
+            log.warn({ softDid, err: String(chatError) }, 'Chat migration failed (non-fatal)');
+          }
+        })
+      );
     }
   } catch (error) {
     log.error({ err: String(error) }, 'migrateSoftDidToHard error');
@@ -201,7 +202,7 @@ function publishWebhookTicketsPurchased(
         to: ownerDid,
         interestDids: [ownerDid],
       }
-    });
+    }).catch((err) => log.error({ err: String(err), ticketId: ticket.id }, 'ticket.purchased publish error'));
   }
 }
 
@@ -265,27 +266,20 @@ interface WebhookRegistrationInfo {
  */
 async function resolveWebhookRegistrationInfo(
   createdTickets: Array<{ id: string; registrationStatus?: string | null }>,
-  event: { id: string; title: string },
-  customerEmail: string,
-  customerName: string | null | undefined,
+  event: { id: string },
 ): Promise<WebhookRegistrationInfo> {
   const EVENTS_URL = buildPublicUrlAbsolute('events');
   const eventsAuthUrl = publicServiceUrl('auth');
 
   const registrationPendingTickets = createdTickets.filter((t) => t.registrationStatus === 'pending');
   const ctaTicket = registrationPendingTickets[0] ?? null;
-  const anyPendingRegistration = registrationPendingTickets.length > 0;
 
-  const onboardRedirectUrl = ctaTicket
-    ? eventRegisterUrl(EVENTS_URL, event.id, ctaTicket.id)
-    : eventMyTicketsUrl(EVENTS_URL, event.id);
-
-  const onboardToken = await createOnboardToken(customerEmail, customerName, onboardRedirectUrl, event.title, log);
+  const onboardToken = await createOnboardToken();
   const magicLink = onboardToken ? `${eventsAuthUrl}/api/onboard/verify?token=${onboardToken}` : undefined;
-  const registrationBaseUrl = onboardToken
-    ? `${eventsAuthUrl}/api/onboard/verify?token=${onboardToken}`
-    : eventRegisterUrl(EVENTS_URL, event.id, ctaTicket!.id);
-  const registrationUrl = anyPendingRegistration ? registrationBaseUrl : eventMyTicketsUrl(EVENTS_URL, event.id);
+  let registrationUrl = eventMyTicketsUrl(EVENTS_URL, event.id);
+  if (ctaTicket) {
+    registrationUrl = magicLink ?? eventRegisterUrl(EVENTS_URL, event.id, ctaTicket.id);
+  }
 
   return { magicLink, registrationUrl };
 }
@@ -424,12 +418,7 @@ async function handleCheckoutCompleted(payload: PaymentWebhookPayload) {
   });
 
   // Build onboard token for magic-link auth in confirmation email
-  const { magicLink, registrationUrl } = await resolveWebhookRegistrationInfo(
-    createdTickets,
-    event,
-    customerEmail,
-    customerName,
-  );
+  const { magicLink, registrationUrl } = await resolveWebhookRegistrationInfo(createdTickets, event);
 
   await publishConfirmationEmails({
     customerEmail,

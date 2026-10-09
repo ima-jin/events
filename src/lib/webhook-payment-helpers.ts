@@ -1,11 +1,10 @@
-import { publicServiceUrl } from '@/lib/kernel';
 /**
  * Helpers for the Stripe payment webhook.
  * Extracted from app/api/webhook/payment/route.ts to reduce cognitive complexity.
  */
 
-import { randomBytes } from 'node:crypto';
-import { createOnboardToken as createKernelOnboardToken } from '@/lib/kernel';
+import type { Logger } from '@ima-jin/logger';
+import { publicServiceUrl } from '@/lib/kernel';
 import { publish } from '@/lib/domain-events';
 import { eventUrl, buildPublicUrlAbsolute } from '@ima-jin/config';
 import { generateQRCode } from '@/lib/email';
@@ -49,26 +48,6 @@ export function parseCartFromMetadata(metadata: PaymentMetadata): CartEntry[] {
 }
 
 // ---------------------------------------------------------------------------
-// Onboard token creation
-// ---------------------------------------------------------------------------
-
-/**
- * Create an onboard token for the buyer so their confirmation email can
- * contain a magic link. Returns null on failure (non-fatal — email is still
- * sent). gap(kernel): a registered app cannot mint one today, so this
- * resolves to null — see `createOnboardToken` in src/lib/kernel.ts.
- */
-export async function createOnboardToken(
-  _customerEmail: string,
-  _customerName: string | null | undefined,
-  _onboardRedirectUrl: string,
-  _eventTitle: string,
-  _log: unknown,
-): Promise<string | null> {
-  return createKernelOnboardToken();
-}
-
-// ---------------------------------------------------------------------------
 // Chat sync
 // ---------------------------------------------------------------------------
 
@@ -80,7 +59,7 @@ export async function syncBuyerToEventChat(
   chatUrl: string,
   eventDid: string,
   ownerDid: string,
-  log: any,
+  log: Logger,
 ): Promise<void> {
   try {
     const memberRes = await fetch(`${chatUrl}/api/d/${encodeURIComponent(eventDid)}/members`, {
@@ -126,7 +105,7 @@ export interface ConfirmationEmailParams {
   paymentId?: string;
   magicLink?: string;
   registrationUrl: string;
-  log: any;
+  log: Logger;
 }
 
 /**
@@ -197,7 +176,7 @@ interface ReceiptParams {
   registrationUrl: string;
   eventImageUrl?: string;
   anyPendingRegistration: boolean;
-  log: any;
+  log: Logger;
 }
 
 function publishPurchaseReceipt(params: ReceiptParams): void {
@@ -207,28 +186,24 @@ function publishPurchaseReceipt(params: ReceiptParams): void {
     eventImageUrl, anyPendingRegistration, log,
   } = params;
 
-  try {
-    publish('ticket.receipt', {
-      issuer: ownerDid, subject: ownerDid, scope: 'events',
-      payload: {
-        email: customerEmail,
-        buyerName: customerName || undefined,
-        eventTitle: event.title,
-        eventDate: formattedEventDate,
-        eventTime: formattedEventTime,
-        ticketSummary: [{ typeName: firstTypeName, quantity, unitPrice }],
-        totalPaid: formattedTotal,
-        paymentMethod: paymentId ? 'Credit Card' : 'E-Transfer',
-        registrationUrl,
-        eventImageUrl,
-        hasRegistrationRequired: anyPendingRegistration,
-        context_id: event.id,
-        context_type: 'event',
-      },
-    }).catch((err) => log.error({ customerEmail, err: String(err) }, '[webhook] Purchase receipt publish error'));
-  } catch (emailError) {
-    log.error({ customerEmail, err: String(emailError) }, '[webhook] Purchase receipt publish failed');
-  }
+  publish('ticket.receipt', {
+    issuer: ownerDid, subject: ownerDid, scope: 'events',
+    payload: {
+      email: customerEmail,
+      buyerName: customerName || undefined,
+      eventTitle: event.title,
+      eventDate: formattedEventDate,
+      eventTime: formattedEventTime,
+      ticketSummary: [{ typeName: firstTypeName, quantity, unitPrice }],
+      totalPaid: formattedTotal,
+      paymentMethod: paymentId ? 'Credit Card' : 'E-Transfer',
+      registrationUrl,
+      eventImageUrl,
+      hasRegistrationRequired: anyPendingRegistration,
+      context_id: event.id,
+      context_type: 'event',
+    },
+  }).catch((err) => log.error({ customerEmail, err: String(err) }, '[webhook] Purchase receipt publish error'));
 }
 
 interface BundleConfirmParams {
@@ -250,7 +225,7 @@ interface BundleConfirmParams {
   eventImageUrl?: string;
   EVENTS_URL: string;
   AUTH_URL: string;
-  log: any;
+  log: Logger;
 }
 
 async function publishBundleConfirmation(params: BundleConfirmParams): Promise<void> {

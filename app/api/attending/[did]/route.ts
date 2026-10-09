@@ -13,10 +13,9 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@ima-jin/logger';
-import { db, tickets, events } from '@/db';
 
 const log = createLogger('events');
-import { getClient } from '@/db';
+import { db, tickets, events, getClient } from '@/db';
 import { listMemberPodIds } from '@/lib/kernel';
 import { eq, and, inArray, gt } from 'drizzle-orm';
 
@@ -96,7 +95,7 @@ export async function GET(
           AND e.status IN ('draft', 'published')
           AND e.starts_at > ${now.toISOString()}
       `;
-      cohostRows = podEvents.map((r: any) => ({
+      cohostRows = podEvents.map((r) => ({
         eventId: r.event_id,
         title: r.title,
         startsAt: new Date(r.starts_at),

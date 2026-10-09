@@ -47,11 +47,18 @@ export interface CartItem {
   quantity: number;
 }
 
+/** Free-form event metadata JSON; only the keys the checkout reads are typed. */
+export interface EventMetadata {
+  maxTicketsPerOrder?: number;
+  fair?: unknown;
+  [key: string]: unknown;
+}
+
 export interface ValidateCartOptions {
   checkAvailability?: boolean;
   availabilityStatusCode?: number;
   checkMaxPerOrder?: boolean;
-  eventMetadata?: Record<string, any>;
+  eventMetadata?: EventMetadata;
   releaseExpiredHolds?: boolean;
 }
 
@@ -82,7 +89,7 @@ export interface CreateOrderWithTicketsParams {
   eventDid?: string;
   eventPrivateKey?: string | null;
   customerEmail?: string;
-  log?: any;
+  log?: Logger;
   incrementSold?: boolean;
 }
 
@@ -198,14 +205,15 @@ export async function validateCart(
 
   const typesById = await fetchTicketTypesById(eventId);
 
+  if (releaseExpiredHolds) {
+    await Promise.all(items.map((item) => releaseExpiredHoldsForItem(item)));
+  }
+
   for (const item of items) {
     const tt = getCartItemTicketType(item, typesById);
 
     if (checkMaxPerOrder) {
       assertMaxPerOrder(item, tt, eventMetadata?.maxTicketsPerOrder);
-    }
-    if (releaseExpiredHolds) {
-      await releaseExpiredHoldsForItem(item);
     }
     if (checkAvailability) {
       assertAvailability(item, tt, availabilityStatusCode);
@@ -446,14 +454,13 @@ async function insertTicketsForCart(
   params: CreateOrderWithTicketsParams,
 ): Promise<Ticket[]> {
   const { cart, typesById } = params;
-  const createdTickets: Ticket[] = [];
-  let idx = 0;
+  const pending = cart.flatMap((item) =>
+    Array.from({ length: item.quantity }, () => ({ item, tt: typesById.get(item.ticketTypeId)! }))
+  );
 
-  for (const item of cart) {
-    const tt = typesById.get(item.ticketTypeId)!;
-
-    for (let i = 0; i < item.quantity; i++) {
-      const ticketId = `tkt_${Date.now().toString(36)}_${randomBytes(3).toString('hex')}_${idx++}`;
+  return Promise.all(
+    pending.map(async ({ item, tt }, idx) => {
+      const ticketId = `tkt_${Date.now().toString(36)}_${randomBytes(3).toString('hex')}_${idx}`;
       const signature = await resolveTicketSignature(ticketId, params);
 
       const [ticket] = await db
@@ -461,20 +468,20 @@ async function insertTicketsForCart(
         .values(buildTicketInsertValues(ticketId, item, tt, order, signature, params))
         .returning();
 
-      createdTickets.push(ticket);
-    }
-  }
-
-  return createdTickets;
+      return ticket;
+    })
+  );
 }
 
 async function incrementSoldCounts(cart: CartItem[]): Promise<void> {
-  for (const item of cart) {
-    await db
-      .update(ticketTypes)
-      .set({ sold: sql`${ticketTypes.sold} + ${item.quantity}` })
-      .where(eq(ticketTypes.id, item.ticketTypeId));
-  }
+  await Promise.all(
+    cart.map((item) =>
+      db
+        .update(ticketTypes)
+        .set({ sold: sql`${ticketTypes.sold} + ${item.quantity}` })
+        .where(eq(ticketTypes.id, item.ticketTypeId))
+    )
+  );
 }
 
 /**
@@ -529,7 +536,7 @@ export async function createOrderWithTickets(
 export async function resolveCheckoutIdentity(
   request: NextRequest,
   body: { email?: string; name?: string },
-  log: any,
+  log: Logger,
   opts?: { createSoftDid?: boolean },
 ): Promise<{ did?: string; email?: string }> {
   const session = await optionalAuth(request);
@@ -587,7 +594,7 @@ export async function createSoftDidFromEmail(email: string, name?: string): Prom
  * Backfill the DID's contact email via the kernel (NULL-guarded server-side).
  * This app never writes `profile.profiles` / `auth.identities` directly.
  */
-async function backfillProfileContactEmail(did: string, email: string, log: any): Promise<void> {
+async function backfillProfileContactEmail(did: string, email: string, log: Logger): Promise<void> {
   const ok = await backfillKernelContactEmail(did, email);
   if (!ok) {
     log.warn({ did }, 'backfillProfileContactEmail: kernel refused or unreachable (non-fatal)');

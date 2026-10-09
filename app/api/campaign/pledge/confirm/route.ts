@@ -1,4 +1,3 @@
-import { serviceUrl } from '@/lib/kernel';
 ﻿/**
  * POST /api/campaign/pledge/confirm
  *
@@ -25,9 +24,7 @@ import { eq, and } from 'drizzle-orm';
 import { corsHeaders, rateLimit, getClientIP } from '@ima-jin/config';
 import { withLogger } from '@ima-jin/logger';
 
-const PAY_SERVICE_URL = (serviceUrl('pay') ?? '');
-
-export async function OPTIONS(request: NextRequest) {
+export function OPTIONS(request: NextRequest) {
   return new NextResponse(null, { status: 204, headers: corsHeaders(request) });
 }
 
@@ -94,7 +91,7 @@ export const POST = withLogger('events', async (request: NextRequest, { log }) =
         status: 'confirmed',
         stripePaymentMethodId: paymentMethodId,
         metadata: {
-          ...(pledge.metadata as Record<string, any>),
+          ...(pledge.metadata as Record<string, unknown>),
           confirmedAt: new Date().toISOString(),
         },
       })

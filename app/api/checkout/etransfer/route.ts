@@ -67,7 +67,7 @@ export const POST = withLogger('events', async (request, { log }) => {
     }
     const { event } = eventResult;
 
-    const etransferEmail = (event as any).emtEmail;
+    const etransferEmail = event.emtEmail;
     if (!etransferEmail) {
       return NextResponse.json({ error: 'e-Transfer is not available for this event' }, { status: 400 });
     }

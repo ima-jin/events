@@ -17,7 +17,7 @@ import { eq, and, sql } from 'drizzle-orm';
 import { corsHeaders, rateLimit, getClientIP } from '@ima-jin/config';
 import { withLogger } from '@ima-jin/logger';
 
-export async function OPTIONS(request: NextRequest) {
+export function OPTIONS(request: NextRequest) {
   return new NextResponse(null, { status: 204, headers: corsHeaders(request) });
 }
 
@@ -76,21 +76,15 @@ export const POST = withLogger('events', async (request: NextRequest, { log }) =
 
     // Cancel all pending and confirmed pledges
     const cancelledPledges = await db
-      .select({ id: pledges.id })
-      .from(pledges)
+      .update(pledges)
+      .set({ status: 'cancelled' })
       .where(
         and(
           eq(pledges.eventId, eventId),
           sql`${pledges.status} IN ('pending', 'confirmed')`
         )
-      );
-
-    for (const p of cancelledPledges) {
-      await db
-        .update(pledges)
-        .set({ status: 'cancelled' })
-        .where(eq(pledges.id, p.id));
-    }
+      )
+      .returning({ id: pledges.id });
 
     // Also mark the event as cancelled
     await db

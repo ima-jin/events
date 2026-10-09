@@ -9,6 +9,38 @@ import { getClient } from '@/db';
 const log = createLogger('events');
 const sql = getClient();
 
+interface CheckinWebhookParams {
+  eventId: string;
+  ticketId: string;
+  ownerDid: string | null;
+  checkedInAt: unknown;
+}
+
+/** Fire the optional CHECKIN_WEBHOOK_URL notification. Failures are logged by the caller, never surfaced. */
+async function sendCheckinWebhook(webhookUrl: string, params: CheckinWebhookParams): Promise<void> {
+  const { eventId, ticketId, ownerDid, checkedInAt } = params;
+  const [countRow] = await sql`
+    SELECT COUNT(*) as count FROM events.tickets
+    WHERE event_id = ${eventId} AND used_at IS NOT NULL
+  `;
+  const [eventRow] = await sql`
+    SELECT title FROM events.events WHERE id = ${eventId}
+  `;
+  await fetch(webhookUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      event: 'checkin',
+      eventId,
+      eventTitle: eventRow?.title ?? null,
+      ticketId,
+      ownerDid,
+      checkedInAt,
+      attendeeCount: Number(countRow?.count ?? 0),
+    }),
+  });
+}
+
 /**
  * POST /api/events/[id]/tickets/[ticketId]/check-in — set used_at timestamp (owner or cohost)
  */
@@ -94,32 +126,12 @@ export async function POST(
     // Fire-and-forget check-in webhook — do not block check-in on failure
     const webhookUrl = process.env.CHECKIN_WEBHOOK_URL;
     if (webhookUrl) {
-      (async () => {
-        try {
-          const [countRow] = await sql`
-            SELECT COUNT(*) as count FROM events.tickets
-            WHERE event_id = ${id} AND used_at IS NOT NULL
-          `;
-          const [eventRow] = await sql`
-            SELECT title FROM events.events WHERE id = ${id}
-          `;
-          await fetch(webhookUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              event: 'checkin',
-              eventId: id,
-              eventTitle: eventRow?.title ?? null,
-              ticketId,
-              ownerDid: ticket.owner_did ?? null,
-              checkedInAt: updated.used_at,
-              attendeeCount: Number(countRow?.count ?? 0),
-            }),
-          });
-        } catch (err) {
-          log.error({ err: String(err) }, 'Check-in webhook error');
-        }
-      })();
+      sendCheckinWebhook(webhookUrl, {
+        eventId: id,
+        ticketId,
+        ownerDid: ticket.owner_did ?? null,
+        checkedInAt: updated.used_at,
+      }).catch((err) => log.error({ err: String(err) }, 'Check-in webhook error'));
     }
 
     return NextResponse.json({ ticket: { id: updated.id, usedAt: updated.used_at } });

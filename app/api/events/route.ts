@@ -3,9 +3,8 @@ import { NextResponse } from 'next/server';
 import { withLogger, type Logger } from '@ima-jin/logger';
 import { publish } from '@/lib/domain-events';
 import { db, events, ticketTypes } from '@/db';
-import { resolveActingDid } from '@/lib/auth';
 import { requireAppAuth } from '@ima-jin/auth';
-import { requireHardDID, type EventsIdentity } from '@/lib/auth';
+import { resolveActingDid, requireHardDID, type EventsIdentity } from '@/lib/auth';
 import { corsHeaders, getNodeSelf, getForestScopeConfig } from '@ima-jin/config';
 import { buildFairManifest } from '@ima-jin/fair';
 import { and, asc, desc, eq, gt } from 'drizzle-orm';
@@ -105,10 +104,11 @@ async function createTicketTypesForEvent(eventId: string, ticketTypesInput: unkn
   const createdTicketTypes: Array<typeof ticketTypes.$inferSelect> = [];
   if (!Array.isArray(ticketTypesInput)) return createdTicketTypes;
 
-  for (const tt of ticketTypesInput) {
-    const ttId = `tkt_type_${randomBytes(8).toString('hex')}`;
-    const [ticketType] = await db.insert(ticketTypes).values({
-      id: ttId,
+  if (ticketTypesInput.length === 0) return createdTicketTypes;
+
+  return db.insert(ticketTypes).values(
+    ticketTypesInput.map((tt) => ({
+      id: `tkt_type_${randomBytes(8).toString('hex')}`,
       eventId,
       name: tt.name,
       description: tt.description,
@@ -116,10 +116,8 @@ async function createTicketTypesForEvent(eventId: string, ticketTypesInput: unkn
       currency: tt.currency || 'USD',
       quantity: tt.quantity,
       perks: tt.perks || [],
-    }).returning();
-    createdTicketTypes.push(ticketType);
-  }
-  return createdTicketTypes;
+    }))
+  ).returning();
 }
 
 /** Best-effort: create the event's chat conversation, add the creator as admin, and sync its name-display policy. */
@@ -132,7 +130,7 @@ async function createEventChat(params: {
   nameDisplayPolicy: string | undefined;
   log: Logger;
 }): Promise<void> {
-  const { chatUrl, eventDid, creatorDid, creatorId, title, nameDisplayPolicy, log } = params;
+  const { chatUrl, eventDid, creatorDid, creatorId, nameDisplayPolicy, log } = params;
 
   try {
     await fetch(`${chatUrl}/api/d/${encodeURIComponent(eventDid)}/members`, {
@@ -326,7 +324,7 @@ export const POST = withLogger('events', async (request, { log, correlationId })
  * Supports: ?courseSlug=intro-to-ai&upcoming=true&status=published&limit=20
  */
 /** Fields safe to return for events:read app scope */
-function filterEventForApp(event: Record<string, any>): Record<string, any> {
+function filterEventForApp(event: Record<string, unknown>): Record<string, unknown> {
   const { id, did, creatorDid, title, description, startsAt, endsAt, timezone, locationType, isVirtual, virtualUrl, venue, address, city, country, status, accessMode, imageUrl, imageAssetId, tags, courseSlug, nameDisplayPolicy, chatEnabled, createdAt, updatedAt } = event;
   return { id, did, creatorDid, title, description, startsAt, endsAt, timezone, locationType, isVirtual, virtualUrl, venue, address, city, country, status, accessMode, imageUrl, imageAssetId, tags, courseSlug, nameDisplayPolicy, chatEnabled, createdAt, updatedAt };
 }
@@ -357,7 +355,7 @@ export const GET = withLogger('events', async (request, { log }) => {
         .orderBy(upcoming ? asc(events.startsAt) : desc(events.startsAt))
         .limit(limit);
 
-      return NextResponse.json({ events: eventList.map(e => filterEventForApp(e as Record<string, any>)) }, { headers: cors });
+      return NextResponse.json({ events: eventList.map(e => filterEventForApp(e as Record<string, unknown>)) }, { headers: cors });
     } catch (error) {
       log.error({ err: String(error) }, 'Failed to list events (app auth)');
       return NextResponse.json({ error: 'Failed to list events' }, { status: 500, headers: cors });

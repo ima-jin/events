@@ -28,7 +28,7 @@ import { randomBytes } from 'node:crypto';
 
 const PAY_SERVICE_URL = (serviceUrl('pay') ?? '');
 
-export async function OPTIONS(request: NextRequest) {
+export function OPTIONS(request: NextRequest) {
   return new NextResponse(null, { status: 204, headers: corsHeaders(request) });
 }
 
@@ -148,7 +148,7 @@ export const POST = withLogger('events', async (request: NextRequest, { log }) =
           stripeSetupIntentId: setupIntentId,
           stripeCustomerId: customerId,
           status: 'pending',
-          metadata: { ...(existingPledge.metadata as Record<string, any>), updatedAt: new Date().toISOString() },
+          metadata: { ...(existingPledge.metadata as Record<string, unknown>), updatedAt: new Date().toISOString() },
         })
         .where(eq(pledges.id, existingPledge.id));
     } else {
