@@ -19,6 +19,7 @@ import { backfillContactEmail } from '@/lib/contact-email';
 import { createOrderWithTickets } from '@/lib/checkout-common';
 import { eventRegisterUrl, eventMyTicketsUrl, buildPublicUrlAbsolute } from '@ima-jin/config';
 import * as bus from '@/lib/domain-events';
+import { settleCompletedOrder } from '@/lib/pay-settle';
 import {
   parseCartFromMetadata,
   createOnboardToken,
@@ -213,36 +214,40 @@ interface WebhookSettlementParams {
   createdTickets: Array<{ id: string }>;
   firstTypeId: string;
   sessionId: string;
+  /** Kernel `transactionId` of the app-authenticated checkout, when the pay webhook carries it. */
+  transactionId?: string;
 }
 
 /**
- * Trigger the .fair settlement + notification signal for a completed order.
+ * Settle a completed order (imajin-ai#2739): events calls the pay service's
+ * `/api/settle` itself with its own app-service token. The kernel's bus
+ * `settle` reactor only runs in the kernel process, so announcing the order
+ * from here would not settle anything.
  * Non-fatal — settlement failures are logged, not thrown.
  */
 async function triggerWebhookSettlement(params: WebhookSettlementParams): Promise<void> {
-  const { ownerDid, event, orderId, amountTotal, currency, createdTickets, firstTypeId, sessionId } = params;
-  const eventMetadata = (event.metadata || {}) as Record<string, any>;
+  const { ownerDid, event, orderId, amountTotal, currency, createdTickets, firstTypeId, sessionId, transactionId } = params;
+  const eventMetadata = (event.metadata || {}) as { fair?: unknown };
 
   try {
-    await bus.publish('order.completed', {
-      issuer: ownerDid, subject: event.creatorDid, scope: 'events',
-      payload: {
+    await settleCompletedOrder({
+      sessionId,
+      transactionId,
+      orderId,
+      eventId: event.id,
+      buyerDid: ownerDid,
+      creatorDid: event.creatorDid,
+      amountCents: amountTotal,
+      currency,
+      fairManifest: eventMetadata.fair || null,
+      metadata: {
         orderId,
+        ticketIds: createdTickets.map((t) => t.id),
+        ticketTypeId: firstTypeId,
+        stripeSessionId: sessionId,
         eventId: event.id,
-        eventDid: event.did,
-        buyerDid: ownerDid,
-        amount: amountTotal,
-        currency,
-        fairManifest: eventMetadata.fair || null,
-        metadata: {
-          ticketIds: createdTickets.map(t => t.id),
-          ticketTypeId: firstTypeId,
-          stripeSessionId: sessionId,
-          eventId: event.id,
-        },
-        funded: true,
-        funded_provider: 'stripe',
-      }
+      },
+      log,
     });
   } catch (settleError) {
     log.error({ err: String(settleError) }, '[settle] Unexpected settlement error (non-fatal)');
@@ -289,6 +294,8 @@ interface PaymentWebhookPayload {
   type: 'checkout.completed' | 'payment.failed';
   sessionId: string;
   paymentId?: string;
+  /** Kernel `transactionId` of the app-authenticated checkout — the key `/pay/api/settle` needs (imajin-ai#2739). */
+  transactionId?: string;
   customerEmail: string;
   customerName?: string | null;
   amountTotal: number;
@@ -335,7 +342,7 @@ export const POST = withLogger('events', async (request, { log }) => {
 });
 
 async function handleCheckoutCompleted(payload: PaymentWebhookPayload) {
-  const { metadata, customerName, amountTotal, currency, sessionId, paymentId } = payload;
+  const { metadata, customerName, amountTotal, currency, sessionId, paymentId, transactionId } = payload;
   const customerEmail = payload.customerEmail || null;
 
   // Parse cart: multi-type (cart JSON) or legacy single-type
@@ -403,7 +410,7 @@ async function handleCheckoutCompleted(payload: PaymentWebhookPayload) {
     await syncBuyerToEventChat(CHAT_URL, event.did, ownerDid, log);
   }
 
-  // Trigger settlement and notification signals via bus
+  // Settle through the pay service with events' own app token
   await triggerWebhookSettlement({
     ownerDid,
     event,
@@ -413,6 +420,7 @@ async function handleCheckoutCompleted(payload: PaymentWebhookPayload) {
     createdTickets,
     firstTypeId: firstType.id,
     sessionId,
+    transactionId,
   });
 
   // Build onboard token for magic-link auth in confirmation email

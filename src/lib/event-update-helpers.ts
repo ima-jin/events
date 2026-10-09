@@ -3,6 +3,8 @@
  * Extracted from app/api/events/[id]/route.ts to reduce cognitive complexity.
  */
 
+import { appAuthHeaders } from '@/lib/kernel';
+
 const VALID_NAME_POLICIES = ['real_name', 'handle', 'anonymous', 'attendee_choice'] as const;
 
 export interface EventUpdateBody {
@@ -122,12 +124,14 @@ export async function syncNamePolicyToChat(
   nameDisplayPolicy: unknown,
 ): Promise<void> {
   try {
-    const internalKey = process.env.AUTH_INTERNAL_API_KEY;
+    // Authenticates with this app's own registration credentials (X-App-DID /
+    // X-App-Authorization) — never a kernel-internal shared key. gap(kernel):
+    // chat may refuse a third-party app here; see docs/KERNEL-GAPS.md.
     await fetch(`${chatUrl}/api/d/${encodeURIComponent(eventDid)}/context`, {
       method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',
-        ...(internalKey ? { Authorization: `Bearer ${internalKey}` } : {}),
+        ...appAuthHeaders(),
       },
       body: JSON.stringify({ context: { nameDisplayPolicy } }),
     });

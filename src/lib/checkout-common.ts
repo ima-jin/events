@@ -569,7 +569,7 @@ export async function resolveCheckoutIdentity(
  * Create or retrieve a soft DID from an email via the auth service.
  * Canonical for checkout soft-DID minting.
  */
-async function createSoftDidFromEmail(email: string, name?: string): Promise<string> {
+export async function createSoftDidFromEmail(email: string, name?: string): Promise<string> {
   const authUrl = (serviceUrl('auth') ?? '') || process.env.NEXT_PUBLIC_AUTH_URL;
   const response = await fetch(`${authUrl}/api/session/soft`, {
     method: 'POST',
