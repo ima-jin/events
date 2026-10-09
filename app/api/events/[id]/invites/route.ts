@@ -7,15 +7,15 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db, eventInvites } from '@/db';
 import { eq } from 'drizzle-orm';
 import { requireAuth, resolveActingDid } from '@/lib/auth';
-import { isEventOrganizer } from '@/lib/organizer';
 import { randomBytes } from 'node:crypto';
 import { eventUrl, buildPublicUrlAbsolute } from '@ima-jin/config';
+import { forbidUnlessOrganizer, type IdParams } from '@/lib/route-helpers';
 
 const EVENTS_URL = buildPublicUrlAbsolute('events');
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: IdParams
 ) {
   const authResult = await requireAuth(request);
   if ('error' in authResult) {
@@ -24,10 +24,8 @@ export async function GET(
 
   const { id } = await params;
   const did = resolveActingDid(authResult.identity);
-  const check = await isEventOrganizer(id, did, request);
-  if (!check.authorized) {
-    return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
-  }
+  const forbidden = await forbidUnlessOrganizer(id, did, request, 'Not authorized');
+  if (forbidden) return forbidden;
 
   const invites = await db
     .select()
@@ -44,7 +42,7 @@ export async function GET(
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: IdParams
 ) {
   const authResult = await requireAuth(request);
   if ('error' in authResult) {
@@ -53,10 +51,8 @@ export async function POST(
 
   const { id } = await params;
   const did = resolveActingDid(authResult.identity);
-  const check = await isEventOrganizer(id, did, request);
-  if (!check.authorized) {
-    return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
-  }
+  const forbidden = await forbidUnlessOrganizer(id, did, request, 'Not authorized');
+  if (forbidden) return forbidden;
 
   const body = await request.json();
   const { label, maxUses, expiresAt } = body;

@@ -2,14 +2,13 @@ import { serviceUrl, getContactEmail as resolveEmailForDid } from '@/lib/kernel'
 ﻿import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@ima-jin/logger';
 import { db, events, ticketTypes, getClient } from '@/db';
-import { isEventOrganizer } from '@/lib/organizer';
 
 const log = createLogger('events');
-import { requireAuth, resolveActingDid } from '@/lib/auth';
 import { getSurveyResponseForTicket } from '@/lib/ticket-survey';
 import { eq, sql } from 'drizzle-orm';
 import { publish } from '@/lib/domain-events';
 import { eventUrl, buildPublicUrlAbsolute } from '@ima-jin/config';
+import { authenticateActing, forbidUnlessOrganizer, type TicketParams } from '@/lib/route-helpers';
 
 const sqlClient = getClient();
 
@@ -195,15 +194,11 @@ async function notifyRefundCustomer(params: {
  */
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string; ticketId: string }> }
+  { params }: TicketParams
 ) {
-  const authResult = await requireAuth(request);
-  if ('error' in authResult) {
-    return NextResponse.json({ error: authResult.error }, { status: authResult.status });
-  }
-
-  const { identity } = authResult;
-  const did = resolveActingDid(identity);
+  const auth = await authenticateActing(request);
+  if (auth instanceof NextResponse) return auth;
+  const { did } = auth;
   const { id, ticketId } = await params;
 
   try {
@@ -213,10 +208,8 @@ export async function POST(
     }
 
     // Refund is organizer-only (creator or cohost)
-    const orgCheck = await isEventOrganizer(id, did, request);
-    if (!orgCheck.authorized) {
-      return NextResponse.json({ error: 'Only event organizers can issue refunds' }, { status: 403 });
-    }
+    const forbidden = await forbidUnlessOrganizer(id, did, request, 'Only event organizers can issue refunds');
+    if (forbidden) return forbidden;
 
     const ticket = await loadTicketForRefund(id, ticketId);
     if (!ticket) {

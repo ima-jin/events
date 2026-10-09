@@ -1,4 +1,4 @@
-import { serviceUrl, getIdentityTier } from '@/lib/kernel';
+import { getIdentityTier } from '@/lib/kernel';
 /**
  * POST /events/api/migrate-tickets
  *
@@ -14,6 +14,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@ima-jin/logger';
 import { db, tickets } from '@/db';
 import { and, inArray, sql } from 'drizzle-orm';
+import { migrateChatParticipation } from '@/lib/chat-sync';
 import { requireAppAuth } from '@ima-jin/auth';
 
 const log = createLogger('events');
@@ -80,24 +81,7 @@ export async function POST(request: NextRequest) {
       'Migrated tickets from soft DIDs to hard DID'
     );
 
-    // Migrate chat participation for each soft DID
-    const CHAT_URL = serviceUrl('chat');
-    if (CHAT_URL) {
-      await Promise.all(
-        softDids.map(async (softDid) => {
-          try {
-            await fetch(`${CHAT_URL}/api/participants/migrate`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ fromDid: softDid, toDid: hardDid }),
-            });
-            log.info({ softDid, hardDid }, 'Migrated chat participation');
-          } catch (chatError) {
-            log.warn({ softDid, err: String(chatError) }, 'Chat migration failed (non-fatal)');
-          }
-        })
-      );
-    }
+    await migrateChatParticipation(softDids, hardDid, log);
 
     return NextResponse.json({ migrated: softTickets.length });
 

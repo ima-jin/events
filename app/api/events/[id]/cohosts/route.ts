@@ -2,11 +2,11 @@ import { serviceUrl } from '@/lib/kernel';
 ﻿import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@ima-jin/logger';
 import { db, events } from '@/db';
-import { requireAuth, resolveActingDid } from '@/lib/auth';
 
 const log = createLogger('events');
 import { eq } from 'drizzle-orm';
 import { resolveCoHostDid, type ResolveCoHostResult } from '@/lib/cohost-helpers';
+import { authenticateActing } from '@/lib/route-helpers';
 
 const AUTH_SERVICE_URL = (serviceUrl('auth') ?? '');
 const CONNECTIONS_SERVICE_URL = (serviceUrl('connections') ?? '');
@@ -205,13 +205,9 @@ export async function GET(request: NextRequest, props: { params: Promise<{ id: s
  */
 export async function POST(request: NextRequest, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
-  const authResult = await requireAuth(request);
-  if ('error' in authResult) {
-    return NextResponse.json({ error: authResult.error }, { status: authResult.status });
-  }
-
-  const { identity } = authResult;
-  const did = resolveActingDid(identity);
+  const auth = await authenticateActing(request);
+  if (auth instanceof NextResponse) return auth;
+  const { did } = auth;
   const { id } = params;
 
   try {

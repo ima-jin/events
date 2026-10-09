@@ -4,20 +4,19 @@ import { revalidatePath } from 'next/cache';
 
 const log = createLogger('events');
 import { db, ticketTypes } from '@/db';
-import { requireAuth, resolveActingDid } from '@/lib/auth';
 import { requireAppAuth } from '@ima-jin/auth';
 import { corsHeaders } from '@ima-jin/config';
-import { isEventOrganizer } from '@/lib/organizer';
 import { eq, and, asc, isNull } from 'drizzle-orm';
 import { randomBytes } from 'node:crypto';
 import { buildTierUpdates } from '@/lib/tiers-helpers';
+import { authenticateActing, forbidUnlessOrganizer, type IdParams } from '@/lib/route-helpers';
 
 /**
  * GET /api/events/[id]/tiers - List public ticket tiers (excludes access-code-protected)
  */
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: IdParams
 ) {
   const cors = corsHeaders(request);
   const { id } = await params;
@@ -71,23 +70,17 @@ export async function GET(
  */
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: IdParams
 ) {
-  const authResult = await requireAuth(request);
-  if ('error' in authResult) {
-    return NextResponse.json({ error: authResult.error }, { status: authResult.status });
-  }
-
-  const { identity } = authResult;
-  const did = resolveActingDid(identity);
+  const auth = await authenticateActing(request);
+  if (auth instanceof NextResponse) return auth;
+  const { did } = auth;
   const { id } = await params;
 
   try {
     // Check authorization
-    const orgCheck = await isEventOrganizer(id, did, request);
-    if (!orgCheck.authorized) {
-      return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
-    }
+    const forbidden = await forbidUnlessOrganizer(id, did, request, 'Not authorized');
+    if (forbidden) return forbidden;
 
     const body = await request.json();
 
@@ -152,22 +145,16 @@ export async function POST(
  */
 export async function PUT(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: IdParams
 ) {
-  const authResult = await requireAuth(request);
-  if ('error' in authResult) {
-    return NextResponse.json({ error: authResult.error }, { status: authResult.status });
-  }
-
-  const { identity } = authResult;
-  const did = resolveActingDid(identity);
+  const auth = await authenticateActing(request);
+  if (auth instanceof NextResponse) return auth;
+  const { did } = auth;
   const { id } = await params;
 
   try {
-    const orgCheck = await isEventOrganizer(id, did, request);
-    if (!orgCheck.authorized) {
-      return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
-    }
+    const forbidden = await forbidUnlessOrganizer(id, did, request, 'Not authorized');
+    if (forbidden) return forbidden;
 
     const body = await request.json();
     const { tierId } = body;

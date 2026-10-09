@@ -9,24 +9,19 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@ima-jin/logger';
 import { db, tickets, orders } from '@/db';
-import { requireAuth, resolveActingDid } from '@/lib/auth';
-import { isEventOrganizer } from '@/lib/organizer';
 import { confirmHeldTickets } from '@/lib/confirm-payment';
 import { eq, and } from 'drizzle-orm';
+import { authenticateActing, forbidUnlessOrganizer, type IdParams } from '@/lib/route-helpers';
 
 const log = createLogger('events');
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: IdParams
 ) {
-  const authResult = await requireAuth(request);
-  if ('error' in authResult) {
-    return NextResponse.json({ error: authResult.error }, { status: authResult.status });
-  }
-
-  const { identity } = authResult;
-  const did = resolveActingDid(identity);
+  const auth = await authenticateActing(request);
+  if (auth instanceof NextResponse) return auth;
+  const { did } = auth;
   const { id: orderId } = await params;
 
   try {
@@ -42,10 +37,8 @@ export async function POST(
     }
 
     // Verify caller is an event organizer
-    const orgCheck = await isEventOrganizer(order.eventId, did, request);
-    if (!orgCheck.authorized) {
-      return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
-    }
+    const forbidden = await forbidUnlessOrganizer(order.eventId, did, request, 'Not authorized');
+    if (forbidden) return forbidden;
 
     // Find all held e-Transfer tickets in this order
     const heldTickets = await db

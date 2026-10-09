@@ -6,6 +6,7 @@ const log = createLogger('events');
 import { requireAuth, resolveActingDid } from '@/lib/auth';
 import { eq, and } from 'drizzle-orm';
 import { isPodMember } from '@/lib/kernel';
+import { type IdParams } from '@/lib/route-helpers';
 
 
 /**
@@ -14,7 +15,7 @@ import { isPodMember } from '@/lib/kernel';
  */
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: IdParams
 ) {
   const authResult = await requireAuth(request);
   if ('error' in authResult) {

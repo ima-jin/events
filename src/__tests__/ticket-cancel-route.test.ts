@@ -14,59 +14,8 @@
  *  - 200 cancels an 'available' ticket
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { NextRequest } from 'next/server';
-
-// ─── Mocks ──────────────────────────────────────────────────────────────────
-
-const mocks = vi.hoisted(() => {
-  // Drizzle select chain: db.select().from(x).where(y).limit(n)
-  const whereMock = vi.fn();
-  const fromMock = vi.fn(() => ({ where: whereMock }));
-  const selectMock = vi.fn(() => ({ from: fromMock }));
-
-  // Drizzle update chain: db.update(x).set(y).where(z).returning()
-  const returningMock = vi.fn().mockResolvedValue([]);
-  const updateWhereMock = vi.fn(() => ({ returning: returningMock }));
-  const setMock = vi.fn(() => ({ where: updateWhereMock }));
-  const updateMock = vi.fn(() => ({ set: setMock }));
-
-  const requireAuthMock = vi.fn();
-  const isEventOrganizerMock = vi.fn();
-
-  return {
-    whereMock,
-    fromMock,
-    selectMock,
-    returningMock,
-    updateWhereMock,
-    setMock,
-    updateMock,
-    requireAuthMock,
-    isEventOrganizerMock,
-  };
-});
-
-vi.mock('@ima-jin/logger', () => ({
-  createLogger: vi.fn(() => ({ error: vi.fn(), info: vi.fn(), warn: vi.fn() })),
-}));
-
-vi.mock('@/db', () => ({
-  db: {
-    select: mocks.selectMock,
-    update: mocks.updateMock,
-  },
-  tickets: { id: 'col_id', eventId: 'col_eventId', status: 'col_status' },
-}));
-
-vi.mock('@/lib/auth', () => ({
-  requireAuth: mocks.requireAuthMock,
-  resolveActingDid: (identity: { id: string }) => identity.id,
-}));
-
-vi.mock('@/lib/organizer', () => ({
-  isEventOrganizer: mocks.isEventOrganizerMock,
-}));
+import { describe, it, expect, beforeEach } from 'vitest';
+import { mocks, nextDrizzleSelect, resetRouteMocks, ticketRequest, TICKET_ROUTE_PARAMS, testReturns401WhenAuthFails } from './support/route-test-support';
 
 // ─── Subject ────────────────────────────────────────────────────────────────
 
@@ -74,66 +23,42 @@ import { POST } from '../../app/api/events/[id]/tickets/[ticketId]/cancel/route'
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-const ROUTE_PARAMS = { params: Promise.resolve({ id: 'evt_1', ticketId: 'tkt_1' }) };
-
-function makeRequest(): NextRequest {
-  return new NextRequest('https://events.test/api/events/evt_1/tickets/tkt_1/cancel', {
-    method: 'POST',
-    headers: { cookie: 'session=abc' },
-  });
-}
-
-function nextSelect(rows: unknown[]): void {
-  const p = Object.assign(Promise.resolve(rows), { limit: vi.fn().mockResolvedValue(rows) });
-  mocks.whereMock.mockImplementationOnce(() => p);
-}
+const makeRequest = () => ticketRequest('cancel');
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
 describe('POST /api/events/[id]/tickets/[ticketId]/cancel', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
-    mocks.whereMock.mockReset();
-    mocks.returningMock.mockResolvedValue([]);
-    mocks.updateWhereMock.mockImplementation(() => ({ returning: mocks.returningMock }));
-
-    mocks.requireAuthMock.mockResolvedValue({
-      identity: { id: 'did:imajin:organizer', actingAs: null },
-    });
-    mocks.isEventOrganizerMock.mockResolvedValue({ authorized: true });
+    resetRouteMocks();
   });
 
-  it('returns 401 when auth fails', async () => {
-    mocks.requireAuthMock.mockResolvedValue({ error: 'Unauthorized', status: 401 });
-    const res = await POST(makeRequest(), ROUTE_PARAMS);
-    expect(res.status).toBe(401);
-  });
+  testReturns401WhenAuthFails(POST, makeRequest);
 
   it('returns 403 when caller is not an organizer', async () => {
     mocks.isEventOrganizerMock.mockResolvedValue({ authorized: false });
-    const res = await POST(makeRequest(), ROUTE_PARAMS);
+    const res = await POST(makeRequest(), TICKET_ROUTE_PARAMS);
     expect(res.status).toBe(403);
     expect(mocks.selectMock).not.toHaveBeenCalled();
   });
 
   it('returns 404 when ticket is not found', async () => {
-    nextSelect([]);
-    const res = await POST(makeRequest(), ROUTE_PARAMS);
+    nextDrizzleSelect([]);
+    const res = await POST(makeRequest(), TICKET_ROUTE_PARAMS);
     expect(res.status).toBe(404);
     expect(await res.json()).toMatchObject({ error: 'Ticket not found' });
   });
 
   it('returns 400 when ticket status is "valid" (must use refund instead)', async () => {
-    nextSelect([{ id: 'tkt_1', status: 'valid', eventId: 'evt_1' }]);
-    const res = await POST(makeRequest(), ROUTE_PARAMS);
+    nextDrizzleSelect([{ id: 'tkt_1', status: 'valid', eventId: 'evt_1' }]);
+    const res = await POST(makeRequest(), TICKET_ROUTE_PARAMS);
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ error: expect.stringContaining('valid') });
     expect(mocks.updateMock).not.toHaveBeenCalled();
   });
 
   it('returns 400 when ticket status is "refunded"', async () => {
-    nextSelect([{ id: 'tkt_1', status: 'refunded', eventId: 'evt_1' }]);
-    const res = await POST(makeRequest(), ROUTE_PARAMS);
+    nextDrizzleSelect([{ id: 'tkt_1', status: 'refunded', eventId: 'evt_1' }]);
+    const res = await POST(makeRequest(), TICKET_ROUTE_PARAMS);
     expect(res.status).toBe(400);
     expect(mocks.updateMock).not.toHaveBeenCalled();
   });
@@ -141,10 +66,10 @@ describe('POST /api/events/[id]/tickets/[ticketId]/cancel', () => {
   it('cancels a held ticket and returns the updated ticket', async () => {
     const heldTicket = { id: 'tkt_1', status: 'held', eventId: 'evt_1', heldBy: 'did:buyer' };
     const cancelledTicket = { ...heldTicket, status: 'cancelled', heldBy: null, heldUntil: null };
-    nextSelect([heldTicket]);
+    nextDrizzleSelect([heldTicket]);
     mocks.returningMock.mockResolvedValueOnce([cancelledTicket]);
 
-    const res = await POST(makeRequest(), ROUTE_PARAMS);
+    const res = await POST(makeRequest(), TICKET_ROUTE_PARAMS);
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.ticket.status).toBe('cancelled');
@@ -158,10 +83,10 @@ describe('POST /api/events/[id]/tickets/[ticketId]/cancel', () => {
 
   it('cancels an available ticket', async () => {
     const availableTicket = { id: 'tkt_1', status: 'available', eventId: 'evt_1', heldBy: null };
-    nextSelect([availableTicket]);
+    nextDrizzleSelect([availableTicket]);
     mocks.returningMock.mockResolvedValueOnce([{ ...availableTicket, status: 'cancelled' }]);
 
-    const res = await POST(makeRequest(), ROUTE_PARAMS);
+    const res = await POST(makeRequest(), TICKET_ROUTE_PARAMS);
     expect(res.status).toBe(200);
     expect((await res.json()).ticket.status).toBe('cancelled');
   });

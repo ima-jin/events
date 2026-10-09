@@ -17,72 +17,32 @@ import { serviceUrl } from '@/lib/kernel';
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { requireAuth, resolveActingDid } from '@/lib/auth';
-import { db, events, pledges } from '@/db';
+import { db, pledges } from '@/db';
 import { eq, and } from 'drizzle-orm';
-import { corsHeaders, rateLimit, getClientIP } from '@ima-jin/config';
+import { corsHeaders } from '@ima-jin/config';
 import { withLogger } from '@ima-jin/logger';
+import { campaignOptions, limitRequests, loadCampaignEvent, pathEventId, campaignFailure } from '@/lib/campaign-route';
+import { authenticateActing } from '@/lib/route-helpers';
 
 const PAY_SERVICE_URL = (serviceUrl('pay') ?? '');
 const PAY_SERVICE_API_KEY = process.env.PAY_SERVICE_API_KEY!;
 
-export function OPTIONS(request: NextRequest) {
-  return new NextResponse(null, { status: 204, headers: corsHeaders(request) });
-}
+export const OPTIONS = campaignOptions;
 
 export const POST = withLogger('events', async (request: NextRequest, { log }) => {
   const cors = corsHeaders(request);
 
-  // Heavy rate limit — triggers real charges
-  const ip = getClientIP(request);
-  const rl = rateLimit(ip, 5, 60_000);
-  if (rl.limited) {
-    return NextResponse.json(
-      { error: 'Too many requests', retryAfter: rl.retryAfter },
-      { status: 429, headers: { ...cors, 'Retry-After': String(rl.retryAfter) } }
-    );
-  }
+  const limited = limitRequests(request, cors, 5);
+  if (limited) return limited;
 
-  const authResult = await requireAuth(request);
-  if ('error' in authResult) {
-    return NextResponse.json(
-      { error: authResult.error },
-      { status: authResult.status, headers: cors }
-    );
-  }
-
-  const did = resolveActingDid(authResult.identity);
+  const auth = await authenticateActing(request, cors);
+  if (auth instanceof NextResponse) return auth;
+  const { did } = auth;
 
   try {
-    const url = new URL(request.url);
-    const pathParts = url.pathname.split('/');
-    const eventId = pathParts.at(-2); // /api/campaign/{eventId}/settle
-
-    if (!eventId) {
-      return NextResponse.json({ error: 'eventId is required' }, { status: 400, headers: cors });
-    }
-
-    // Fetch event
-    const [event] = await db
-      .select()
-      .from(events)
-      .where(eq(events.id, eventId))
-      .limit(1);
-
-    if (!event) {
-      return NextResponse.json({ error: 'Event not found' }, { status: 404, headers: cors });
-    }
-
-    if (event.eventType !== 'campaign') {
-      return NextResponse.json({ error: 'Not a campaign event' }, { status: 400, headers: cors });
-    }
-
-    if (event.creatorDid !== did) {
-      return NextResponse.json(
-        { error: 'Only the campaign creator can settle' },
-        { status: 403, headers: cors }
-      );
-    }
+    const event = await loadCampaignEvent(pathEventId(request), cors, { creator: { did, forbiddenMessage: 'Only the campaign creator can settle' } });
+    if (event instanceof NextResponse) return event;
+    const eventId = event.id;
 
     // Get all confirmed pledges
     const confirmedPledges = await db
@@ -154,10 +114,6 @@ export const POST = withLogger('events', async (request: NextRequest, { log }) =
 
     return NextResponse.json(chargeResult, { headers: cors });
   } catch (error) {
-    log.error({ err: String(error) }, 'Campaign settle error');
-    return NextResponse.json(
-      { error: 'Failed to settle campaign' },
-      { status: 500, headers: cors }
-    );
+    return campaignFailure(log, error, 'Campaign settle error', 'Failed to settle campaign', cors);
   }
 });

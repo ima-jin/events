@@ -8,6 +8,7 @@ import { isEventOrganizer } from '@/lib/organizer';
 import { holdingTicketStatuses } from '@/lib/ticket-holding';
 import { getClient } from '@/db';
 import { eventUrl, buildPublicUrlAbsolute } from '@ima-jin/config';
+import { authenticateActing, forbidUnlessOrganizer, type IdParams } from '@/lib/route-helpers';
 
 export const dynamic = 'force-dynamic';
 
@@ -96,7 +97,7 @@ async function queryRecipients(eventId: string, filter?: MessageFilter) {
  */
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: IdParams
 ) {
   const { id } = await params;
   const auth = await checkAuth(request, id);
@@ -131,21 +132,15 @@ export async function GET(
  */
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: IdParams
 ) {
-  const authResult = await requireAuth(request);
-  if ('error' in authResult) {
-    return NextResponse.json({ error: authResult.error }, { status: authResult.status });
-  }
-
-  const { identity } = authResult;
-  const did = resolveActingDid(identity);
+  const auth = await authenticateActing(request);
+  if (auth instanceof NextResponse) return auth;
+  const { did, identity } = auth;
   const { id } = await params;
 
-  const orgCheck = await isEventOrganizer(id, did, request);
-  if (!orgCheck.authorized) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  }
+  const forbidden = await forbidUnlessOrganizer(id, did, request, 'Forbidden');
+  if (forbidden) return forbidden;
 
   let body: { subject: string; markdown: string; filter?: MessageFilter };
   try {

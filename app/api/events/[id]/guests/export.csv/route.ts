@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@ima-jin/logger';
-import { requireAuth, resolveActingDid } from '@/lib/auth';
 import { resolveProfiles as resolveIdentitiesForDids } from '@/lib/kernel';
 import { getSurveyResponsesForTickets } from '@/lib/surveys';
-import { isEventOrganizer } from '@/lib/organizer';
 import { getClient } from '@/db';
 import { resolveAttendee } from '@/lib/attendee';
+import { authenticateActing, forbidUnlessOrganizer, type IdParams } from '@/lib/route-helpers';
 import {
   loadSurveyFormData,
   buildSurveyValues,
@@ -55,15 +54,11 @@ function resolvePaymentId(
  */
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: IdParams
 ) {
-  const authResult = await requireAuth(request);
-  if ('error' in authResult) {
-    return NextResponse.json({ error: authResult.error }, { status: authResult.status });
-  }
-
-  const { identity } = authResult;
-  const did = resolveActingDid(identity);
+  const auth = await authenticateActing(request);
+  if (auth instanceof NextResponse) return auth;
+  const { did } = auth;
   const { id } = await params;
 
   const url = new URL(request.url);
@@ -71,10 +66,8 @@ export async function GET(
   const summaryMode = url.searchParams.get('summary') === '1';
 
   try {
-    const orgCheck = await isEventOrganizer(id, did, request);
-    if (!orgCheck.authorized) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
+    const forbidden = await forbidUnlessOrganizer(id, did, request, 'Forbidden');
+    if (forbidden) return forbidden;
 
     const [event] = await sql`
       SELECT id, title FROM events.events WHERE id = ${id} LIMIT 1

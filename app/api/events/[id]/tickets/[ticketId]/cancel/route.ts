@@ -7,30 +7,25 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { eq, and } from 'drizzle-orm';
 import { db, tickets } from '@/db';
-import { requireAuth, resolveActingDid } from '@/lib/auth';
-import { isEventOrganizer } from '@/lib/organizer';
+import { resolveActingDid } from '@/lib/auth';
 import { createLogger } from '@ima-jin/logger';
+import { authenticateActing, forbidUnlessOrganizer, type TicketParams } from '@/lib/route-helpers';
 
 const log = createLogger('events');
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string; ticketId: string }> }
+  { params }: TicketParams
 ) {
-  const authResult = await requireAuth(request);
-  if ('error' in authResult) {
-    return NextResponse.json({ error: authResult.error }, { status: authResult.status });
-  }
-
-  const { identity } = authResult;
+  const auth = await authenticateActing(request);
+  if (auth instanceof NextResponse) return auth;
+  const { identity } = auth;
   const actingDid = resolveActingDid(identity);
   const { id: eventId, ticketId } = await params;
 
   // Verify event ownership (creator or cohost)
-  const orgCheck = await isEventOrganizer(eventId, actingDid, request);
-  if (!orgCheck.authorized) {
-    return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
-  }
+  const forbidden = await forbidUnlessOrganizer(eventId, actingDid, request, 'Not authorized');
+  if (forbidden) return forbidden;
 
   // Fetch the ticket
   const [ticket] = await db

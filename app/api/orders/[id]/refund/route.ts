@@ -15,10 +15,9 @@ import { serviceUrl } from '@/lib/kernel';
 import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@ima-jin/logger';
 import { db, tickets, orders, ticketTypes } from '@/db';
-import { requireAuth, resolveActingDid } from '@/lib/auth';
-import { isEventOrganizer } from '@/lib/organizer';
 import { eq, and, inArray, sql } from 'drizzle-orm';
 import { publish } from '@/lib/domain-events';
+import { authenticateActing, forbidUnlessOrganizer, type IdParams } from '@/lib/route-helpers';
 
 const log = createLogger('events');
 
@@ -27,15 +26,11 @@ const PAY_SERVICE_API_KEY = process.env.PAY_SERVICE_API_KEY!;
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: IdParams
 ) {
-  const authResult = await requireAuth(request);
-  if ('error' in authResult) {
-    return NextResponse.json({ error: authResult.error }, { status: authResult.status });
-  }
-
-  const { identity } = authResult;
-  const did = resolveActingDid(identity);
+  const auth = await authenticateActing(request);
+  if (auth instanceof NextResponse) return auth;
+  const { did } = auth;
   const { id: orderId } = await params;
 
   try {
@@ -49,10 +44,8 @@ export async function POST(
       return NextResponse.json({ error: 'Order already refunded' }, { status: 400 });
     }
 
-    const orgCheck = await isEventOrganizer(order.eventId, did, request);
-    if (!orgCheck.authorized) {
-      return NextResponse.json({ error: 'Only event organizers can issue refunds' }, { status: 403 });
-    }
+    const forbidden = await forbidUnlessOrganizer(order.eventId, did, request, 'Only event organizers can issue refunds');
+    if (forbidden) return forbidden;
 
     // Fetch all active tickets in this order
     const orderTickets = await db

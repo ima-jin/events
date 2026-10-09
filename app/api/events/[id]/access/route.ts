@@ -5,6 +5,7 @@ import { corsHeaders } from '@ima-jin/config';
 import { db, tickets, events } from '@/db';
 import { and, eq, inArray } from 'drizzle-orm';
 import { holdingTicketStatuses } from '@/lib/ticket-holding';
+import { type IdParams } from '@/lib/route-helpers';
 
 const log = createLogger('events');
 
@@ -27,7 +28,7 @@ export const dynamic = 'force-dynamic';
  */
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: IdParams
 ) {
   const cors = corsHeaders(request);
 

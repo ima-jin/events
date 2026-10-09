@@ -1,23 +1,19 @@
 ﻿import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@ima-jin/logger';
-import { db, ticketQueue, ticketTypes } from '@/db';
+import { db, ticketQueue } from '@/db';
 
 const log = createLogger('events');
-import { requireAuth, resolveActingDid } from '@/lib/auth';
 import { eq, and, max } from 'drizzle-orm';
 import { randomBytes } from 'node:crypto';
+import { authenticateActing, type IdParams, loadEventTicketType } from '@/lib/route-helpers';
 
 /**
  * GET /api/events/[id]/queue - Check queue position
  */
 export async function GET(request: NextRequest) {
-  const authResult = await requireAuth(request);
-  if ('error' in authResult) {
-    return NextResponse.json({ error: authResult.error }, { status: authResult.status });
-  }
-
-  const { identity } = authResult;
-  const did = resolveActingDid(identity);
+  const auth = await authenticateActing(request);
+  if (auth instanceof NextResponse) return auth;
+  const { did } = auth;
   const { searchParams } = new URL(request.url);
   const ticketTypeId = searchParams.get('ticketTypeId');
 
@@ -74,38 +70,20 @@ export async function GET(request: NextRequest) {
  */
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: IdParams
 ) {
-  const authResult = await requireAuth(request);
-  if ('error' in authResult) {
-    return NextResponse.json({ error: authResult.error }, { status: authResult.status });
-  }
-
-  const { identity } = authResult;
-  const did = resolveActingDid(identity);
+  const auth = await authenticateActing(request);
+  if (auth instanceof NextResponse) return auth;
+  const { did } = auth;
   const { id } = await params;
 
   try {
     const body = await request.json();
     const { ticketTypeId } = body;
 
-    if (!ticketTypeId) {
-      return NextResponse.json({ error: 'ticketTypeId is required' }, { status: 400 });
-    }
-
     // Check ticket type exists and belongs to this event
-    const [ticketType] = await db
-      .select()
-      .from(ticketTypes)
-      .where(and(
-        eq(ticketTypes.id, ticketTypeId),
-        eq(ticketTypes.eventId, id)
-      ))
-      .limit(1);
-
-    if (!ticketType) {
-      return NextResponse.json({ error: 'Ticket type not found' }, { status: 404 });
-    }
+    const ticketType = await loadEventTicketType(ticketTypeId, id);
+    if (ticketType instanceof NextResponse) return ticketType;
 
     // Check if already in queue
     const [existing] = await db
@@ -160,13 +138,9 @@ export async function POST(
  * DELETE /api/events/[id]/queue - Leave the queue
  */
 export async function DELETE(request: NextRequest) {
-  const authResult = await requireAuth(request);
-  if ('error' in authResult) {
-    return NextResponse.json({ error: authResult.error }, { status: authResult.status });
-  }
-
-  const { identity } = authResult;
-  const did = resolveActingDid(identity);
+  const auth = await authenticateActing(request);
+  if (auth instanceof NextResponse) return auth;
+  const { did } = auth;
   const { searchParams } = new URL(request.url);
   const ticketTypeId = searchParams.get('ticketTypeId');
 

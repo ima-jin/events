@@ -15,41 +15,21 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { db, events, pledges } from '@/db';
+import { db, pledges } from '@/db';
 import { eq, and, sql } from 'drizzle-orm';
 import { corsHeaders } from '@ima-jin/config';
 import { withLogger } from '@ima-jin/logger';
+import { campaignOptions, loadCampaignEvent, pathEventId, campaignFailure } from '@/lib/campaign-route';
 
-export function OPTIONS(request: NextRequest) {
-  return new NextResponse(null, { status: 204, headers: corsHeaders(request) });
-}
+export const OPTIONS = campaignOptions;
 
 export const GET = withLogger('events', async (request: NextRequest, { log }) => {
   const cors = corsHeaders(request);
 
   try {
-    const url = new URL(request.url);
-    const pathParts = url.pathname.split('/');
-    const eventId = pathParts.at(-2); // /api/campaign/{eventId}/status
-
-    if (!eventId) {
-      return NextResponse.json({ error: 'eventId is required' }, { status: 400, headers: cors });
-    }
-
-    // Fetch event
-    const [event] = await db
-      .select()
-      .from(events)
-      .where(eq(events.id, eventId))
-      .limit(1);
-
-    if (!event) {
-      return NextResponse.json({ error: 'Event not found' }, { status: 404, headers: cors });
-    }
-
-    if (event.eventType !== 'campaign') {
-      return NextResponse.json({ error: 'Not a campaign event' }, { status: 400, headers: cors });
-    }
+    const event = await loadCampaignEvent(pathEventId(request), cors);
+    if (event instanceof NextResponse) return event;
+    const eventId = event.id;
 
     // Sum confirmed + charged pledges
     const pledgeRows = await db
@@ -82,10 +62,6 @@ export const GET = withLogger('events', async (request: NextRequest, { log }) =>
       isFullyFunded: currentAmount >= targetAmount,
     }, { headers: cors });
   } catch (error) {
-    log.error({ err: String(error) }, 'Campaign status error');
-    return NextResponse.json(
-      { error: 'Failed to get campaign status' },
-      { status: 500, headers: cors }
-    );
+    return campaignFailure(log, error, 'Campaign status error', 'Failed to get campaign status', cors);
   }
 });

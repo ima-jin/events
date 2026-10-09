@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@ima-jin/logger';
 import { db, ticketTypes } from '@/db';
 import { eq, and, asc, sql } from 'drizzle-orm';
+import { type IdParams } from '@/lib/route-helpers';
 
 const log = createLogger('events');
 
@@ -15,7 +16,7 @@ export const dynamic = 'force-dynamic';
  */
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: IdParams
 ) {
   const { id } = await params;
   const { searchParams } = new URL(request.url);

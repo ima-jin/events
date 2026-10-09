@@ -8,11 +8,10 @@ import { buildEventUpdates, syncNamePolicyToChat } from '@/lib/event-update-help
 const log = createLogger('events');
 
 import { db, events, ticketTypes } from '@/db';
-import { requireAuth, resolveActingDid } from '@/lib/auth';
 import { requireAppAuth } from '@ima-jin/auth';
 import { corsHeaders } from '@ima-jin/config';
-import { isEventOrganizer } from '@/lib/organizer';
 import { eq } from 'drizzle-orm';
+import { forbidUnlessOrganizer, type IdParams, authenticateAppOrActing } from '@/lib/route-helpers';
 
 /** Fields safe to return for events:read app scope */
 function filterEventForApp(event: Record<string, unknown>): Record<string, unknown> {
@@ -25,7 +24,7 @@ function filterEventForApp(event: Record<string, unknown>): Record<string, unkno
  */
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: IdParams
 ) {
   const cors = corsHeaders(request);
 
@@ -113,26 +112,12 @@ const STATUS_TRANSITIONS: Record<EventStatus, EventStatus[]> = {
  */
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: IdParams
 ) {
   const cors = corsHeaders(request);
-  let did: string;
-
-  // App auth path
-  if (request.headers.get('x-app-did')) {
-    const appResult = await requireAppAuth(request, { scope: 'events:write' });
-    if ('error' in appResult) {
-      return NextResponse.json({ error: appResult.error }, { status: appResult.status, headers: cors });
-    }
-    did = appResult.appAuth.userDid;
-  } else {
-    const authResult = await requireAuth(request);
-    if ('error' in authResult) {
-      return NextResponse.json({ error: authResult.error }, { status: authResult.status });
-    }
-    const { identity } = authResult;
-    did = resolveActingDid(identity);
-  }
+  const auth = await authenticateAppOrActing(request, 'events:write', cors);
+  if (auth instanceof NextResponse) return auth;
+  const { did } = auth;
 
   const { id } = await params;
 
@@ -196,26 +181,12 @@ export async function PATCH(
  */
 export async function PUT(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: IdParams
 ) {
   const cors = corsHeaders(request);
-  let did: string;
-
-  // App auth path
-  if (request.headers.get('x-app-did')) {
-    const appResult = await requireAppAuth(request, { scope: 'events:write' });
-    if ('error' in appResult) {
-      return NextResponse.json({ error: appResult.error }, { status: appResult.status, headers: cors });
-    }
-    did = appResult.appAuth.userDid;
-  } else {
-    const authResult = await requireAuth(request);
-    if ('error' in authResult) {
-      return NextResponse.json({ error: authResult.error }, { status: authResult.status });
-    }
-    const { identity } = authResult;
-    did = resolveActingDid(identity);
-  }
+  const auth = await authenticateAppOrActing(request, 'events:write', cors);
+  if (auth instanceof NextResponse) return auth;
+  const { did } = auth;
 
   const { id } = await params;
 
@@ -232,10 +203,8 @@ export async function PUT(
     }
 
     // Check authorization: must be creator, admin, or cohost
-    const orgCheck = await isEventOrganizer(id, did, request);
-    if (!orgCheck.authorized) {
-      return NextResponse.json({ error: 'Not authorized to update this event' }, { status: 403 });
-    }
+    const forbidden = await forbidUnlessOrganizer(id, did, request, 'Not authorized to update this event');
+    if (forbidden) return forbidden;
 
     const body = await request.json();
 

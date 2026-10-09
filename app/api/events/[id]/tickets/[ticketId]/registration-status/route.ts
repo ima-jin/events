@@ -8,21 +8,17 @@ import { createLogger } from '@ima-jin/logger';
 import { eq, and } from 'drizzle-orm';
 
 const log = createLogger('events');
-import { requireAuth, resolveActingDid } from '@/lib/auth';
 import { isEventOrganizer } from '@/lib/organizer';
 import { db, tickets, ticketTypes } from '@/db';
+import { authenticateActing, type TicketParams } from '@/lib/route-helpers';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string; ticketId: string }> }
+  { params }: TicketParams
 ) {
-  const authResult = await requireAuth(request);
-  if ('error' in authResult) {
-    return NextResponse.json({ error: authResult.error }, { status: authResult.status });
-  }
-
-  const { identity } = authResult;
-  const did = resolveActingDid(identity);
+  const auth = await authenticateActing(request);
+  if (auth instanceof NextResponse) return auth;
+  const { did } = auth;
   const { id: eventId, ticketId } = await params;
 
   try {

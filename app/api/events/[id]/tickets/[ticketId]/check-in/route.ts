@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@ima-jin/logger';
 import { publish } from '@/lib/domain-events';
-import { requireAuth, resolveActingDid } from '@/lib/auth';
 import { evaluateEligibility } from '@/lib/kernel';
-import { isEventOrganizer } from '@/lib/organizer';
 import { getClient } from '@/db';
+import { authenticateActing, forbidUnlessOrganizer, type TicketParams } from '@/lib/route-helpers';
 
 const log = createLogger('events');
 const sql = getClient();
@@ -46,22 +45,16 @@ async function sendCheckInWebhook(webhookUrl: string, payload: CheckInWebhookPay
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string; ticketId: string }> }
+  { params }: TicketParams
 ) {
-  const authResult = await requireAuth(request);
-  if ('error' in authResult) {
-    return NextResponse.json({ error: authResult.error }, { status: authResult.status });
-  }
-
-  const { identity } = authResult;
-  const did = resolveActingDid(identity);
+  const auth = await authenticateActing(request);
+  if (auth instanceof NextResponse) return auth;
+  const { did, identity } = auth;
   const { id, ticketId } = await params;
 
   try {
-    const orgCheck = await isEventOrganizer(id, did, request);
-    if (!orgCheck.authorized) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
+    const forbidden = await forbidUnlessOrganizer(id, did, request, 'Forbidden');
+    if (forbidden) return forbidden;
 
     const [ticket] = await sql`
       SELECT id, status, used_at, owner_did FROM events.tickets

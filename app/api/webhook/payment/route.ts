@@ -11,6 +11,7 @@ import { serviceUrl, publicServiceUrl, createOnboardToken } from '@/lib/kernel';
 
 import { NextResponse } from 'next/server';
 import { withLogger, createLogger } from '@ima-jin/logger';
+import { migrateChatParticipation } from '@/lib/chat-sync';
 import { db, events, ticketTypes, tickets, orders } from '@/db';
 
 const log = createLogger('events');
@@ -105,23 +106,7 @@ async function migrateSoftDidToHard(email: string, hardDid: string, eventId: str
 
     log.info({ count: softTickets.length, softDids, hardDid }, 'Migrated tickets from soft DIDs to hard DID');
 
-    const CHAT_URL = serviceUrl('chat');
-    if (CHAT_URL) {
-      await Promise.all(
-        softDids.map(async (softDid) => {
-          try {
-            await fetch(`${CHAT_URL}/api/participants/migrate`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ fromDid: softDid, toDid: hardDid }),
-            });
-            log.info({ softDid, hardDid }, 'Migrated chat participation');
-          } catch (chatError) {
-            log.warn({ softDid, err: String(chatError) }, 'Chat migration failed (non-fatal)');
-          }
-        })
-      );
-    }
+    await migrateChatParticipation(softDids, hardDid, log);
   } catch (error) {
     log.error({ err: String(error) }, 'migrateSoftDidToHard error');
   }

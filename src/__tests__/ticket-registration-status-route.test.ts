@@ -13,41 +13,8 @@
  *  - Returns correct registration status and surveyId from ticket type
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { NextRequest } from 'next/server';
-
-// ─── Mocks ──────────────────────────────────────────────────────────────────
-
-const mocks = vi.hoisted(() => {
-  // Drizzle select chain — two sequential calls (ticket, then ticket type)
-  const whereMock = vi.fn();
-  const fromMock = vi.fn(() => ({ where: whereMock }));
-  const selectMock = vi.fn(() => ({ from: fromMock }));
-
-  const requireAuthMock = vi.fn();
-  const isEventOrganizerMock = vi.fn();
-
-  return { whereMock, fromMock, selectMock, requireAuthMock, isEventOrganizerMock };
-});
-
-vi.mock('@ima-jin/logger', () => ({
-  createLogger: vi.fn(() => ({ error: vi.fn(), info: vi.fn(), warn: vi.fn() })),
-}));
-
-vi.mock('@/db', () => ({
-  db: { select: mocks.selectMock },
-  tickets: { id: 'col_id', eventId: 'col_eventId', ownerDid: 'col_ownerDid' },
-  ticketTypes: { id: 'col_ttId', registrationFormId: 'col_formId' },
-}));
-
-vi.mock('@/lib/auth', () => ({
-  requireAuth: mocks.requireAuthMock,
-  resolveActingDid: (identity: { id: string }) => identity.id,
-}));
-
-vi.mock('@/lib/organizer', () => ({
-  isEventOrganizer: mocks.isEventOrganizerMock,
-}));
+import { describe, it, expect, beforeEach } from 'vitest';
+import { mocks, nextDrizzleSelect, resetRouteMocks, ticketRequest, TICKET_ROUTE_PARAMS, testReturns401WhenAuthFails } from './support/route-test-support';
 
 // ─── Subject ────────────────────────────────────────────────────────────────
 
@@ -55,18 +22,7 @@ import { GET } from '../../app/api/events/[id]/tickets/[ticketId]/registration-s
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-const ROUTE_PARAMS = { params: Promise.resolve({ id: 'evt_1', ticketId: 'tkt_1' }) };
-
-function makeRequest(): NextRequest {
-  return new NextRequest('https://events.test/api/events/evt_1/tickets/tkt_1/registration-status', {
-    headers: { cookie: 'session=abc' },
-  });
-}
-
-function nextSelect(rows: unknown[]): void {
-  const p = Object.assign(Promise.resolve(rows), { limit: vi.fn().mockResolvedValue(rows) });
-  mocks.whereMock.mockImplementationOnce(() => p);
-}
+const makeRequest = () => ticketRequest('registration-status', 'GET');
 
 const BASE_TICKET = {
   id: 'tkt_1',
@@ -79,34 +35,24 @@ const BASE_TICKET = {
 
 describe('GET /api/events/[id]/tickets/[ticketId]/registration-status', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
-    mocks.whereMock.mockReset();
-
-    mocks.requireAuthMock.mockResolvedValue({
-      identity: { id: 'did:imajin:organizer', actingAs: null },
-    });
-    mocks.isEventOrganizerMock.mockResolvedValue({ authorized: true });
+    resetRouteMocks();
   });
 
-  it('returns 401 when auth fails', async () => {
-    mocks.requireAuthMock.mockResolvedValue({ error: 'Unauthorized', status: 401 });
-    const res = await GET(makeRequest(), ROUTE_PARAMS);
-    expect(res.status).toBe(401);
-  });
+  testReturns401WhenAuthFails(GET, makeRequest);
 
   it('returns 404 when ticket is not found', async () => {
-    nextSelect([]);
-    const res = await GET(makeRequest(), ROUTE_PARAMS);
+    nextDrizzleSelect([]);
+    const res = await GET(makeRequest(), TICKET_ROUTE_PARAMS);
     expect(res.status).toBe(404);
     expect(await res.json()).toMatchObject({ error: 'Ticket not found' });
   });
 
   it('returns 403 when caller is neither the ticket owner nor an organizer', async () => {
     // Ticket owner is someone else, and caller is not an organizer
-    nextSelect([{ ...BASE_TICKET, ownerDid: 'did:imajin:someone-else' }]);
+    nextDrizzleSelect([{ ...BASE_TICKET, ownerDid: 'did:imajin:someone-else' }]);
     mocks.isEventOrganizerMock.mockResolvedValue({ authorized: false });
 
-    const res = await GET(makeRequest(), ROUTE_PARAMS);
+    const res = await GET(makeRequest(), TICKET_ROUTE_PARAMS);
     expect(res.status).toBe(403);
   });
 
@@ -117,10 +63,10 @@ describe('GET /api/events/[id]/tickets/[ticketId]/registration-status', () => {
     });
     mocks.isEventOrganizerMock.mockResolvedValue({ authorized: false });
 
-    nextSelect([BASE_TICKET]);                                      // (1) ticket
-    nextSelect([{ registrationFormId: 'form_abc' }]);              // (2) ticket type
+    nextDrizzleSelect([BASE_TICKET]);                                      // (1) ticket
+    nextDrizzleSelect([{ registrationFormId: 'form_abc' }]);              // (2) ticket type
 
-    const res = await GET(makeRequest(), ROUTE_PARAMS);
+    const res = await GET(makeRequest(), TICKET_ROUTE_PARAMS);
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.status).toBe('complete');
@@ -130,10 +76,10 @@ describe('GET /api/events/[id]/tickets/[ticketId]/registration-status', () => {
 
   it('returns 200 when caller is an organizer (not the owner)', async () => {
     // Caller is organizer, not the ticket owner
-    nextSelect([BASE_TICKET]);                                      // (1) ticket
-    nextSelect([{ registrationFormId: null }]);                    // (2) ticket type — no form
+    nextDrizzleSelect([BASE_TICKET]);                                      // (1) ticket
+    nextDrizzleSelect([{ registrationFormId: null }]);                    // (2) ticket type — no form
 
-    const res = await GET(makeRequest(), ROUTE_PARAMS);
+    const res = await GET(makeRequest(), TICKET_ROUTE_PARAMS);
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.status).toBe('complete');
@@ -141,10 +87,10 @@ describe('GET /api/events/[id]/tickets/[ticketId]/registration-status', () => {
   });
 
   it('defaults status to "not_required" when registrationStatus is null', async () => {
-    nextSelect([{ ...BASE_TICKET, registrationStatus: null }]);    // (1) ticket
-    nextSelect([{ registrationFormId: null }]);                    // (2) ticket type
+    nextDrizzleSelect([{ ...BASE_TICKET, registrationStatus: null }]);    // (1) ticket
+    nextDrizzleSelect([{ registrationFormId: null }]);                    // (2) ticket type
 
-    const res = await GET(makeRequest(), ROUTE_PARAMS);
+    const res = await GET(makeRequest(), TICKET_ROUTE_PARAMS);
     expect(res.status).toBe(200);
     expect((await res.json()).status).toBe('not_required');
   });

@@ -3,15 +3,14 @@ import { createLogger } from '@ima-jin/logger';
 
 const log = createLogger('events');
 import { eq, and } from 'drizzle-orm';
-import { requireAuth, resolveActingDid } from '@/lib/auth';
 import { getContactEmail as resolveEmailForDid } from '@/lib/kernel';
 import { getSurveyResponseForTicket } from '@/lib/ticket-survey';
-import { isEventOrganizer } from '@/lib/organizer';
 import { db, tickets, events, ticketTypes } from '@/db';
 import { generateQRCode } from '@/lib/email';
 import { publish } from '@/lib/domain-events';
 
 import { eventUrl, eventRegisterUrl, eventMyTicketsUrl, buildPublicUrlAbsolute } from '@ima-jin/config';
+import { authenticateActing, forbidUnlessOrganizer, type TicketParams } from '@/lib/route-helpers';
 
 const EVENTS_URL = buildPublicUrlAbsolute('events');
 
@@ -198,22 +197,16 @@ async function publishResendNotification(ctx: ResendEmailContext, did: string, c
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string; ticketId: string }> }
+  { params }: TicketParams
 ) {
-  const authResult = await requireAuth(request);
-  if ('error' in authResult) {
-    return NextResponse.json({ error: authResult.error }, { status: authResult.status });
-  }
-
-  const { identity } = authResult;
-  const did = resolveActingDid(identity);
+  const auth = await authenticateActing(request);
+  if (auth instanceof NextResponse) return auth;
+  const { did } = auth;
   const { id: eventId, ticketId } = await params;
 
   try {
-    const orgCheck = await isEventOrganizer(eventId, did, request);
-    if (!orgCheck.authorized) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
+    const forbidden = await forbidUnlessOrganizer(eventId, did, request, 'Forbidden');
+    if (forbidden) return forbidden;
 
     const ctx = await loadResendContext(eventId, ticketId);
     if (ctx instanceof NextResponse) return ctx;

@@ -18,83 +18,21 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { NextRequest } from 'next/server';
+import { mocks, nextDrizzleSelect, nextSql, resetRouteMocks, ticketRequest, TICKET_ROUTE_PARAMS, testReturns401WhenAuthFails } from './support/route-test-support';
 
-// ─── Mocks ──────────────────────────────────────────────────────────────────
-
-const mocks = vi.hoisted(() => {
-  // Raw postgres client (getClient) — all raw SQL goes through this one mock.
-  // It acts as a tagged template literal: sqlMock`SELECT...` = sqlMock([...], ...values)
-  const sqlMock = vi.fn().mockResolvedValue([]);
-
-  // Drizzle select chain: db.select().from(x).where(y).limit(n)
-  const whereMock = vi.fn();
-  const fromMock = vi.fn(() => ({ where: whereMock }));
-  const selectMock = vi.fn(() => ({ from: fromMock }));
-
-  // Drizzle update chain: db.update(x).set(y).where(z).catch(fn)
-  const updateWhereMock = vi.fn().mockResolvedValue(undefined);
-  const setMock = vi.fn(() => ({ where: updateWhereMock }));
-  const updateMock = vi.fn(() => ({ set: setMock }));
-
-  const requireAuthMock = vi.fn();
-  const resolveEmailForDidMock = vi.fn().mockResolvedValue(null);
-  const isEventOrganizerMock = vi.fn();
-  const publishMock = vi.fn().mockResolvedValue(undefined);
-  const fetchMock = vi.fn();
-  const getSurveyResponseForTicketMock = vi.fn().mockResolvedValue(null);
-
-  return {
-    sqlMock,
-    whereMock,
-    fromMock,
-    selectMock,
-    updateWhereMock,
-    setMock,
-    updateMock,
-    requireAuthMock,
-    resolveEmailForDidMock,
-    isEventOrganizerMock,
-    publishMock,
-    fetchMock,
-    getSurveyResponseForTicketMock,
-  };
-});
-
-vi.mock('@ima-jin/logger', () => ({
-  createLogger: vi.fn(() => ({ error: vi.fn(), info: vi.fn(), warn: vi.fn() })),
-}));
-
-vi.mock('@/db', () => ({
-  getClient: () => mocks.sqlMock,
-  db: {
-    select: mocks.selectMock,
-    update: mocks.updateMock,
-  },
-  events: { id: 'col_id', title: 'col_title' },
-  ticketTypes: { id: 'col_ttId', sold: 'col_sold' },
-}));
-
-vi.mock('@/lib/auth', () => ({
-  requireAuth: mocks.requireAuthMock,
-  resolveActingDid: (identity: { id: string }) => identity.id,
+const extra = vi.hoisted(() => ({
+  resolveEmailForDidMock: vi.fn().mockResolvedValue(null),
+  getSurveyResponseForTicketMock: vi.fn().mockResolvedValue(null),
+  fetchMock: vi.fn(),
 }));
 
 vi.mock('@/lib/kernel', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/kernel')>()),
-  getContactEmail: mocks.resolveEmailForDidMock,
+  getContactEmail: extra.resolveEmailForDidMock,
 }));
 
 vi.mock('@/lib/ticket-survey', () => ({
-  getSurveyResponseForTicket: mocks.getSurveyResponseForTicketMock,
-}));
-
-vi.mock('@/lib/organizer', () => ({
-  isEventOrganizer: mocks.isEventOrganizerMock,
-}));
-
-vi.mock('@/lib/domain-events', () => ({
-  publish: mocks.publishMock,
+  getSurveyResponseForTicket: extra.getSurveyResponseForTicketMock,
 }));
 
 vi.mock('@ima-jin/config', () => ({
@@ -102,31 +40,9 @@ vi.mock('@ima-jin/config', () => ({
   buildPublicUrlAbsolute: () => 'https://events.test',
 }));
 
-// ─── Subject ────────────────────────────────────────────────────────────────
-
 import { POST } from '../../app/api/events/[id]/tickets/[ticketId]/refund/route';
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
-
-function makeRequest(): NextRequest {
-  return new NextRequest('https://events.test/api/events/evt_1/tickets/tkt_1/refund', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', cookie: 'session=abc' },
-  });
-}
-
-const ROUTE_PARAMS = { params: Promise.resolve({ id: 'evt_1', ticketId: 'tkt_1' }) };
-
-/** Queue a Drizzle select result (event lookup) for the next whereMock call. */
-function nextDrizzleSelect(rows: unknown[]): void {
-  const p = Object.assign(Promise.resolve(rows), { limit: vi.fn().mockResolvedValue(rows) });
-  mocks.whereMock.mockImplementationOnce(() => p);
-}
-
-/** Queue a raw SQL result for the next sqlMock call. */
-function nextSql(rows: unknown[]): void {
-  mocks.sqlMock.mockResolvedValueOnce(rows);
-}
+const makeRequest = () => ticketRequest('refund');
 
 const BASE_EVENT = {
   id: 'evt_1',
@@ -151,38 +67,22 @@ const STRIPE_TICKET = {
 
 describe('POST /api/events/[id]/tickets/[ticketId]/refund', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
-    mocks.whereMock.mockReset();
-    mocks.sqlMock.mockReset();
-
-    // Defaults restored after reset
-    mocks.sqlMock.mockResolvedValue([]);
-    mocks.updateWhereMock.mockResolvedValue(undefined);
-    mocks.publishMock.mockResolvedValue(undefined);
-    mocks.resolveEmailForDidMock.mockResolvedValue('buyer@test.com');
-    mocks.getSurveyResponseForTicketMock.mockResolvedValue(null);
-
+    resetRouteMocks();
+    extra.resolveEmailForDidMock.mockResolvedValue('buyer@test.com');
+    extra.getSurveyResponseForTicketMock.mockResolvedValue(null);
+    
     process.env.PAY_SERVICE_URL = 'http://kernel-test';
     process.env.PAY_SERVICE_API_KEY = 'service-key';
-
-    mocks.requireAuthMock.mockResolvedValue({
-      identity: { id: 'did:imajin:organizer', actingAs: null },
-    });
-    mocks.isEventOrganizerMock.mockResolvedValue({ authorized: true });
-
-    vi.stubGlobal('fetch', mocks.fetchMock);
-    mocks.fetchMock.mockResolvedValue({ ok: true, text: async () => '' });
+    
+    vi.stubGlobal('fetch', extra.fetchMock);
+    extra.fetchMock.mockResolvedValue({ ok: true, text: async () => '' });
   });
 
-  it('returns 401 when auth fails', async () => {
-    mocks.requireAuthMock.mockResolvedValue({ error: 'Unauthorized', status: 401 });
-    const res = await POST(makeRequest(), ROUTE_PARAMS);
-    expect(res.status).toBe(401);
-  });
+  testReturns401WhenAuthFails(POST, makeRequest);
 
   it('returns 404 when event is not found', async () => {
     nextDrizzleSelect([]);  // event not found
-    const res = await POST(makeRequest(), ROUTE_PARAMS);
+    const res = await POST(makeRequest(), TICKET_ROUTE_PARAMS);
     expect(res.status).toBe(404);
     expect(await res.json()).toMatchObject({ error: 'Event not found' });
   });
@@ -190,15 +90,15 @@ describe('POST /api/events/[id]/tickets/[ticketId]/refund', () => {
   it('returns 403 when caller is not an organizer', async () => {
     nextDrizzleSelect([BASE_EVENT]);
     mocks.isEventOrganizerMock.mockResolvedValue({ authorized: false });
-    const res = await POST(makeRequest(), ROUTE_PARAMS);
+    const res = await POST(makeRequest(), TICKET_ROUTE_PARAMS);
     expect(res.status).toBe(403);
-    expect(mocks.fetchMock).not.toHaveBeenCalled();
+    expect(extra.fetchMock).not.toHaveBeenCalled();
   });
 
   it('returns 404 when ticket is not found', async () => {
     nextDrizzleSelect([BASE_EVENT]);
     nextSql([]);  // ticket SELECT → empty
-    const res = await POST(makeRequest(), ROUTE_PARAMS);
+    const res = await POST(makeRequest(), TICKET_ROUTE_PARAMS);
     expect(res.status).toBe(404);
     expect(await res.json()).toMatchObject({ error: 'Ticket not found' });
   });
@@ -206,18 +106,18 @@ describe('POST /api/events/[id]/tickets/[ticketId]/refund', () => {
   it('returns 400 when ticket is not valid (e.g. already refunded)', async () => {
     nextDrizzleSelect([BASE_EVENT]);
     nextSql([{ ...STRIPE_TICKET, status: 'refunded' }]);
-    const res = await POST(makeRequest(), ROUTE_PARAMS);
+    const res = await POST(makeRequest(), TICKET_ROUTE_PARAMS);
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ error: 'Only valid tickets can be refunded' });
-    expect(mocks.fetchMock).not.toHaveBeenCalled();
+    expect(extra.fetchMock).not.toHaveBeenCalled();
   });
 
   it('returns 502 when the pay service fails (Stripe ticket)', async () => {
     nextDrizzleSelect([BASE_EVENT]);
     nextSql([STRIPE_TICKET]);
-    mocks.fetchMock.mockResolvedValue({ ok: false, text: async () => 'Stripe error' });
+    extra.fetchMock.mockResolvedValue({ ok: false, text: async () => 'Stripe error' });
 
-    const res = await POST(makeRequest(), ROUTE_PARAMS);
+    const res = await POST(makeRequest(), TICKET_ROUTE_PARAMS);
     expect(res.status).toBe(502);
     expect(await res.json()).toMatchObject({ error: 'Payment refund failed — ticket status not changed' });
 
@@ -230,15 +130,15 @@ describe('POST /api/events/[id]/tickets/[ticketId]/refund', () => {
     nextSql([STRIPE_TICKET]);                  // (1) SELECT ticket
     nextSql([{ id: 'tkt_1', status: 'refunded' }]); // (2) UPDATE ticket RETURNING
 
-    const res = await POST(makeRequest(), ROUTE_PARAMS);
+    const res = await POST(makeRequest(), TICKET_ROUTE_PARAMS);
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.ticket.status).toBe('refunded');
     expect(body.manualRefundRequired).toBeUndefined();
 
     // Pay service called with the ticket's payment ID and price
-    expect(mocks.fetchMock).toHaveBeenCalledOnce();
-    const [url, init] = mocks.fetchMock.mock.calls[0];
+    expect(extra.fetchMock).toHaveBeenCalledOnce();
+    const [url, init] = extra.fetchMock.mock.calls[0];
     expect(url).toContain('/api/refund');
     const reqBody = JSON.parse(init.body);
     expect(reqBody.paymentId).toBe('pi_test_stripe');
@@ -262,7 +162,7 @@ describe('POST /api/events/[id]/tickets/[ticketId]/refund', () => {
     nextSql([etransferTicket]);                         // (1) SELECT ticket
     nextSql([{ id: 'tkt_1', status: 'refund_pending' }]); // (2) UPDATE ticket RETURNING
 
-    const res = await POST(makeRequest(), ROUTE_PARAMS);
+    const res = await POST(makeRequest(), TICKET_ROUTE_PARAMS);
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.ticket.status).toBe('refund_pending');
@@ -270,7 +170,7 @@ describe('POST /api/events/[id]/tickets/[ticketId]/refund', () => {
     expect(body.refundAmount).toBe('275.00');
 
     // No Stripe call for e-transfer
-    expect(mocks.fetchMock).not.toHaveBeenCalled();
+    expect(extra.fetchMock).not.toHaveBeenCalled();
   });
 
   it('handles a free ticket: no pay service call, ticket directly refunded', async () => {
@@ -285,9 +185,9 @@ describe('POST /api/events/[id]/tickets/[ticketId]/refund', () => {
     nextSql([freeTicket]);                             // (1) SELECT ticket
     nextSql([{ id: 'tkt_1', status: 'refunded' }]);   // (2) UPDATE ticket RETURNING
 
-    const res = await POST(makeRequest(), ROUTE_PARAMS);
+    const res = await POST(makeRequest(), TICKET_ROUTE_PARAMS);
     expect(res.status).toBe(200);
     expect((await res.json()).ticket.status).toBe('refunded');
-    expect(mocks.fetchMock).not.toHaveBeenCalled();
+    expect(extra.fetchMock).not.toHaveBeenCalled();
   });
 });

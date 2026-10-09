@@ -1,15 +1,13 @@
 ﻿import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@ima-jin/logger';
-import { requireAuth, resolveActingDid } from '@/lib/auth';
-import { requireAppAuth } from '@ima-jin/auth';
 import { resolveProfiles as resolveIdentitiesForDids } from '@/lib/kernel';
 import { getSurveyResponsesForTickets } from '@/lib/surveys';
 import { corsHeaders } from '@ima-jin/config';
 
 const log = createLogger('events');
-import { isEventOrganizer } from '@/lib/organizer';
 import { getClient } from '@/db';
 import { resolveAttendee } from '@/lib/attendee';
+import { forbidUnlessOrganizer, type IdParams, authenticateAppOrActing } from '@/lib/route-helpers';
 
 const sql = getClient();
 
@@ -18,35 +16,18 @@ const sql = getClient();
  */
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: IdParams
 ) {
   const cors = corsHeaders(request);
-  let did: string;
-
-  // App auth path
-  if (request.headers.get('x-app-did')) {
-    const appResult = await requireAppAuth(request, { scope: 'events:read' });
-    if ('error' in appResult) {
-      return NextResponse.json({ error: appResult.error }, { status: appResult.status, headers: cors });
-    }
-    did = appResult.appAuth.userDid;
-  } else {
-    const authResult = await requireAuth(request);
-    if ('error' in authResult) {
-      return NextResponse.json({ error: authResult.error }, { status: authResult.status });
-    }
-    const { identity } = authResult;
-    did = resolveActingDid(identity);
-  }
+  const auth = await authenticateAppOrActing(request, 'events:read', cors);
+  if (auth instanceof NextResponse) return auth;
+  const { did } = auth;
 
   const { id } = await params;
 
   try {
-    const orgCheck = await isEventOrganizer(id, did, request);
-    if (!orgCheck.authorized) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
-    const isOwner = orgCheck.role === 'creator' || orgCheck.role === 'cohost';
+    const forbidden = await forbidUnlessOrganizer(id, did, request, 'Forbidden');
+    if (forbidden) return forbidden;
 
     const ticketRows = await sql`
       SELECT t.id, t.status, t.owner_did, t.price_paid, t.currency, t.purchased_at, t.used_at,
@@ -119,7 +100,7 @@ export async function GET(
       };
     });
 
-    return NextResponse.json({ guests, isOwner });
+    return NextResponse.json({ guests, isOwner: true });
   } catch (error) {
     log.error({ err: String(error) }, 'Failed to fetch guests');
     return NextResponse.json({ error: 'Failed to fetch guests' }, { status: 500 });

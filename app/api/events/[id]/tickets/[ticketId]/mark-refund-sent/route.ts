@@ -1,11 +1,10 @@
 ﻿import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@ima-jin/logger';
 import { db, events, getClient } from '@/db';
-import { isEventOrganizer } from '@/lib/organizer';
 
 const log = createLogger('events');
-import { requireAuth, resolveActingDid } from '@/lib/auth';
 import { eq } from 'drizzle-orm';
+import { authenticateActing, forbidUnlessOrganizer, type TicketParams } from '@/lib/route-helpers';
 
 const sqlClient = getClient();
 
@@ -16,15 +15,11 @@ const sqlClient = getClient();
  */
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string; ticketId: string }> }
+  { params }: TicketParams
 ) {
-  const authResult = await requireAuth(request);
-  if ('error' in authResult) {
-    return NextResponse.json({ error: authResult.error }, { status: authResult.status });
-  }
-
-  const { identity } = authResult;
-  const did = resolveActingDid(identity);
+  const auth = await authenticateActing(request);
+  if (auth instanceof NextResponse) return auth;
+  const { did } = auth;
   const { id, ticketId } = await params;
 
   try {
@@ -33,10 +28,8 @@ export async function POST(
       return NextResponse.json({ error: 'Event not found' }, { status: 404 });
     }
 
-    const orgCheck = await isEventOrganizer(id, did, request);
-    if (!orgCheck.authorized) {
-      return NextResponse.json({ error: 'Only event organizers can mark refunds as sent' }, { status: 403 });
-    }
+    const forbidden = await forbidUnlessOrganizer(id, did, request, 'Only event organizers can mark refunds as sent');
+    if (forbidden) return forbidden;
 
     const [ticket] = await sqlClient`
       SELECT id, status

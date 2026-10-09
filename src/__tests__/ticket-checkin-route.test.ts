@@ -17,67 +17,18 @@
  * return ([]) which causes it to exit early harmlessly.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { NextRequest } from 'next/server';
+import { mocks, nextSql, resetRouteMocks, ticketRequest, TICKET_ROUTE_PARAMS, testReturns401WhenAuthFails } from './support/route-test-support';
 
-// ─── Mocks ─────────────────────────────────────────────────────────────────────────
-
-const mocks = vi.hoisted(() => {
-  // Raw postgres client. The check-in route uses only getClient() — no Drizzle.
-  const sqlMock = vi.fn().mockResolvedValue([]);
-
-  const requireAuthMock = vi.fn();
-  const isEventOrganizerMock = vi.fn();
-  const publishMock = vi.fn().mockResolvedValue(undefined);
-  const evaluateEligibilityMock = vi.fn().mockResolvedValue(null);
-
-  return { sqlMock, requireAuthMock, isEventOrganizerMock, publishMock, evaluateEligibilityMock };
-});
-
-vi.mock('@ima-jin/logger', () => ({
-  createLogger: vi.fn(() => ({ error: vi.fn(), info: vi.fn(), warn: vi.fn() })),
-}));
-
-vi.mock('@/db', () => ({
-  getClient: () => mocks.sqlMock,
-}));
-
-vi.mock('@/lib/auth', () => ({
-  requireAuth: mocks.requireAuthMock,
-  resolveActingDid: (identity: { id: string }) => identity.id,
-}));
+const extra = vi.hoisted(() => ({ evaluateEligibilityMock: vi.fn().mockResolvedValue(null) }));
 
 vi.mock('@/lib/kernel', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/kernel')>()),
-  evaluateEligibility: mocks.evaluateEligibilityMock,
+  evaluateEligibility: extra.evaluateEligibilityMock,
 }));
-
-vi.mock('@/lib/organizer', () => ({
-  isEventOrganizer: mocks.isEventOrganizerMock,
-}));
-
-vi.mock('@/lib/domain-events', () => ({
-  publish: mocks.publishMock,
-}));
-
-// ─── Subject ────────────────────────────────────────────────────────────────
 
 import { POST } from '../../app/api/events/[id]/tickets/[ticketId]/check-in/route';
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
-
-function makeRequest(): NextRequest {
-  return new NextRequest('https://events.test/api/events/evt_1/tickets/tkt_1/check-in', {
-    method: 'POST',
-    headers: { cookie: 'session=abc' },
-  });
-}
-
-const ROUTE_PARAMS = { params: Promise.resolve({ id: 'evt_1', ticketId: 'tkt_1' }) };
-
-/** Queue a raw SQL result for the next sqlMock call. */
-function nextSql(rows: unknown[]): void {
-  mocks.sqlMock.mockResolvedValueOnce(rows);
-}
+const makeRequest = () => ticketRequest('check-in');
 
 const VALID_TICKET = {
   id: 'tkt_1',
@@ -92,43 +43,31 @@ const USED_AT = '2026-07-14T14:00:00.000Z';
 
 describe('POST /api/events/[id]/tickets/[ticketId]/check-in', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
-    mocks.sqlMock.mockReset();
-    mocks.sqlMock.mockResolvedValue([]);   // default: all extra SQL calls return []
-    mocks.publishMock.mockResolvedValue(undefined);
-    mocks.evaluateEligibilityMock.mockReset();
-    mocks.evaluateEligibilityMock.mockResolvedValue(null);
+    resetRouteMocks();
+    extra.evaluateEligibilityMock.mockReset();
+    extra.evaluateEligibilityMock.mockResolvedValue(null);
     delete process.env.CHECKIN_WEBHOOK_URL;
-
-    mocks.requireAuthMock.mockResolvedValue({
-      identity: { id: 'did:imajin:organizer', actingAs: null },
-    });
-    mocks.isEventOrganizerMock.mockResolvedValue({ authorized: true });
   });
 
-  it('returns 401 when auth fails', async () => {
-    mocks.requireAuthMock.mockResolvedValue({ error: 'Unauthorized', status: 401 });
-    const res = await POST(makeRequest(), ROUTE_PARAMS);
-    expect(res.status).toBe(401);
-  });
+  testReturns401WhenAuthFails(POST, makeRequest);
 
   it('returns 403 when caller is not an organizer', async () => {
     mocks.isEventOrganizerMock.mockResolvedValue({ authorized: false });
-    const res = await POST(makeRequest(), ROUTE_PARAMS);
+    const res = await POST(makeRequest(), TICKET_ROUTE_PARAMS);
     expect(res.status).toBe(403);
     expect(mocks.sqlMock).not.toHaveBeenCalled();
   });
 
   it('returns 404 when ticket is not found', async () => {
     nextSql([]);   // ticket SELECT → empty
-    const res = await POST(makeRequest(), ROUTE_PARAMS);
+    const res = await POST(makeRequest(), TICKET_ROUTE_PARAMS);
     expect(res.status).toBe(404);
     expect(await res.json()).toMatchObject({ error: 'Ticket not found' });
   });
 
   it('returns 400 when ticket status is not valid', async () => {
     nextSql([{ ...VALID_TICKET, status: 'held' }]);
-    const res = await POST(makeRequest(), ROUTE_PARAMS);
+    const res = await POST(makeRequest(), TICKET_ROUTE_PARAMS);
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ error: 'Ticket is not valid' });
     // No UPDATE should have been issued
@@ -137,7 +76,7 @@ describe('POST /api/events/[id]/tickets/[ticketId]/check-in', () => {
 
   it('returns 400 when ticket is already checked in', async () => {
     nextSql([{ ...VALID_TICKET, used_at: USED_AT }]);
-    const res = await POST(makeRequest(), ROUTE_PARAMS);
+    const res = await POST(makeRequest(), TICKET_ROUTE_PARAMS);
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ error: 'Ticket already checked in' });
     expect(mocks.sqlMock).toHaveBeenCalledOnce();
@@ -147,7 +86,7 @@ describe('POST /api/events/[id]/tickets/[ticketId]/check-in', () => {
     nextSql([VALID_TICKET]);                                    // (1) SELECT ticket
     nextSql([{ id: 'tkt_1', used_at: USED_AT, status: 'used' }]); // (2) UPDATE RETURNING
 
-    const res = await POST(makeRequest(), ROUTE_PARAMS);
+    const res = await POST(makeRequest(), TICKET_ROUTE_PARAMS);
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.ticket.id).toBe('tkt_1');
@@ -168,25 +107,25 @@ describe('POST /api/events/[id]/tickets/[ticketId]/check-in', () => {
     // Hard-eligibility is delegated to the kernel (#1999) — no local SQL,
     // no local bus emission. The route just calls evaluateEligibility() for
     // the attendee and does not block the response on it.
-    expect(mocks.evaluateEligibilityMock).toHaveBeenCalledWith('did:imajin:attendee');
+    expect(extra.evaluateEligibilityMock).toHaveBeenCalledWith('did:imajin:attendee');
   });
 
   it('does not call evaluateEligibility when the ticket has no owner_did', async () => {
     nextSql([{ ...VALID_TICKET, owner_did: null }]);
     nextSql([{ id: 'tkt_1', used_at: USED_AT, status: 'used' }]);
 
-    const res = await POST(makeRequest(), ROUTE_PARAMS);
+    const res = await POST(makeRequest(), TICKET_ROUTE_PARAMS);
     expect(res.status).toBe(200);
-    expect(mocks.evaluateEligibilityMock).not.toHaveBeenCalled();
+    expect(extra.evaluateEligibilityMock).not.toHaveBeenCalled();
   });
 
   it('does not fail check-in when evaluateEligibility rejects', async () => {
     nextSql([VALID_TICKET]);
     nextSql([{ id: 'tkt_1', used_at: USED_AT, status: 'used' }]);
-    mocks.evaluateEligibilityMock.mockRejectedValue(new Error('kernel unreachable'));
+    extra.evaluateEligibilityMock.mockRejectedValue(new Error('kernel unreachable'));
 
-    const res = await POST(makeRequest(), ROUTE_PARAMS);
+    const res = await POST(makeRequest(), TICKET_ROUTE_PARAMS);
     expect(res.status).toBe(200);
-    await vi.waitFor(() => expect(mocks.evaluateEligibilityMock).toHaveBeenCalled());
+    await vi.waitFor(() => expect(extra.evaluateEligibilityMock).toHaveBeenCalled());
   });
 });

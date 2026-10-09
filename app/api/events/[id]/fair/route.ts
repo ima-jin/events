@@ -4,10 +4,9 @@ import { revalidatePath } from 'next/cache';
 
 const log = createLogger('events');
 import { db, events } from '@/db';
-import { requireAuth, resolveActingDid } from '@/lib/auth';
-import { isEventOrganizer } from '@/lib/organizer';
 import { eq } from 'drizzle-orm';
 import { validateManifest } from '@ima-jin/fair';
+import { authenticateActing, forbidUnlessOrganizer, type IdParams } from '@/lib/route-helpers';
 
 /**
  * PATCH /api/events/[id]/fair - Update the .fair manifest for an event
@@ -15,15 +14,11 @@ import { validateManifest } from '@ima-jin/fair';
  */
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: IdParams
 ) {
-  const authResult = await requireAuth(request);
-  if ('error' in authResult) {
-    return NextResponse.json({ error: authResult.error }, { status: authResult.status });
-  }
-
-  const { identity } = authResult;
-  const did = resolveActingDid(identity);
+  const auth = await authenticateActing(request);
+  if (auth instanceof NextResponse) return auth;
+  const { did } = auth;
   const { id } = await params;
 
   try {
@@ -37,10 +32,8 @@ export async function PATCH(
       return NextResponse.json({ error: 'Event not found' }, { status: 404 });
     }
 
-    const orgCheck = await isEventOrganizer(id, did, request);
-    if (!orgCheck.authorized) {
-      return NextResponse.json({ error: 'Not authorized to update this event' }, { status: 403 });
-    }
+    const forbidden = await forbidUnlessOrganizer(id, did, request, 'Not authorized to update this event');
+    if (forbidden) return forbidden;
 
     const body = await request.json();
     const { manifest } = body;

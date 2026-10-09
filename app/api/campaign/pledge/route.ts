@@ -19,40 +19,27 @@ import { serviceUrl } from '@/lib/kernel';
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { requireAuth, resolveActingDid } from '@/lib/auth';
-import { db, events, pledges } from '@/db';
+import { db, pledges } from '@/db';
 import { eq, and } from 'drizzle-orm';
-import { corsHeaders, rateLimit, getClientIP } from '@ima-jin/config';
+import { corsHeaders } from '@ima-jin/config';
 import { withLogger } from '@ima-jin/logger';
+import { campaignOptions, limitRequests, loadCampaignEvent, campaignFailure } from '@/lib/campaign-route';
+import { authenticateActing } from '@/lib/route-helpers';
 import { randomBytes } from 'node:crypto';
 
 const PAY_SERVICE_URL = (serviceUrl('pay') ?? '');
 
-export function OPTIONS(request: NextRequest) {
-  return new NextResponse(null, { status: 204, headers: corsHeaders(request) });
-}
+export const OPTIONS = campaignOptions;
 
 export const POST = withLogger('events', async (request: NextRequest, { log }) => {
   const cors = corsHeaders(request);
 
-  const ip = getClientIP(request);
-  const rl = rateLimit(ip, 10, 60_000);
-  if (rl.limited) {
-    return NextResponse.json(
-      { error: 'Too many requests', retryAfter: rl.retryAfter },
-      { status: 429, headers: { ...cors, 'Retry-After': String(rl.retryAfter) } }
-    );
-  }
+  const limited = limitRequests(request, cors, 10);
+  if (limited) return limited;
 
-  const authResult = await requireAuth(request);
-  if ('error' in authResult) {
-    return NextResponse.json(
-      { error: authResult.error },
-      { status: authResult.status, headers: cors }
-    );
-  }
-
-  const did = resolveActingDid(authResult.identity);
+  const auth = await authenticateActing(request, cors);
+  if (auth instanceof NextResponse) return auth;
+  const { did } = auth;
 
   try {
     const body = await request.json();
@@ -70,19 +57,8 @@ export const POST = withLogger('events', async (request: NextRequest, { log }) =
     }
 
     // Fetch and validate event
-    const [event] = await db
-      .select()
-      .from(events)
-      .where(eq(events.id, eventId))
-      .limit(1);
-
-    if (!event) {
-      return NextResponse.json({ error: 'Event not found' }, { status: 404, headers: cors });
-    }
-
-    if (event.eventType !== 'campaign') {
-      return NextResponse.json({ error: 'Not a campaign event' }, { status: 400, headers: cors });
-    }
+    const event = await loadCampaignEvent(eventId, cors);
+    if (event instanceof NextResponse) return event;
 
     if (event.status !== 'published') {
       return NextResponse.json(
@@ -170,10 +146,6 @@ export const POST = withLogger('events', async (request: NextRequest, { log }) =
       { headers: cors }
     );
   } catch (error) {
-    log.error({ err: String(error) }, 'Campaign pledge error');
-    return NextResponse.json(
-      { error: 'Failed to create pledge' },
-      { status: 500, headers: cors }
-    );
+    return campaignFailure(log, error, 'Campaign pledge error', 'Failed to create pledge', cors);
   }
 });

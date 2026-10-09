@@ -1,21 +1,17 @@
 ﻿import { NextResponse } from 'next/server';
 import { withLogger } from '@ima-jin/logger';
 import { db, events, ticketTypes } from '@/db';
-import { requireAuth, resolveActingDid } from '@/lib/auth';
 import { eq, desc } from 'drizzle-orm';
+import { authenticateActing } from '@/lib/route-helpers';
 
 /**
  * GET /api/events/mine - Get all events created by authenticated user
  */
 export const GET = withLogger('events', async (request, { log }) => {
   // Require authentication
-  const authResult = await requireAuth(request);
-  if ('error' in authResult) {
-    return NextResponse.json({ error: authResult.error }, { status: authResult.status });
-  }
-
-  const { identity } = authResult;
-  const did = resolveActingDid(identity);
+  const auth = await authenticateActing(request);
+  if (auth instanceof NextResponse) return auth;
+  const { did } = auth;
 
   try {
     // Get all events created by this user

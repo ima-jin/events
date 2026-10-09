@@ -3,8 +3,8 @@ import { createLogger } from '@ima-jin/logger';
 import { db, tickets, ticketTypes } from '@/db';
 
 const log = createLogger('events');
-import { requireAuth } from '@/lib/auth';
 import { eq, and, lt } from 'drizzle-orm';
+import { authenticateActing, type IdParams, loadEventTicketType } from '@/lib/route-helpers';
 
 const DEFAULT_HOLD_HOURS = 72;
 
@@ -13,37 +13,20 @@ const DEFAULT_HOLD_HOURS = 72;
  */
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: IdParams
 ) {
-  const authResult = await requireAuth(request);
-  if ('error' in authResult) {
-    return NextResponse.json({ error: authResult.error }, { status: authResult.status });
-  }
-
-  const { identity } = authResult;
+  const auth = await authenticateActing(request);
+  if (auth instanceof NextResponse) return auth;
+  const { identity } = auth;
   const { id } = await params;
 
   try {
     const body = await request.json();
     const { ticketTypeId, holdHours = DEFAULT_HOLD_HOURS } = body;
 
-    if (!ticketTypeId) {
-      return NextResponse.json({ error: 'ticketTypeId is required' }, { status: 400 });
-    }
-
     // Check ticket type exists and belongs to this event
-    const [ticketType] = await db
-      .select()
-      .from(ticketTypes)
-      .where(and(
-        eq(ticketTypes.id, ticketTypeId),
-        eq(ticketTypes.eventId, id)
-      ))
-      .limit(1);
-
-    if (!ticketType) {
-      return NextResponse.json({ error: 'Ticket type not found' }, { status: 404 });
-    }
+    const ticketType = await loadEventTicketType(ticketTypeId, id);
+    if (ticketType instanceof NextResponse) return ticketType;
 
     // Check if user already has a hold for this ticket type
     const [existingHold] = await db
@@ -134,12 +117,9 @@ export async function POST(
  * DELETE /api/events/[id]/hold - Release a hold
  */
 export async function DELETE(request: NextRequest) {
-  const authResult = await requireAuth(request);
-  if ('error' in authResult) {
-    return NextResponse.json({ error: authResult.error }, { status: authResult.status });
-  }
-
-  const { identity } = authResult;
+  const auth = await authenticateActing(request);
+  if (auth instanceof NextResponse) return auth;
+  const { identity } = auth;
 
   try {
     const { searchParams } = new URL(request.url);

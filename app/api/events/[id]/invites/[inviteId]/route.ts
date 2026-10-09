@@ -6,7 +6,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db, eventInvites } from '@/db';
 import { eq, and } from 'drizzle-orm';
 import { requireAuth, resolveActingDid } from '@/lib/auth';
-import { isEventOrganizer } from '@/lib/organizer';
+import { forbidUnlessOrganizer } from '@/lib/route-helpers';
 
 export async function DELETE(
   request: NextRequest,
@@ -20,10 +20,8 @@ export async function DELETE(
   const { id, inviteId } = await params;
   const did = resolveActingDid(authResult.identity);
 
-  const check = await isEventOrganizer(id, did, request);
-  if (!check.authorized) {
-    return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
-  }
+  const forbidden = await forbidUnlessOrganizer(id, did, request, 'Not authorized');
+  if (forbidden) return forbidden;
 
   const deleted = await db
     .delete(eventInvites)

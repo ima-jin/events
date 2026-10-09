@@ -1,10 +1,9 @@
 ﻿import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@ima-jin/logger';
-import { requireAuth, resolveActingDid } from '@/lib/auth';
 import { resolveProfiles as resolveIdentitiesForDids } from '@/lib/kernel';
-import { isEventOrganizer } from '@/lib/organizer';
 import { getClient } from '@/db';
 import { csvRow } from '../../../../../../src/lib/guest-export-helpers';
+import { authenticateActing, forbidUnlessOrganizer, type IdParams } from '@/lib/route-helpers';
 
 const log = createLogger('events');
 const sql = getClient();
@@ -26,24 +25,18 @@ function computeOrderStatus(tickets: { status: string }[]): string {
  */
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: IdParams
 ) {
-  const authResult = await requireAuth(request);
-  if ('error' in authResult) {
-    return NextResponse.json({ error: authResult.error }, { status: authResult.status });
-  }
-
-  const { identity } = authResult;
-  const did = resolveActingDid(identity);
+  const auth = await authenticateActing(request);
+  if (auth instanceof NextResponse) return auth;
+  const { did } = auth;
   const { id } = await params;
   const { searchParams } = new URL(request.url);
   const format = searchParams.get('format') || 'csv';
 
   try {
-    const orgCheck = await isEventOrganizer(id, did, request);
-    if (!orgCheck.authorized) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
+    const forbidden = await forbidUnlessOrganizer(id, did, request, 'Forbidden');
+    if (forbidden) return forbidden;
 
     // Fetch event for filename
     const [event] = await sql`

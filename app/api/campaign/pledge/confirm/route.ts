@@ -18,38 +18,25 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { requireAuth, resolveActingDid } from '@/lib/auth';
 import { db, pledges } from '@/db';
 import { eq, and } from 'drizzle-orm';
-import { corsHeaders, rateLimit, getClientIP } from '@ima-jin/config';
+import { corsHeaders } from '@ima-jin/config';
 import { withLogger } from '@ima-jin/logger';
+import { campaignOptions, limitRequests, campaignFailure } from '@/lib/campaign-route';
+import { authenticateActing } from '@/lib/route-helpers';
 
 
-export function OPTIONS(request: NextRequest) {
-  return new NextResponse(null, { status: 204, headers: corsHeaders(request) });
-}
+export const OPTIONS = campaignOptions;
 
 export const POST = withLogger('events', async (request: NextRequest, { log }) => {
   const cors = corsHeaders(request);
 
-  const ip = getClientIP(request);
-  const rl = rateLimit(ip, 20, 60_000);
-  if (rl.limited) {
-    return NextResponse.json(
-      { error: 'Too many requests', retryAfter: rl.retryAfter },
-      { status: 429, headers: { ...cors, 'Retry-After': String(rl.retryAfter) } }
-    );
-  }
+  const limited = limitRequests(request, cors, 20);
+  if (limited) return limited;
 
-  const authResult = await requireAuth(request);
-  if ('error' in authResult) {
-    return NextResponse.json(
-      { error: authResult.error },
-      { status: authResult.status, headers: cors }
-    );
-  }
-
-  const did = resolveActingDid(authResult.identity);
+  const auth = await authenticateActing(request, cors);
+  if (auth instanceof NextResponse) return auth;
+  const { did } = auth;
 
   try {
     const body = await request.json();
@@ -110,10 +97,6 @@ export const POST = withLogger('events', async (request: NextRequest, { log }) =
       { headers: cors }
     );
   } catch (error) {
-    log.error({ err: String(error) }, 'Campaign pledge confirm error');
-    return NextResponse.json(
-      { error: 'Failed to confirm pledge' },
-      { status: 500, headers: cors }
-    );
+    return campaignFailure(log, error, 'Campaign pledge confirm error', 'Failed to confirm pledge', cors);
   }
 });
