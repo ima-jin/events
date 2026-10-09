@@ -1,8 +1,7 @@
 import { and, eq, gt, inArray } from 'drizzle-orm';
 import { db, events, getClient, tickets } from '@/db';
+import { holdingTicketStatuses } from '@/lib/ticket-holding';
 
-/** Ticket statuses that count as "holds a ticket" for the attending lists. */
-const HELD_STATUSES = ['sold', 'used'];
 /** Event statuses a creator / co-host still lists on their profile. */
 const LISTED_EVENT_STATUSES = ['draft', 'published'];
 
@@ -146,7 +145,7 @@ export function listTicketedEvents(ownerDid: string, now: Date): Promise<Attendi
     .select(attendingColumns)
     .from(tickets)
     .innerJoin(events, eq(tickets.eventId, events.id))
-    .where(and(eq(tickets.ownerDid, ownerDid), inArray(tickets.status, HELD_STATUSES), gt(events.startsAt, now)));
+    .where(and(eq(tickets.ownerDid, ownerDid), inArray(tickets.status, holdingTicketStatuses()), gt(events.startsAt, now)));
 }
 
 /** Upcoming draft/published events created by `ownerDid`. */
@@ -186,7 +185,7 @@ export async function listHeldEventIds(viewerDid: string, eventIds: string[]): P
     .select({ eventId: tickets.eventId })
     .from(tickets)
     .where(
-      and(eq(tickets.ownerDid, viewerDid), inArray(tickets.status, HELD_STATUSES), inArray(tickets.eventId, eventIds)),
+      and(eq(tickets.ownerDid, viewerDid), inArray(tickets.status, holdingTicketStatuses()), inArray(tickets.eventId, eventIds)),
     );
   return rows.map((r) => r.eventId);
 }
