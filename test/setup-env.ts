@@ -7,4 +7,3 @@
 process.env.APP_DB_SCHEMA ??= 'events';
 process.env.DATABASE_URL ??= 'postgres://test:test@localhost:5432/events_test';
 process.env.NEXT_PUBLIC_APP_URL ??= 'https://events.test';
-process.env.IMAJIN_APP_AUDIENCE ??= 'events.test';
