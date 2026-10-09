@@ -228,7 +228,7 @@ function buildEventRow({ eventId, eventDid, keypair, creatorDid, input, fairMani
     courseSlug: input.courseSlug || null,
     emtEmail: input.emtEmail || null,
     nameDisplayPolicy: input.nameDisplayPolicy || DEFAULT_NAME_POLICY,
-    chatEnabled: input.chatEnabled === undefined ? true : input.chatEnabled,
+    chatEnabled: input.chatEnabled ?? true,
     ...resolveCampaignFields(input),
     status: 'draft',
     metadata: { fair: fairManifest },
