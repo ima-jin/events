@@ -16,8 +16,10 @@
  * exactly as if it were declared inline in the test file itself.
  */
 import { vi, it, expect } from 'vitest';
+import type { NextRequest } from 'next/server';
 
-type RouteHandler = (request: Request, context: unknown) => Promise<Response>;
+type RouteContext = { params: Promise<{ id: string }> };
+type RouteHandler = (request: NextRequest, context: RouteContext) => Promise<Response>;
 
 const hoisted = vi.hoisted(() => {
   const queue: unknown[][] = [];
@@ -64,16 +66,22 @@ vi.mock('@ima-jin/logger', () => ({
   createLogger: vi.fn(() => ({ error: vi.fn(), info: vi.fn(), warn: vi.fn() })),
 }));
 
-vi.mock('@imajin/db', () => ({
+vi.mock('@/db', () => ({
   getClient: () => sqlMock,
 }));
 
-vi.mock('@imajin/auth', () => ({
+vi.mock('@/lib/auth', () => ({
   requireAuth: requireAuthMock,
+  resolveActingDid: (identity: { id: string }) => identity.id,
+}));
+
+vi.mock('@/lib/kernel', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/kernel')>()),
+  resolveProfiles: resolveIdentitiesForDidsMock,
+}));
+
+vi.mock('@ima-jin/auth', () => ({
   requireAppAuth: requireAppAuthMock,
-  resolveIdentitiesForDids: resolveIdentitiesForDidsMock,
-  resolveActingDid: (identity: { actingFor?: string; actingAs?: string | null; id: string }) =>
-    identity.actingFor ?? identity.actingAs ?? identity.id,
 }));
 
 vi.mock('@/lib/organizer', () => ({
@@ -91,7 +99,7 @@ export function testReturns401WhenAuthFails(GET: RouteHandler, makeRequest: () =
   it('returns 401 when auth fails', async () => {
     requireAuthMock.mockResolvedValue({ error: 'Unauthorized', status: 401 });
 
-    const res = await GET(makeRequest(), routeParams);
+    const res = await GET(makeRequest() as NextRequest, routeParams as RouteContext);
     expect(res.status).toBe(401);
   });
 }
@@ -105,7 +113,7 @@ export function testReturns403ForNonOrganizer(
   it('returns 403 for a non-organizer', async () => {
     isEventOrganizerMock.mockResolvedValue({ authorized: false });
 
-    const res = await GET(makeRequest(), routeParams);
+    const res = await GET(makeRequest() as NextRequest, routeParams as RouteContext);
     expect(res.status).toBe(403);
     onForbidden?.();
   });
@@ -115,7 +123,7 @@ export function testReturns404WhenEventNotFound(GET: RouteHandler, makeRequest: 
   it('returns 404 when the event is not found', async () => {
     nextSql([]); // event lookup misses
 
-    const res = await GET(makeRequest(), routeParams);
+    const res = await GET(makeRequest() as NextRequest, routeParams as RouteContext);
     expect(res.status).toBe(404);
   });
 }
@@ -124,7 +132,7 @@ export function testReturns500OnUnexpectedError(GET: RouteHandler, makeRequest: 
   it('returns 500 when an unexpected error is thrown', async () => {
     isEventOrganizerMock.mockRejectedValue(new Error('boom'));
 
-    const res = await GET(makeRequest(), routeParams);
+    const res = await GET(makeRequest() as NextRequest, routeParams as RouteContext);
     expect(res.status).toBe(500);
   });
 }

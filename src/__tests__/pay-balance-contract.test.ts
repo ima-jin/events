@@ -18,8 +18,7 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CALL_SITE_PATH = resolve(HERE, '../../app/api/balance/route.ts');
-// apps/events/src/__tests__ -> apps/events/src -> apps/events -> apps -> apps/kernel
-const PAY_SPEC_PATH = resolve(HERE, '../../../kernel/api-spec/pay.yaml');
+const PAY_SPEC_PATH = resolve(HERE, '../../test/fixtures/pay.yaml');
 
 describe('pay.yaml balance contract', () => {
   const spec = readFileSync(PAY_SPEC_PATH, 'utf-8');
@@ -76,6 +75,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('@ima-jin/logger', () => ({
+  createLogger: () => createStubLog(),
   // Same test double as events-create-route.test.ts / orders-refund tests:
   // skip correlation-id/timing plumbing and just invoke the handler directly,
   // but keep a stable log double so warn/error calls can be asserted.
@@ -83,10 +83,9 @@ vi.mock('@ima-jin/logger', () => ({
     (req: unknown) => handler(req, { log: mocks.log, correlationId: 'cor_test' }),
 }));
 
-vi.mock('@imajin/auth', () => ({
+vi.mock('@/lib/auth', () => ({
   requireAuth: mocks.requireAuthMock,
-  resolveActingDid: (identity: { actingFor?: string; actingAs?: string | null; id: string }) =>
-    identity.actingFor ?? identity.actingAs ?? identity.id,
+  resolveActingDid: (identity: { id: string }) => identity.id,
 }));
 
 import { GET } from '../../app/api/balance/route';

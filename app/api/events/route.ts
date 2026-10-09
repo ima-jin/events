@@ -215,9 +215,8 @@ export const POST = withLogger('events', async (request, { log, correlationId })
 
     // Load node config (via the registry, #2000) and optional scope config for fair manifest
     const nodeSelf = await getNodeSelf();
-    // gap(kernel): act-as (forest scope) is not part of the app-token contract,
-    // so events are never created on behalf of a scope DID here.
-    const scopeDid: string | null = null;
+    // Act-as (forest scope): the verified act-as claim on the app token, as in the kernel version.
+    const scopeDid = identity.actingAs ?? null;
     const scopeFeeBps = await resolveScopeFeeBps(scopeDid);
 
     // Auto-generate .fair attribution manifest

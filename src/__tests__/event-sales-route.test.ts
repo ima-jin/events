@@ -6,7 +6,7 @@
  * SQL query and resolves those DIDs via the batched resolveIdentitiesForDids
  * client (backed by the profile service's /api/resolve).
  */
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   nextSql,
   resetResolveRouteMocks,
@@ -15,6 +15,15 @@ import {
   testReturns403ForNonOrganizer,
   testReturns404WhenEventNotFound,
 } from './support/resolve-route-test-support';
+
+const surveyMocks = vi.hoisted(() => ({
+  getSurveyResponsesForTicketsMock: vi.fn(),
+}));
+
+// Survey answers come from dykil's public API (src/lib/surveys.ts), never its tables.
+vi.mock('@/lib/surveys', () => ({
+  getSurveyResponsesForTickets: surveyMocks.getSurveyResponsesForTicketsMock,
+}));
 
 import { GET } from '../../app/api/events/[id]/sales/route';
 
@@ -64,7 +73,11 @@ const ORPHAN_ROW = {
   attendee_email: 'orphan@example.com',
 };
 
-beforeEach(resetResolveRouteMocks);
+beforeEach(() => {
+  resetResolveRouteMocks();
+  surveyMocks.getSurveyResponsesForTicketsMock.mockReset();
+  surveyMocks.getSurveyResponsesForTicketsMock.mockResolvedValue(new Map());
+});
 
 describe('GET .../sales — batched identity resolution (#1998)', () => {
   it('resolves buyer and orphan-owner DIDs via resolveIdentitiesForDids and returns JSON', async () => {
@@ -97,6 +110,9 @@ describe('GET .../sales — batched identity resolution (#1998)', () => {
     nextSql([EVENT_ROW]);
     nextSql([]); // no orders
     nextSql([ORPHAN_ROW]);
+    surveyMocks.getSurveyResponsesForTicketsMock.mockResolvedValue(
+      new Map([['tkt_orphan', { id: 'resp_1', surveyId: 'form_1', answers: { full_name: 'Orphan Attendee' } }]])
+    );
 
     const res = await GET(makeRequest() as any, ROUTE_PARAMS);
     const json = await res.json();

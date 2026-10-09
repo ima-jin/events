@@ -41,6 +41,7 @@ const mocks = vi.hoisted(() => {
   const isEventOrganizerMock = vi.fn();
   const publishMock = vi.fn().mockResolvedValue(undefined);
   const fetchMock = vi.fn();
+  const getSurveyResponseForTicketMock = vi.fn().mockResolvedValue(null);
 
   return {
     sqlMock,
@@ -55,6 +56,7 @@ const mocks = vi.hoisted(() => {
     isEventOrganizerMock,
     publishMock,
     fetchMock,
+    getSurveyResponseForTicketMock,
   };
 });
 
@@ -62,11 +64,8 @@ vi.mock('@ima-jin/logger', () => ({
   createLogger: vi.fn(() => ({ error: vi.fn(), info: vi.fn(), warn: vi.fn() })),
 }));
 
-vi.mock('@imajin/db', () => ({
-  getClient: () => mocks.sqlMock,
-}));
-
 vi.mock('@/db', () => ({
+  getClient: () => mocks.sqlMock,
   db: {
     select: mocks.selectMock,
     update: mocks.updateMock,
@@ -75,18 +74,25 @@ vi.mock('@/db', () => ({
   ticketTypes: { id: 'col_ttId', sold: 'col_sold' },
 }));
 
-vi.mock('@imajin/auth', () => ({
+vi.mock('@/lib/auth', () => ({
   requireAuth: mocks.requireAuthMock,
-  resolveEmailForDid: mocks.resolveEmailForDidMock,
-  resolveActingDid: (identity: { actingFor?: string; actingAs?: string | null; id: string }) =>
-    identity.actingFor ?? identity.actingAs ?? identity.id,
+  resolveActingDid: (identity: { id: string }) => identity.id,
+}));
+
+vi.mock('@/lib/kernel', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/kernel')>()),
+  getContactEmail: mocks.resolveEmailForDidMock,
+}));
+
+vi.mock('@/lib/ticket-survey', () => ({
+  getSurveyResponseForTicket: mocks.getSurveyResponseForTicketMock,
 }));
 
 vi.mock('@/lib/organizer', () => ({
   isEventOrganizer: mocks.isEventOrganizerMock,
 }));
 
-vi.mock('@imajin/bus', () => ({
+vi.mock('@/lib/domain-events', () => ({
   publish: mocks.publishMock,
 }));
 
@@ -154,6 +160,7 @@ describe('POST /api/events/[id]/tickets/[ticketId]/refund', () => {
     mocks.updateWhereMock.mockResolvedValue(undefined);
     mocks.publishMock.mockResolvedValue(undefined);
     mocks.resolveEmailForDidMock.mockResolvedValue('buyer@test.com');
+    mocks.getSurveyResponseForTicketMock.mockResolvedValue(null);
 
     process.env.PAY_SERVICE_URL = 'http://kernel-test';
     process.env.PAY_SERVICE_API_KEY = 'service-key';

@@ -10,7 +10,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mocks = vi.hoisted(() => {
-  const sqlMock = vi.fn().mockResolvedValue([]);
 
   const whereMock = vi.fn();
   const fromMock = vi.fn(() => ({ where: whereMock }));
@@ -21,7 +20,6 @@ const mocks = vi.hoisted(() => {
   const updateMock = vi.fn(() => ({ set: setMock }));
 
   return {
-    sqlMock,
     whereMock,
     fromMock,
     selectMock,
@@ -30,6 +28,7 @@ const mocks = vi.hoisted(() => {
     updateMock,
     requireAuthMock: vi.fn(),
     resolveEmailForDidMock: vi.fn(),
+    getSurveyResponseForTicketMock: vi.fn(),
     isEventOrganizerMock: vi.fn(),
     publishMock: vi.fn().mockResolvedValue(undefined),
     generateQRCodeMock: vi.fn().mockResolvedValue('data:image/png;base64,stub'),
@@ -38,10 +37,6 @@ const mocks = vi.hoisted(() => {
 
 vi.mock('@ima-jin/logger', () => ({
   createLogger: vi.fn(() => ({ error: vi.fn(), info: vi.fn(), warn: vi.fn() })),
-}));
-
-vi.mock('@imajin/db', () => ({
-  getClient: () => mocks.sqlMock,
 }));
 
 vi.mock('@/db', () => ({
@@ -54,11 +49,18 @@ vi.mock('@/db', () => ({
   ticketTypes: { id: 'col_id' },
 }));
 
-vi.mock('@imajin/auth', () => ({
+vi.mock('@/lib/auth', () => ({
   requireAuth: mocks.requireAuthMock,
-  resolveEmailForDid: mocks.resolveEmailForDidMock,
-  resolveActingDid: (identity: { actingFor?: string; actingAs?: string | null; id: string }) =>
-    identity.actingFor ?? identity.actingAs ?? identity.id,
+  resolveActingDid: (identity: { id: string }) => identity.id,
+}));
+
+vi.mock('@/lib/kernel', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/kernel')>()),
+  getContactEmail: mocks.resolveEmailForDidMock,
+}));
+
+vi.mock('@/lib/ticket-survey', () => ({
+  getSurveyResponseForTicket: mocks.getSurveyResponseForTicketMock,
 }));
 
 vi.mock('@/lib/organizer', () => ({
@@ -69,7 +71,7 @@ vi.mock('@/lib/email', () => ({
   generateQRCode: mocks.generateQRCodeMock,
 }));
 
-vi.mock('@imajin/bus', () => ({
+vi.mock('@/lib/domain-events', () => ({
   publish: mocks.publishMock,
 }));
 
@@ -121,8 +123,6 @@ const BASE_TICKET_TYPE = { id: 'tkt_type_1', name: 'General Admission' };
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.whereMock.mockReset();
-  mocks.sqlMock.mockReset();
-  mocks.sqlMock.mockResolvedValue([]); // default: no survey response, no onboard-token insert result needed
 
   mocks.updateWhereMock.mockResolvedValue(undefined);
   mocks.publishMock.mockResolvedValue(undefined);
@@ -133,6 +133,7 @@ beforeEach(() => {
   });
   mocks.isEventOrganizerMock.mockResolvedValue({ authorized: true });
   mocks.resolveEmailForDidMock.mockResolvedValue(null);
+  mocks.getSurveyResponseForTicketMock.mockResolvedValue(null); // default: no survey response
 });
 
 describe('POST .../resend-email — email resolution (#1998)', () => {
@@ -140,8 +141,11 @@ describe('POST .../resend-email — email resolution (#1998)', () => {
     nextDrizzleSelect([BASE_TICKET]);
     nextDrizzleSelect([BASE_EVENT]);
     nextDrizzleSelect([BASE_TICKET_TYPE]);
-    mocks.sqlMock.mockResolvedValueOnce([{ answers: { email: 'survey@example.com' } }]); // survey_responses
-    mocks.sqlMock.mockResolvedValueOnce([]); // onboard_tokens insert
+    mocks.getSurveyResponseForTicketMock.mockResolvedValue({
+      id: 'resp_1',
+      surveyId: 'form_1',
+      answers: { email: 'survey@example.com' },
+    });
 
     const res = await POST(makeRequest() as any, ROUTE_PARAMS);
 
@@ -153,8 +157,6 @@ describe('POST .../resend-email — email resolution (#1998)', () => {
     nextDrizzleSelect([BASE_TICKET]);
     nextDrizzleSelect([BASE_EVENT]);
     nextDrizzleSelect([BASE_TICKET_TYPE]);
-    mocks.sqlMock.mockResolvedValueOnce([]); // no survey response
-    mocks.sqlMock.mockResolvedValueOnce([]); // onboard_tokens insert
     mocks.resolveEmailForDidMock.mockResolvedValue('resolved@example.com');
 
     const res = await POST(makeRequest() as any, ROUTE_PARAMS);
@@ -167,7 +169,6 @@ describe('POST .../resend-email — email resolution (#1998)', () => {
     nextDrizzleSelect([BASE_TICKET]);
     nextDrizzleSelect([BASE_EVENT]);
     nextDrizzleSelect([BASE_TICKET_TYPE]);
-    mocks.sqlMock.mockResolvedValueOnce([]); // no survey response
     mocks.resolveEmailForDidMock.mockResolvedValue(null);
 
     const res = await POST(makeRequest() as any, ROUTE_PARAMS);

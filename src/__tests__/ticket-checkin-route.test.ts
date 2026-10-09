@@ -36,14 +36,17 @@ vi.mock('@ima-jin/logger', () => ({
   createLogger: vi.fn(() => ({ error: vi.fn(), info: vi.fn(), warn: vi.fn() })),
 }));
 
-vi.mock('@imajin/db', () => ({
+vi.mock('@/db', () => ({
   getClient: () => mocks.sqlMock,
 }));
 
-vi.mock('@imajin/auth', () => ({
+vi.mock('@/lib/auth', () => ({
   requireAuth: mocks.requireAuthMock,
-  resolveActingDid: (identity: { actingFor?: string; actingAs?: string | null; id: string }) =>
-    identity.actingFor ?? identity.actingAs ?? identity.id,
+  resolveActingDid: (identity: { id: string }) => identity.id,
+}));
+
+vi.mock('@/lib/kernel', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/kernel')>()),
   evaluateEligibility: mocks.evaluateEligibilityMock,
 }));
 
@@ -51,7 +54,7 @@ vi.mock('@/lib/organizer', () => ({
   isEventOrganizer: mocks.isEventOrganizerMock,
 }));
 
-vi.mock('@imajin/bus', () => ({
+vi.mock('@/lib/domain-events', () => ({
   publish: mocks.publishMock,
 }));
 

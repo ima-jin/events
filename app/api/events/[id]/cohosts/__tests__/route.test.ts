@@ -8,6 +8,7 @@
  * instead, forwarding the caller's session cookie.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { NextRequest } from 'next/server';
 
 const mocks = vi.hoisted(() => {
   const resultQueue: unknown[][] = [];
@@ -37,9 +38,9 @@ vi.mock('@/db', () => ({
   events: { id: 'col_id', podId: 'col_pod_id', creatorDid: 'col_creator_did', did: 'col_did' },
 }));
 
-vi.mock('@imajin/auth', () => ({
+vi.mock('@/lib/auth', () => ({
   requireAuth: mocks.requireAuthMock,
-  resolveActingDid: (identity: { actingAs?: string | null; id: string }) => identity.actingAs ?? identity.id,
+  resolveActingDid: (identity: { id: string }) => identity.id,
 }));
 
 vi.mock('@ima-jin/logger', () => ({
@@ -57,12 +58,12 @@ import { GET, POST } from '../route';
 const ROUTE_PARAMS = { params: Promise.resolve({ id: 'evt_1' }) };
 const EVENT_ROW = { id: 'evt_1', podId: 'pod_1', creatorDid: 'did:imajin:owner', did: 'did:imajin:event' };
 
-function makeGetRequest(): Request {
-  return new Request('https://events.test/api/events/evt_1/cohosts', { headers: { cookie: 'session=abc' } });
+function makeGetRequest(): NextRequest {
+  return new NextRequest('https://events.test/api/events/evt_1/cohosts', { headers: { cookie: 'session=abc' } });
 }
 
-function makePostRequest(body: Record<string, unknown>): Request {
-  return new Request('https://events.test/api/events/evt_1/cohosts', {
+function makePostRequest(body: Record<string, unknown>): NextRequest {
+  return new NextRequest('https://events.test/api/events/evt_1/cohosts', {
     method: 'POST',
     headers: { cookie: 'session=abc', 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -339,14 +340,18 @@ describe('POST /api/events/[id]/cohosts — kernel pods API (#2155)', () => {
   });
 
   describe('chat sync (non-fatal)', () => {
-    const originalChatUrl = process.env.CHAT_URL;
+    const originalChatUrl = process.env.CHAT_SERVICE_URL;
 
     afterEach(() => {
-      process.env.CHAT_URL = originalChatUrl;
+      if (originalChatUrl === undefined) {
+        delete process.env.CHAT_SERVICE_URL;
+      } else {
+        process.env.CHAT_SERVICE_URL = originalChatUrl;
+      }
     });
 
-    it('syncs the new cohost to the event chat when CHAT_URL is configured', async () => {
-      process.env.CHAT_URL = 'https://chat.test';
+    it('syncs the new cohost to the event chat when CHAT_SERVICE_URL is configured', async () => {
+      process.env.CHAT_SERVICE_URL = 'https://chat.test';
       mocks.resultQueue.push([EVENT_ROW]);
       mocks.fetchMock.mockImplementation((url: string) => {
         const u = String(url);
@@ -370,7 +375,7 @@ describe('POST /api/events/[id]/cohosts — kernel pods API (#2155)', () => {
     });
 
     it('does not fail the request when the chat sync itself fails', async () => {
-      process.env.CHAT_URL = 'https://chat.test';
+      process.env.CHAT_SERVICE_URL = 'https://chat.test';
       mocks.resultQueue.push([EVENT_ROW]);
       mocks.fetchMock.mockImplementation((url: string) => {
         const u = String(url);

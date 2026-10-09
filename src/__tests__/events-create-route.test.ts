@@ -15,7 +15,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const mocks = vi.hoisted(() => {
   const returningMock = vi.fn();
-  const valuesMock = vi.fn(() => ({ returning: returningMock }));
+  const valuesMock = vi.fn((_values: unknown) => ({ returning: returningMock }));
   const insertMock = vi.fn(() => ({ values: valuesMock }));
 
   const requireHardDIDMock = vi.fn();
@@ -34,6 +34,7 @@ function createStubLog() {
 }
 
 vi.mock('@ima-jin/logger', () => ({
+  createLogger: () => createStubLog(),
   // Test double matching apps/kernel/app/connections/api/invites/__tests__/route.test.ts:
   // skip correlation-id/timing plumbing and just invoke the handler directly.
   withLogger: (_service: string, handler: (req: unknown, ctx: { log: ReturnType<typeof createStubLog>; correlationId: string }) => Promise<Response>) =>
@@ -46,11 +47,13 @@ vi.mock('@/db', () => ({
   ticketTypes: {},
 }));
 
-vi.mock('@imajin/auth', () => ({
+vi.mock('@/lib/auth', () => ({
   requireHardDID: mocks.requireHardDIDMock,
+  resolveActingDid: (identity: { id: string }) => identity.id,
+}));
+
+vi.mock('@ima-jin/auth', () => ({
   requireAppAuth: mocks.requireAppAuthMock,
-  resolveActingDid: (identity: { actingFor?: string; actingAs?: string | null; id: string }) =>
-    identity.actingFor ?? identity.actingAs ?? identity.id,
 }));
 
 vi.mock('@ima-jin/config', () => ({
@@ -59,7 +62,7 @@ vi.mock('@ima-jin/config', () => ({
   getForestScopeConfig: mocks.getForestScopeConfigMock,
 }));
 
-vi.mock('@imajin/bus', () => ({
+vi.mock('@/lib/domain-events', () => ({
   publish: mocks.publishMock,
 }));
 
@@ -74,7 +77,7 @@ import {
   expectDefaultShares,
   itAppliesForestScopeFee,
   type FairChainEntry,
-} from '../../../../packages/fair/src/test-helpers';
+} from './support/fair-test-helpers';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 

@@ -58,10 +58,9 @@ vi.mock('@/db', () => ({
   tickets: { id: 'col_id', eventId: 'col_eventId', status: 'col_status' },
 }));
 
-vi.mock('@imajin/auth', () => ({
+vi.mock('@/lib/auth', () => ({
   requireAuth: mocks.requireAuthMock,
-  resolveActingDid: (identity: { actingFor?: string; actingAs?: string | null; id: string }) =>
-    identity.actingFor ?? identity.actingAs ?? identity.id,
+  resolveActingDid: (identity: { id: string }) => identity.id,
 }));
 
 vi.mock('@/lib/organizer', () => ({

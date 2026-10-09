@@ -6,7 +6,7 @@ import { getIdentityTier } from '@/lib/kernel';
  *
  * Every route authenticates through `requireSessionOrAppToken` from the
  * published `@ima-jin/auth` SDK: a scoped app token (`Authorization: Bearer`,
- * preferred) minted for THIS app's host, or the legacy session cookie as the
+ * preferred) minted for THIS app's registry slug, or the legacy session cookie as the
  * migration fallback. No kernel-internal auth helper is imported.
  *
  * Scopes are only enforceable on the token path — the cookie path predates
@@ -24,6 +24,14 @@ export interface EventsIdentity {
   /** Scopes granted to this call. Always empty on the cookie path. */
   scopes: string[];
   via: 'token' | 'cookie';
+  /** Group DID the caller acts as (verified act-as claim on the token; never set on the cookie path). */
+  actingAs?: string;
+  /**
+   * Owner DID the caller acts for under verified agent delegation (`X-Acting-For`).
+   * Not yet surfaced by the published `requireSessionOrAppToken` (kernel main has
+   * it, unreleased) — typed here so `resolveActingDid` picks it up once it ships.
+   */
+  actingFor?: string;
 }
 
 export interface AuthError {
@@ -42,16 +50,12 @@ export interface RequireAuthOptions {
 
 const READ_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
-/** This app's own host — the `aud` every accepted token must be scoped to. */
-export function appAudience(): string {
-  const explicit = process.env.IMAJIN_APP_AUDIENCE;
-  if (explicit) return explicit;
-  const publicUrl = process.env.NEXT_PUBLIC_APP_URL;
-  if (!publicUrl) {
-    throw new Error('Set IMAJIN_APP_AUDIENCE or NEXT_PUBLIC_APP_URL — see .env.example.');
-  }
-  return new URL(publicUrl).host;
-}
+/**
+ * This app's registry slug — the `aud` every accepted token must be scoped to
+ * (#2706: audiences are slugs, never hosts, since path-routed apps share one).
+ * `IMAJIN_APP_AUD`, when set, overrides it inside the SDK.
+ */
+export const APP_SLUG = 'events';
 
 /** `events:read` for safe methods, `events:write` for everything else. */
 export function defaultScopesFor(request: Request): string[] {
@@ -67,7 +71,7 @@ export async function requireAuth(
   options: RequireAuthOptions = {}
 ): Promise<AuthSuccess | AuthError> {
   const result = await requireSessionOrAppToken(request, {
-    aud: appAudience(),
+    slug: APP_SLUG,
     requireScopes: options.scopes ?? defaultScopesFor(request),
   });
 
@@ -75,8 +79,9 @@ export async function requireAuth(
     return { error: result.error, status: result.status };
   }
 
-  const { did, scopes, via } = result.auth;
-  return { identity: { id: did, scopes, via } };
+  const { did, scopes, via, actingAs } = result.auth;
+  const actingFor = (result.auth as { actingFor?: string }).actingFor;
+  return { identity: { id: did, scopes, via, actingAs, actingFor } };
 }
 
 /** Like {@link requireAuth}, but resolves to `null` instead of an error. */
@@ -89,11 +94,12 @@ export async function optionalAuth(
 }
 
 /**
- * The DID a request acts as. The app-token contract carries no delegation
- * overlay (act-as / acting-for), so this is always the caller's own DID.
+ * The DID a request acts as — same precedence as the kernel's
+ * `resolveActingDid`: verified agent delegation (`actingFor`), then the
+ * token's act-as group (`actingAs`), then the caller's own DID.
  */
 export function resolveActingDid(identity: EventsIdentity): string {
-  return identity.id;
+  return identity.actingFor ?? identity.actingAs ?? identity.id;
 }
 
 /** Standard JSON-able body for an {@link AuthError}. */

@@ -9,20 +9,20 @@ importers:
   .:
     dependencies:
       '@ima-jin/auth':
-        specifier: ^0.8.13
-        version: 0.8.13(drizzle-orm@0.45.3(postgres@3.4.9))(next@15.5.26(@types/node@20.19.43)(react-dom@18.3.1(react@18.3.1))(react@18.3.1))
+        specifier: ^0.8.16
+        version: 0.8.16(drizzle-orm@0.45.3(postgres@3.4.9))(next@15.5.26(@types/node@20.19.43)(react-dom@18.3.1(react@18.3.1))(react@18.3.1))
       '@ima-jin/auth-client':
-        specifier: ^0.8.8
-        version: 0.8.8(next@15.5.26(@types/node@20.19.43)(react-dom@18.3.1(react@18.3.1))(react@18.3.1))
+        specifier: ^0.8.16
+        version: 0.8.16(next@15.5.26(@types/node@20.19.43)(react-dom@18.3.1(react@18.3.1))(react@18.3.1))
       '@ima-jin/config':
-        specifier: ^0.8.13
-        version: 0.8.13(next@15.5.26(@types/node@20.19.43)(react-dom@18.3.1(react@18.3.1))(react@18.3.1))
+        specifier: ^0.8.16
+        version: 0.8.16(next@15.5.26(@types/node@20.19.43)(react-dom@18.3.1(react@18.3.1))(react@18.3.1))
       '@ima-jin/fair':
-        specifier: ^0.8.0
-        version: 0.8.0(react@18.3.1)
+        specifier: ^0.8.16
+        version: 0.8.16(react@18.3.1)
       '@ima-jin/logger':
-        specifier: ^0.8.13
-        version: 0.8.13(next@15.5.26(@types/node@20.19.43)(react-dom@18.3.1(react@18.3.1))(react@18.3.1))
+        specifier: ^0.8.16
+        version: 0.8.16(next@15.5.26(@types/node@20.19.43)(react-dom@18.3.1(react@18.3.1))(react@18.3.1))
       '@noble/ed25519':
         specifier: ^3.0.0
         version: 3.2.0
@@ -784,13 +784,13 @@ packages:
     resolution: {integrity: sha512-bV0Tgo9K4hfPCek+aMAn81RppFKv2ySDQeMoSZuvTASywNTnVJCArCZE2FWqpvIatKu7VMRLWlR1EazvVhDyhQ==}
     engines: {node: '>=18.18'}
 
-  '@ima-jin/auth-client@0.8.8':
-    resolution: {integrity: sha512-pSfYzj/D4lFaTPjLMGfYz6UKY1LsmGl1B6QuXvMjuJ8XXxACjsWEEp4bolXAp6gGoyl//L/psVrcTZGRa8jZBw==}
+  '@ima-jin/auth-client@0.8.16':
+    resolution: {integrity: sha512-Pb9VVOP8+2JR3YB6/6YUGNT5yYmw29+509Sem4IoRmhcnIGwx8Nlu7Asa2MsVLUa2WSDnw2x5KJRrWDa7ldJ3w==}
     peerDependencies:
       next: '>=15.5.24'
 
-  '@ima-jin/auth@0.8.13':
-    resolution: {integrity: sha512-zQpDWnI9sihbtr5xVQ+7x8utS9Mggh7fhyoHC+jgVMS4WBlTZOjhJRpgMNEQWXFo3IuLFPdeF1qTqjCtL3BdiA==}
+  '@ima-jin/auth@0.8.16':
+    resolution: {integrity: sha512-P9ZW5urCtFvMmy8NFn+n1QE2aHEaXJfGeHDvLg8oirM7DlE9rH91sm2TwWQ8HKxub4qxDD8bqEHwOpoSrTj4Rw==}
     peerDependencies:
       drizzle-orm: ^0.45.1
       next: '>=15.5.24'
@@ -798,20 +798,20 @@ packages:
       drizzle-orm:
         optional: true
 
-  '@ima-jin/config@0.8.13':
-    resolution: {integrity: sha512-2BUO1MMhZZY6OSOmHaCIS8Ll9AUn2X1oolKRkNSbi6HKTHeGIDbzQmiS6lUEDWg45foW2L9w4GFIPlg8keG8KA==}
+  '@ima-jin/config@0.8.16':
+    resolution: {integrity: sha512-WLNantSJh4OG2u27Op5krjDiuDkOuCF00EniGFR7JPLybJRaGT5S/FpfejRQyYuXTDrk7LSVakJgdVURckawBg==}
     peerDependencies:
       next: '>=15.5.24'
 
-  '@ima-jin/fair@0.8.0':
-    resolution: {integrity: sha512-zetud/DJ7/kerPToiorMht2i/2Lmz0iV4YeOQg5aQ2KuSl70mHEl7iYXYh8/EHZjuwzEDlQS2yRSI9cZCbGfHA==}
+  '@ima-jin/fair@0.8.16':
+    resolution: {integrity: sha512-gIog399Fa0LWfz2Y62JnqOF1S7f4JTvurGvKctk1ScidTXlLXdkmJYBDJRawy38ZXMlmTp6ILep+oW1bQ7we6w==}
     peerDependencies:
       react: ^18.2.0
 
-  '@ima-jin/logger@0.8.13':
-    resolution: {integrity: sha512-Lj1tclDfemGUYiw+RU6RTeMrXC82gaIR3c2dLjSga7fLxtwg+auRkWxMOuFIjBjh+jOmA+ohrKxHyulp12beZg==}
+  '@ima-jin/logger@0.8.16':
+    resolution: {integrity: sha512-oKeEhFrvdxtiXUDsudvaoL01X8ak6Xf3a3CFTA73uA/YYbvNTKNBOUfib7rqG/mcp0mZGQwEeK6M0NQwlvbDCg==}
     peerDependencies:
-      '@ima-jin/db': ^0.8.13
+      '@ima-jin/db': ^0.8.16
       next: '>=15.5.24'
     peerDependenciesMeta:
       '@ima-jin/db':
@@ -3669,17 +3669,17 @@ snapshots:
 
   '@humanwhocodes/retry@0.4.3': {}
 
-  '@ima-jin/auth-client@0.8.8(next@15.5.26(@types/node@20.19.43)(react-dom@18.3.1(react@18.3.1))(react@18.3.1))':
+  '@ima-jin/auth-client@0.8.16(next@15.5.26(@types/node@20.19.43)(react-dom@18.3.1(react@18.3.1))(react@18.3.1))':
     dependencies:
       '@noble/ed25519': 2.3.0
       '@noble/hashes': 1.8.0
       jose: 5.10.0
       next: 15.5.26(@types/node@20.19.43)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
 
-  '@ima-jin/auth@0.8.13(drizzle-orm@0.45.3(postgres@3.4.9))(next@15.5.26(@types/node@20.19.43)(react-dom@18.3.1(react@18.3.1))(react@18.3.1))':
+  '@ima-jin/auth@0.8.16(drizzle-orm@0.45.3(postgres@3.4.9))(next@15.5.26(@types/node@20.19.43)(react-dom@18.3.1(react@18.3.1))(react@18.3.1))':
     dependencies:
-      '@ima-jin/config': 0.8.13(next@15.5.26(@types/node@20.19.43)(react-dom@18.3.1(react@18.3.1))(react@18.3.1))
-      '@ima-jin/logger': 0.8.13(next@15.5.26(@types/node@20.19.43)(react-dom@18.3.1(react@18.3.1))(react@18.3.1))
+      '@ima-jin/config': 0.8.16(next@15.5.26(@types/node@20.19.43)(react-dom@18.3.1(react@18.3.1))(react@18.3.1))
+      '@ima-jin/logger': 0.8.16(next@15.5.26(@types/node@20.19.43)(react-dom@18.3.1(react@18.3.1))(react@18.3.1))
       '@noble/curves': 1.9.7
       '@noble/ed25519': 2.3.0
       '@noble/hashes': 1.8.0
@@ -3689,18 +3689,18 @@ snapshots:
     transitivePeerDependencies:
       - '@ima-jin/db'
 
-  '@ima-jin/config@0.8.13(next@15.5.26(@types/node@20.19.43)(react-dom@18.3.1(react@18.3.1))(react@18.3.1))':
+  '@ima-jin/config@0.8.16(next@15.5.26(@types/node@20.19.43)(react-dom@18.3.1(react@18.3.1))(react@18.3.1))':
     dependencies:
       next: 15.5.26(@types/node@20.19.43)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
 
-  '@ima-jin/fair@0.8.0(react@18.3.1)':
+  '@ima-jin/fair@0.8.16(react@18.3.1)':
     dependencies:
       '@noble/ed25519': 2.3.0
       '@noble/hashes': 1.8.0
       jose: 6.2.12
       react: 18.3.1
 
-  '@ima-jin/logger@0.8.13(next@15.5.26(@types/node@20.19.43)(react-dom@18.3.1(react@18.3.1))(react@18.3.1))':
+  '@ima-jin/logger@0.8.16(next@15.5.26(@types/node@20.19.43)(react-dom@18.3.1(react@18.3.1))(react@18.3.1))':
     dependencies:
       nanoid: 5.1.16
       next: 15.5.26(@types/node@20.19.43)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)

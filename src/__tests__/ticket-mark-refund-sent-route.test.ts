@@ -40,19 +40,15 @@ vi.mock('@ima-jin/logger', () => ({
   createLogger: vi.fn(() => ({ error: vi.fn(), info: vi.fn(), warn: vi.fn() })),
 }));
 
-vi.mock('@imajin/db', () => ({
-  getClient: () => mocks.sqlMock,
-}));
-
 vi.mock('@/db', () => ({
+  getClient: () => mocks.sqlMock,
   db: { select: mocks.selectMock },
   events: { id: 'col_id' },
 }));
 
-vi.mock('@imajin/auth', () => ({
+vi.mock('@/lib/auth', () => ({
   requireAuth: mocks.requireAuthMock,
-  resolveActingDid: (identity: { actingFor?: string; actingAs?: string | null; id: string }) =>
-    identity.actingFor ?? identity.actingAs ?? identity.id,
+  resolveActingDid: (identity: { id: string }) => identity.id,
 }));
 
 vi.mock('@/lib/organizer', () => ({

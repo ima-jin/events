@@ -1,0 +1,173 @@
+# Excerpt of the kernel's published pay.yaml (ima-jin/imajin-ai apps/kernel/api-spec/pay.yaml,
+# main @ 3f5c8db1) — only the servers block, security schemes and the balance/transfer
+# paths this app's call sites are pinned against. Refresh when the kernel spec changes.
+openapi: "3.1.0"
+info:
+  title: imajin pay
+  version: "2.0.0"
+  description: Payments, balances, payment-rail (provider) account onboarding, .fair multi-party settlement, escrow, and webhooks. Rail-specific operations have rail-generic equivalents keyed by a `provider` (Stripe is one value). Runs as a kernel service at /{service}/api/... on a shared node domain.
+servers:
+  - url: https://{node}.imajin.ai/{service}
+    description: production node
+    variables:
+      node:
+        default: jin
+      service:
+        default: pay
+  - url: http://localhost:3000/{service}
+    description: local development
+    variables:
+      service:
+        default: pay
+
+tags:
+  - name: pay
+    description: imajin pay service
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: imajin_session
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: "Bearer token (internal service-to-service or user API token)"
+    apiKeyAuth:
+      type: http
+      scheme: bearer
+      description: "PAY_SERVICE_API_KEY — internal service-to-service calls only"
+    appServiceToken:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: "Registered-app service token (typ app-service+jwt) from POST /auth/api/apps/token/service, carrying an operator-approved per-app scope (pay:settle)"
+    railWebhookSignature:
+      type: apiKey
+      in: header
+      name: stripe-signature
+      description: |
+        Rail webhook signature, verified by the rail's own adapter — the `{provider}`
+        path segment of the rail-generic webhook operations selects the verifier.
+        Today `stripe` is the only registered rail, whose signature header is
+        `stripe-signature` (HMAC-SHA256); a new rail registers its own header with
+        its adapter. #2177.
+    stripeWebhook:
+      type: apiKey
+      in: header
+      name: stripe-signature
+      description: "Legacy alias of `railWebhookSignature` for the `stripe` provider (Stripe webhook signature verification, HMAC-SHA256)"
+  parameters:
+    provider:
+      name: provider
+      in: path
+      required: true
+      description: "Payment rail (provider) key — `stripe` is one value of the enum (#2177)"
+      schema: { $ref: "#/components/schemas/ConnectProvider" }
+paths:
+  /api/balance/{did}:
+    get:
+      tags: [pay]
+      operationId: getBalance
+      summary: Get current balance for a DID
+      description: |
+        Returns the MJN (withdrawable) and MJNx (emitted, never withdrawable)
+        balances as an explicit array (#2016). The authenticated identity
+        must match the requested DID.
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: did
+          in: path
+          required: true
+          schema: { type: string }
+          description: "URL-encoded DID"
+      responses:
+        "200":
+          description: Balance retrieved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Balance" }
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: Forbidden — can only access your own balance
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/balance/gift:
+    post: {}
+  /api/balance/transfer:
+    post:
+      tags: [pay]
+      operationId: transferBalance
+      summary: Transfer balance from one DID to another
+      description: |
+        Moves a single wallet unit (#2016) — `unit` defaults to `MJN` and must be
+        `MJN` or `MJNx`; both legs of the transfer touch the SAME unit, so
+        cross-unit movement (e.g. sending MJNx and having it arrive as MJN)
+        is impossible by construction. An unknown unit is a 400, never a
+        conversion. The sender's debit is a guarded conditional UPDATE (#2166)
+        in the same transaction as the recipient credit — insufficient balance
+        returns 402 and writes nothing. The authenticated identity must match
+        `from_did`. Accepts either a session cookie or a Bearer token (app
+        token or session JWT) — the route resolves the caller via
+        `resolveEffectiveDid`, same as `GET /api/balance/{did}` (#2002).
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [from_did, to_did, amount]
+              properties:
+                from_did: { type: string }
+                to_did: { type: string }
+                amount: { type: number, description: "Amount in the given unit" }
+                unit: { type: string, enum: [MJN, MJNx], default: MJN }
+                metadata: { type: object }
+      responses:
+        "200":
+          description: Transfer complete
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  transactionId: { type: string }
+                  fromDid: { type: string }
+                  toDid: { type: string }
+                  amount: { type: number }
+                  unit: { type: string, enum: [MJN, MJNx] }
+        "400":
+          description: Invalid request — missing fields, non-positive amount, self-transfer, unknown unit, or currency mismatch
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "402":
+          description: Insufficient balance in the requested unit (#2166) — never a partial write
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: Forbidden — can only transfer from your own DID
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/balance/topup:
+    post: {}

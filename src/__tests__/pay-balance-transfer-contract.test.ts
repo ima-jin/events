@@ -15,8 +15,7 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CALL_SITE_PATH = resolve(HERE, '../lib/balance-checkout-helpers.ts');
-// apps/events/src/__tests__ -> apps/events/src -> apps/events -> apps -> apps/kernel
-const PAY_SPEC_PATH = resolve(HERE, '../../../kernel/api-spec/pay.yaml');
+const PAY_SPEC_PATH = resolve(HERE, '../../test/fixtures/pay.yaml');
 
 describe('pay.yaml balance/transfer contract', () => {
   const spec = readFileSync(PAY_SPEC_PATH, 'utf-8');
