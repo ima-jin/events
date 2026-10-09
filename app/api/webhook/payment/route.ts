@@ -271,8 +271,7 @@ async function resolveWebhookRegistrationInfo(
   const EVENTS_URL = buildPublicUrlAbsolute('events');
   const eventsAuthUrl = publicServiceUrl('auth');
 
-  const registrationPendingTickets = createdTickets.filter((t) => t.registrationStatus === 'pending');
-  const ctaTicket = registrationPendingTickets[0] ?? null;
+  const ctaTicket = createdTickets.find((t) => t.registrationStatus === 'pending') ?? null;
 
   const onboardToken = await createOnboardToken();
   const magicLink = onboardToken ? `${eventsAuthUrl}/api/onboard/verify?token=${onboardToken}` : undefined;

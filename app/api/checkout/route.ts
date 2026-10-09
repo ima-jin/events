@@ -43,15 +43,19 @@ interface CheckoutRequest {
   invite?: string;
 }
 
+/** 429 response when the caller's IP exceeded the checkout rate limit, otherwise null. */
+function rateLimitedResponse(request: Request): NextResponse | null {
+  const rl = rateLimit(getClientIP(request), 10, 60_000);
+  if (!rl.limited) return null;
+  return NextResponse.json(
+    { error: 'Too many requests', retryAfter: rl.retryAfter },
+    { status: 429, headers: { 'Retry-After': String(rl.retryAfter) } }
+  );
+}
+
 export const POST = withLogger('events', async (request, { log, correlationId }) => {
-  const ip = getClientIP(request);
-  const rl = rateLimit(ip, 10, 60_000);
-  if (rl.limited) {
-    return NextResponse.json(
-      { error: 'Too many requests', retryAfter: rl.retryAfter },
-      { status: 429, headers: { 'Retry-After': String(rl.retryAfter) } }
-    );
-  }
+  const limited = rateLimitedResponse(request);
+  if (limited) return limited;
 
   try {
     const body: CheckoutRequest = await request.json();
