@@ -213,11 +213,26 @@ describe('createEvent — kernel interaction', () => {
     expectRegistrySourcedShares(fairChainOf({ event: event as never }));
   });
 
-  it('falls back to .fair defaults when the registry is unavailable, and never looks up a forest scope', async () => {
+  it('falls back to .fair defaults when the registry is unavailable, and skips the forest lookup without act-as', async () => {
     const { event } = await create();
 
     expectDefaultShares(fairChainOf({ event: event as never }));
     expect(serviceMocks.getForestScopeConfig).not.toHaveBeenCalled();
+  });
+
+  it('applies the forest scope fee when the caller acts as a group (verified act-as claim)', async () => {
+    serviceMocks.getForestScopeConfig.mockResolvedValue({ scopeFeeBps: 150 });
+
+    const { event } = await createEvent({
+      creatorDid: CREATOR_DID,
+      identityId: IDENTITY_ID,
+      input: VALID_INPUT,
+      actingAs: 'did:imajin:forest',
+    });
+
+    expect(serviceMocks.getForestScopeConfig).toHaveBeenCalledWith('did:imajin:forest');
+    const chain = fairChainOf({ event: event as never });
+    expect(chain.find((entry) => entry.did === 'did:imajin:forest')).toMatchObject({ share: 0.015 });
   });
 
   it('publishes event.create and event.created for the creator / identity', async () => {

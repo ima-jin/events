@@ -144,11 +144,8 @@ async function resolveScopeFeeBps(scopeDid: string | null): Promise<number | nul
 }
 
 /** Build the event's .fair attribution manifest from the node config (via the registry, #2000). */
-async function buildEventFairManifest(creatorDid: string, eventDid: string) {
+async function buildEventFairManifest(creatorDid: string, eventDid: string, scopeDid: string | null) {
   const nodeSelf = await getNodeSelf();
-  // gap(kernel): act-as (forest scope) is not part of the app-token contract,
-  // so events are never created on behalf of a scope DID here.
-  const scopeDid: string | null = null;
   const scopeFeeBps = await resolveScopeFeeBps(scopeDid);
 
   return buildFairManifest({
@@ -304,6 +301,8 @@ export interface CreateEventParams {
   identityId: string;
   input: CreateEventInput;
   correlationId?: string;
+  /** Group (forest scope) DID from the token's verified act-as claim; its fee entry joins the .fair chain. */
+  actingAs?: string | null;
 }
 
 /**
@@ -312,13 +311,13 @@ export interface CreateEventParams {
  * its chat. Requires a hard DID (enforced by the caller).
  */
 export async function createEvent(params: CreateEventParams): Promise<CreateEventResult> {
-  const { creatorDid, identityId, input, correlationId } = params;
+  const { creatorDid, identityId, input, correlationId, actingAs } = params;
   validateCreateEventInput(input);
 
   const eventId = `evt_${randomBytes(12).toString('hex')}`;
   const keypair = await generateEventKeypair();
   const eventDid = await registerEventDid(input.title as string, keypair);
-  const fairManifest = await buildEventFairManifest(creatorDid, eventDid);
+  const fairManifest = await buildEventFairManifest(creatorDid, eventDid, actingAs ?? null);
 
   const event = await repo.insertEvent(
     buildEventRow({ eventId, eventDid, keypair, creatorDid, input, fairManifest }),
