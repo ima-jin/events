@@ -9,40 +9,21 @@
  * confirmation. This route is kept for orphan tickets (tickets without an
  * order) and edge cases only.
  */
-
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { createLogger } from '@ima-jin/logger';
-import { requireAuth, resolveActingDid } from '@/lib/auth';
-import { isServiceError } from '@/services/errors';
+import { runOrganizerAction } from '@/lib/organizer-action-route';
 import { confirmTicketPayment } from '@/services/order-confirmation';
 
 const log = createLogger('events');
 
-export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+type RouteContext = { params: Promise<{ id: string }> };
+
+export function POST(request: NextRequest, { params }: RouteContext) {
   log.warn({}, 'POST /api/tickets/[id]/confirm-payment is deprecated; use POST /api/orders/[id]/confirm-payment');
 
-  const authResult = await requireAuth(request);
-  if ('error' in authResult) {
-    return NextResponse.json({ error: authResult.error }, { status: authResult.status });
-  }
-
-  const actorDid = resolveActingDid(authResult.identity);
-  const { id } = await params;
-
-  try {
-    const result = await confirmTicketPayment(id, {
-      actorDid,
-      callerCookie: request.headers.get('cookie'),
-    });
-    return NextResponse.json(result);
-  } catch (error) {
-    if (isServiceError(error)) {
-      return NextResponse.json({ error: error.message, ...error.details }, { status: error.status });
-    }
-    log.error({ err: String(error) }, 'confirm-payment error');
-    return NextResponse.json({ error: 'Failed to confirm payment' }, { status: 500 });
-  }
+  return runOrganizerAction(request, {
+    fallback: 'Failed to confirm payment',
+    log,
+    action: async (context) => confirmTicketPayment((await params).id, context),
+  });
 }

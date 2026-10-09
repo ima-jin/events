@@ -1,11 +1,3 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { createLogger } from '@ima-jin/logger';
-import { requireAuth, resolveActingDid } from '@/lib/auth';
-import { isServiceError } from '@/services/errors';
-import { refundTicket } from '@/services/tickets-service';
-
-const log = createLogger('events');
-
 /**
  * POST /api/events/[id]/tickets/[ticketId]/refund — refund a ticket (organizers only)
  *
@@ -16,31 +8,22 @@ const log = createLogger('events');
  *
  * The rules live in `refundTicket` (services/tickets-service).
  */
-export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string; ticketId: string }> }
-) {
-  const authResult = await requireAuth(request);
-  if ('error' in authResult) {
-    return NextResponse.json({ error: authResult.error }, { status: authResult.status });
-  }
+import { NextRequest } from 'next/server';
+import { createLogger } from '@ima-jin/logger';
+import { runOrganizerAction } from '@/lib/organizer-action-route';
+import { refundTicket } from '@/services/tickets-service';
 
-  const actorDid = resolveActingDid(authResult.identity);
-  const { id: eventId, ticketId } = await params;
+const log = createLogger('events');
 
-  try {
-    const result = await refundTicket({
-      eventId,
-      ticketId,
-      actorDid,
-      callerCookie: request.headers.get('cookie'),
-    });
-    return NextResponse.json(result);
-  } catch (error) {
-    if (isServiceError(error)) {
-      return NextResponse.json({ error: error.message, ...error.details }, { status: error.status });
-    }
-    log.error({ err: String(error) }, 'Failed to refund ticket');
-    return NextResponse.json({ error: 'Failed to refund ticket' }, { status: 500 });
-  }
+type RouteContext = { params: Promise<{ id: string; ticketId: string }> };
+
+export function POST(request: NextRequest, { params }: RouteContext) {
+  return runOrganizerAction(request, {
+    fallback: 'Failed to refund ticket',
+    log,
+    action: async (context) => {
+      const { id: eventId, ticketId } = await params;
+      return refundTicket({ eventId, ticketId, ...context });
+    },
+  });
 }
