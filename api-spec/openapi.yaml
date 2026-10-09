@@ -111,6 +111,12 @@ components:
       in: path
       required: true
       schema: { type: string }
+    CampaignEventId:
+      name: eventId
+      in: path
+      required: true
+      schema: { type: string }
+      description: Id of a campaign event (`eventType = campaign`)
     TicketTypeIdQuery:
       name: ticketTypeId
       in: query
@@ -165,6 +171,9 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
+    CorsPreflight:
+      description: CORS preflight (headers from `corsHeaders()` in `@ima-jin/config`)
+
   schemas:
     Error:
       type: object
@@ -305,6 +314,22 @@ components:
         position: { type: integer }
         status: { type: string }
         joinedAt: { type: string, format: date-time }
+    Pledge:
+      type: object
+      description: Row of `events.pledges`.
+      properties:
+        id: { type: string }
+        eventId: { type: string }
+        backerDid: { type: string }
+        amount: { type: integer, description: Cents }
+        currency: { type: string }
+        status: { type: string, enum: [pending, confirmed, charged, failed, cancelled] }
+        stripeSetupIntentId: { type: string, nullable: true }
+        stripePaymentMethodId: { type: string, nullable: true }
+        stripeCustomerId: { type: string, nullable: true }
+        chargedAt: { type: string, format: date-time, nullable: true }
+        failureReason: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
     CartItem:
       type: object
       required: [ticketTypeId, quantity]
@@ -1890,6 +1915,318 @@ paths:
         "500": { $ref: "#/components/responses/ServerError" }
         "502": { $ref: "#/components/responses/BadGateway" }
 
+  /api/migrate-tickets:
+    post:
+      tags: [orders]
+      operationId: migrateTickets
+      summary: Re-home soft-DID tickets bought with an email onto a hard DID
+      description: >
+        Service-to-service. Requires a scoped app token with `events:write` (or the legacy app headers);
+        session cookies are not accepted. Only tickets owned by soft (or unresolvable) DIDs migrate.
+      security:
+        - appToken: [events:write]
+        - appDidHeader: []
+          appAuthorizationHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, hardDid]
+              properties:
+                email: { type: string, format: email }
+                hardDid: { type: string }
+      responses:
+        "200":
+          description: Number of tickets migrated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  migrated: { type: integer }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  # ───────────────────────── campaign ─────────────────────────
+  /api/campaign/pledge:
+    options:
+      tags: [campaign]
+      operationId: campaignPledgePreflight
+      summary: CORS preflight
+      x-public: true
+      security: []
+      responses:
+        "204": { $ref: "#/components/responses/CorsPreflight" }
+    post:
+      tags: [campaign]
+      operationId: createPledge
+      summary: Start a pledge (creates a Stripe SetupIntent via the pay service)
+      security:
+        - appToken: [events:write]
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [eventId, amount]
+              properties:
+                eventId: { type: string }
+                amount: { type: integer, minimum: 100, description: Cents }
+      responses:
+        "200":
+          description: Pledge created or reset to pending
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pledgeId: { type: string }
+                  clientSecret: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /api/campaign/pledge/confirm:
+    options:
+      tags: [campaign]
+      operationId: campaignPledgeConfirmPreflight
+      summary: CORS preflight
+      x-public: true
+      security: []
+      responses:
+        "204": { $ref: "#/components/responses/CorsPreflight" }
+    post:
+      tags: [campaign]
+      operationId: confirmPledge
+      summary: Confirm a pledge after Stripe.js confirmed the SetupIntent
+      security:
+        - appToken: [events:write]
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pledgeId, setupIntentId, paymentMethodId]
+              properties:
+                pledgeId: { type: string }
+                setupIntentId: { type: string }
+                paymentMethodId: { type: string }
+      responses:
+        "200":
+          description: Pledge confirmed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  pledge:
+                    type: object
+                    properties:
+                      id: { type: string }
+                      amount: { type: integer }
+                      status: { type: string, enum: [confirmed] }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /api/campaign/{eventId}/status:
+    parameters:
+      - $ref: "#/components/parameters/CampaignEventId"
+    options:
+      tags: [campaign]
+      operationId: campaignStatusPreflight
+      summary: CORS preflight
+      x-public: true
+      security: []
+      responses:
+        "204": { $ref: "#/components/responses/CorsPreflight" }
+    get:
+      tags: [campaign]
+      operationId: getCampaignStatus
+      summary: Public campaign funding status
+      x-public: true
+      security: []
+      responses:
+        "200":
+          description: Funding status (confirmed + charged pledges)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  targetAmount: { type: integer }
+                  currentAmount: { type: integer }
+                  pledgeCount: { type: integer }
+                  deadline: { type: string, format: date-time, nullable: true }
+                  percentFunded: { type: integer }
+                  isFullyFunded: { type: boolean }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /api/campaign/{eventId}/my-pledge:
+    parameters:
+      - $ref: "#/components/parameters/CampaignEventId"
+    options:
+      tags: [campaign]
+      operationId: campaignMyPledgePreflight
+      summary: CORS preflight
+      x-public: true
+      security: []
+      responses:
+        "204": { $ref: "#/components/responses/CorsPreflight" }
+    get:
+      tags: [campaign]
+      operationId: getMyPledge
+      summary: The caller's pledge for a campaign, if any
+      security:
+        - appToken: [events:read]
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Pledge or `null`
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pledge:
+                    type: object
+                    nullable: true
+                    properties:
+                      id: { type: string }
+                      amount: { type: integer }
+                      status: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /api/campaign/{eventId}/pledges:
+    parameters:
+      - $ref: "#/components/parameters/CampaignEventId"
+    options:
+      tags: [campaign]
+      operationId: campaignPledgesPreflight
+      summary: CORS preflight
+      x-public: true
+      security: []
+      responses:
+        "204": { $ref: "#/components/responses/CorsPreflight" }
+    get:
+      tags: [campaign]
+      operationId: listPledges
+      summary: All pledges for a campaign (campaign creator only)
+      security:
+        - appToken: [events:read]
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Pledges, oldest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pledges:
+                    type: array
+                    items: { $ref: "#/components/schemas/Pledge" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /api/campaign/{eventId}/settle:
+    parameters:
+      - $ref: "#/components/parameters/CampaignEventId"
+    options:
+      tags: [campaign]
+      operationId: campaignSettlePreflight
+      summary: CORS preflight
+      x-public: true
+      security: []
+      responses:
+        "204": { $ref: "#/components/responses/CorsPreflight" }
+    post:
+      tags: [campaign]
+      operationId: settleCampaign
+      summary: Charge all confirmed pledges once the target is met (campaign creator only)
+      security:
+        - appToken: [events:write]
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Charge results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  charged: { type: integer }
+                  failed: { type: integer }
+                  total: { type: integer }
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        pledgeId: { type: string }
+                        status: { type: string }
+                        error: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /api/campaign/{eventId}/cancel:
+    parameters:
+      - $ref: "#/components/parameters/CampaignEventId"
+    options:
+      tags: [campaign]
+      operationId: campaignCancelPreflight
+      summary: CORS preflight
+      x-public: true
+      security: []
+      responses:
+        "204": { $ref: "#/components/responses/CorsPreflight" }
+    post:
+      tags: [campaign]
+      operationId: cancelCampaign
+      summary: Cancel a campaign and its pending/confirmed pledges (campaign creator only)
+      security:
+        - appToken: [events:write]
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Campaign cancelled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  cancelled: { type: integer, description: Number of pledges cancelled }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  # ───────────────────────── profile-facing & admin ─────────────────────────
   /api/attending/{did}:
     get:
       tags: [events]
