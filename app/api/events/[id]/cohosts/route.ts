@@ -1,5 +1,5 @@
 import { serviceUrl } from '@/lib/kernel';
-﻿import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@ima-jin/logger';
 import { db, events } from '@/db';
 import { requireAuth, resolveActingDid } from '@/lib/auth';

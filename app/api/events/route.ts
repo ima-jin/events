@@ -1,40 +1,17 @@
-import { toPublicEvent } from '@/lib/event-public';
+import { filterEventForApp, toPublicEvent } from '@/lib/event-public';
 import { appAuthHeaders, serviceUrl } from '@/lib/kernel';
 import { NextResponse } from 'next/server';
 import { withLogger, type Logger } from '@ima-jin/logger';
 import { publish } from '@/lib/domain-events';
 import { db, events, ticketTypes } from '@/db';
 import { requireAppAuth } from '@ima-jin/auth';
-import { resolveActingDid, requireHardDID, type EventsIdentity } from '@/lib/auth';
+import { authenticateAppOrSession } from '@/lib/app-or-session';
 import { corsHeaders, getNodeSelf, getForestScopeConfig } from '@ima-jin/config';
 import { buildFairManifest } from '@ima-jin/fair';
 import { and, asc, desc, eq, gt } from 'drizzle-orm';
 import { randomBytes } from 'node:crypto';
 
 const AUTH_URL = (serviceUrl('auth') ?? '');
-
-interface EventCreatorAuth {
-  did: string;
-  identity: EventsIdentity;
-}
-
-/** Authenticate the event creator via app-DID auth (if present) or hard-DID auth, otherwise return the error response. */
-async function authenticateEventCreator(request: Request, cors: HeadersInit): Promise<EventCreatorAuth | NextResponse> {
-  if (request.headers.get('x-app-did')) {
-    const appResult = await requireAppAuth(request, { scope: 'events:write' });
-    if ('error' in appResult) {
-      return NextResponse.json({ error: appResult.error }, { status: appResult.status, headers: cors });
-    }
-    const did = appResult.appAuth.userDid;
-    return { did, identity: { id: did, scopes: appResult.appAuth.scopes, via: 'token' } };
-  }
-
-  const authResult = await requireHardDID(request);
-  if ('error' in authResult) {
-    return NextResponse.json({ error: authResult.error }, { status: authResult.status });
-  }
-  return { did: resolveActingDid(authResult.identity), identity: authResult.identity };
-}
 
 interface CreateEventValidationFields {
   title?: unknown;
@@ -101,11 +78,8 @@ async function resolveScopeFeeBps(scopeDid: string | null): Promise<number | nul
 }
 
 /** Insert the ticket types provided at event-creation time, returning the created rows. */
-async function createTicketTypesForEvent(eventId: string, ticketTypesInput: unknown): Promise<Array<typeof ticketTypes.$inferSelect>> {
-  const createdTicketTypes: Array<typeof ticketTypes.$inferSelect> = [];
-  if (!Array.isArray(ticketTypesInput)) return createdTicketTypes;
-
-  if (ticketTypesInput.length === 0) return createdTicketTypes;
+function createTicketTypesForEvent(eventId: string, ticketTypesInput: unknown): Promise<Array<typeof ticketTypes.$inferSelect>> {
+  if (!Array.isArray(ticketTypesInput) || ticketTypesInput.length === 0) return Promise.resolve([]);
 
   return db.insert(ticketTypes).values(
     ticketTypesInput.map((tt) => ({
@@ -169,7 +143,7 @@ async function createEventChat(params: {
  */
 export const POST = withLogger('events', async (request, { log, correlationId }) => {
   const cors = corsHeaders(request);
-  const auth = await authenticateEventCreator(request, cors);
+  const auth = await authenticateAppOrSession(request, cors, { appScope: 'events:write', requireHardIdentity: true });
   if (auth instanceof NextResponse) return auth;
   const { did, identity } = auth;
 
@@ -324,12 +298,6 @@ export const POST = withLogger('events', async (request, { log, correlationId })
  * GET /api/events - List events
  * Supports: ?courseSlug=intro-to-ai&upcoming=true&status=published&limit=20
  */
-/** Fields safe to return for events:read app scope */
-function filterEventForApp(event: Record<string, unknown>): Record<string, unknown> {
-  const { id, did, creatorDid, title, description, startsAt, endsAt, timezone, locationType, isVirtual, virtualUrl, venue, address, city, country, status, accessMode, imageUrl, imageAssetId, tags, courseSlug, nameDisplayPolicy, chatEnabled, createdAt, updatedAt } = event;
-  return { id, did, creatorDid, title, description, startsAt, endsAt, timezone, locationType, isVirtual, virtualUrl, venue, address, city, country, status, accessMode, imageUrl, imageAssetId, tags, courseSlug, nameDisplayPolicy, chatEnabled, createdAt, updatedAt };
-}
-
 export const GET = withLogger('events', async (request, { log }) => {
   const cors = corsHeaders(request);
   const { searchParams } = new URL(request.url);
@@ -338,28 +306,14 @@ export const GET = withLogger('events', async (request, { log }) => {
   const courseSlug = searchParams.get('courseSlug');
   const upcoming = searchParams.get('upcoming') === 'true';
 
-  // App auth path
-  if (request.headers.get('x-app-did')) {
+  const isAppCall = Boolean(request.headers.get('x-app-did'));
+  // CORS headers are only sent on the legacy registered-app path (kernel behaviour).
+  const headers = isAppCall ? cors : undefined;
+
+  if (isAppCall) {
     const appResult = await requireAppAuth(request, { scope: 'events:read' });
     if ('error' in appResult) {
       return NextResponse.json({ error: appResult.error }, { status: appResult.status, headers: cors });
-    }
-    try {
-      const conditions = [eq(events.status, status)];
-      if (courseSlug) conditions.push(eq(events.courseSlug, courseSlug));
-      if (upcoming) conditions.push(gt(events.startsAt, new Date()));
-
-      const eventList = await db
-        .select()
-        .from(events)
-        .where(and(...conditions))
-        .orderBy(upcoming ? asc(events.startsAt) : desc(events.startsAt))
-        .limit(limit);
-
-      return NextResponse.json({ events: eventList.map(e => filterEventForApp(e as Record<string, unknown>)) }, { headers: cors });
-    } catch (error) {
-      log.error({ err: String(error) }, 'Failed to list events (app auth)');
-      return NextResponse.json({ error: 'Failed to list events' }, { status: 500, headers: cors });
     }
   }
 
@@ -375,10 +329,11 @@ export const GET = withLogger('events', async (request, { log }) => {
       .orderBy(upcoming ? asc(events.startsAt) : desc(events.startsAt))
       .limit(limit);
 
-    return NextResponse.json({ events: eventList.map(toPublicEvent) });
+    const serialize = isAppCall ? filterEventForApp : toPublicEvent;
+    return NextResponse.json({ events: eventList.map((event) => serialize(event)) }, { headers });
   } catch (error) {
-    log.error({ err: String(error) }, 'Failed to list events');
-    return NextResponse.json({ error: 'Failed to list events' }, { status: 500 });
+    log.error({ err: String(error), appAuth: isAppCall }, 'Failed to list events');
+    return NextResponse.json({ error: 'Failed to list events' }, { status: 500, headers });
   }
 });
 

@@ -1,5 +1,5 @@
 import { serviceUrl } from '@/lib/kernel';
-﻿/**
+/**
  * POST /api/campaign/pledge
  *
  * Create a pledge for a campaign event.

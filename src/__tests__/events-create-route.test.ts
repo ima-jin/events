@@ -254,7 +254,7 @@ describe('POST /api/events — creation', () => {
     const res = await POST(makePost({ ...VALID_BODY, nameDisplayPolicy: 'real_names' }));
 
     expect(res.status).toBe(201);
-    const chatCalls = fetchMock.mock.calls.filter(([url]) => String(url).startsWith('https://chat.events.test'));
+    const chatCalls = fetchMock.mock.calls.filter(([url]) => new URL(String(url)).origin === 'https://chat.events.test');
     expect(chatCalls.map(([url, init]) => [url, init.method])).toEqual([
       [`https://chat.events.test/api/d/${encodeURIComponent(EVENT_DID)}/members`, 'POST'],
       [`https://chat.events.test/api/d/${encodeURIComponent(EVENT_DID)}/context`, 'PATCH'],

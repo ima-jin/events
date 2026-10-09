@@ -1,5 +1,5 @@
 import { serviceUrl } from '@/lib/kernel';
-﻿import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@ima-jin/logger';
 import { publish } from '@/lib/domain-events';
 import { revalidatePath } from 'next/cache';
@@ -8,18 +8,12 @@ import { buildEventUpdates, syncNamePolicyToChat } from '@/lib/event-update-help
 const log = createLogger('events');
 
 import { db, events, ticketTypes } from '@/db';
-import { requireAuth, resolveActingDid } from '@/lib/auth';
+import { authenticateAppOrSession } from '@/lib/app-or-session';
 import { requireAppAuth } from '@ima-jin/auth';
 import { corsHeaders } from '@ima-jin/config';
 import { isEventOrganizer } from '@/lib/organizer';
 import { eq } from 'drizzle-orm';
-import { toPublicEvent } from '@/lib/event-public';
-
-/** Fields safe to return for events:read app scope */
-function filterEventForApp(event: Record<string, unknown>): Record<string, unknown> {
-  const { id, did, creatorDid, title, description, startsAt, endsAt, timezone, locationType, isVirtual, virtualUrl, venue, address, city, country, status, accessMode, imageUrl, imageAssetId, tags, courseSlug, nameDisplayPolicy, chatEnabled, createdAt, updatedAt } = event;
-  return { id, did, creatorDid, title, description, startsAt, endsAt, timezone, locationType, isVirtual, virtualUrl, venue, address, city, country, status, accessMode, imageUrl, imageAssetId, tags, courseSlug, nameDisplayPolicy, chatEnabled, createdAt, updatedAt };
-}
+import { filterEventForApp, toPublicEvent } from '@/lib/event-public';
 
 /**
  * GET /api/events/[id] - Get event details with ticket types
@@ -29,41 +23,14 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const cors = corsHeaders(request);
+  const isAppCall = Boolean(request.headers.get('x-app-did'));
+  // CORS headers are only sent on the legacy registered-app path (kernel behaviour).
+  const headers = isAppCall ? cors : undefined;
 
-  // App auth path
-  if (request.headers.get('x-app-did')) {
+  if (isAppCall) {
     const appResult = await requireAppAuth(request, { scope: 'events:read' });
     if ('error' in appResult) {
       return NextResponse.json({ error: appResult.error }, { status: appResult.status, headers: cors });
-    }
-    try {
-      const { id } = await params;
-      const [event] = await db
-        .select()
-        .from(events)
-        .where(eq(events.id, id))
-        .limit(1);
-
-      if (!event) {
-        return NextResponse.json({ error: 'Event not found' }, { status: 404, headers: cors });
-      }
-
-      // Get ticket types with availability
-      const types = await db
-        .select()
-        .from(ticketTypes)
-        .where(eq(ticketTypes.eventId, id));
-
-      return NextResponse.json({
-        event: filterEventForApp(event as Record<string, unknown>),
-        ticketTypes: types.map(t => ({
-          ...t,
-          available: t.quantity ? t.quantity - (t.sold || 0) : null,
-        })),
-      }, { headers: cors });
-    } catch (error) {
-      log.error({ err: String(error) }, 'Failed to get event (app auth)');
-      return NextResponse.json({ error: 'Failed to get event' }, { status: 500, headers: cors });
     }
   }
 
@@ -76,7 +43,7 @@ export async function GET(
       .limit(1);
 
     if (!event) {
-      return NextResponse.json({ error: 'Event not found' }, { status: 404 });
+      return NextResponse.json({ error: 'Event not found' }, { status: 404, headers });
     }
 
     // Get ticket types with availability
@@ -86,15 +53,15 @@ export async function GET(
       .where(eq(ticketTypes.eventId, id));
 
     return NextResponse.json({
-      event: toPublicEvent(event),
+      event: isAppCall ? filterEventForApp(event) : toPublicEvent(event),
       ticketTypes: types.map(t => ({
         ...t,
         available: t.quantity ? t.quantity - (t.sold || 0) : null,
       })),
-    });
+    }, { headers });
   } catch (error) {
-    log.error({ err: String(error) }, 'Failed to get event');
-    return NextResponse.json({ error: 'Failed to get event' }, { status: 500 });
+    log.error({ err: String(error), appAuth: isAppCall }, 'Failed to get event');
+    return NextResponse.json({ error: 'Failed to get event' }, { status: 500, headers });
   }
 }
 
@@ -117,23 +84,9 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const cors = corsHeaders(request);
-  let did: string;
-
-  // App auth path
-  if (request.headers.get('x-app-did')) {
-    const appResult = await requireAppAuth(request, { scope: 'events:write' });
-    if ('error' in appResult) {
-      return NextResponse.json({ error: appResult.error }, { status: appResult.status, headers: cors });
-    }
-    did = appResult.appAuth.userDid;
-  } else {
-    const authResult = await requireAuth(request);
-    if ('error' in authResult) {
-      return NextResponse.json({ error: authResult.error }, { status: authResult.status });
-    }
-    const { identity } = authResult;
-    did = resolveActingDid(identity);
-  }
+  const caller = await authenticateAppOrSession(request, cors, { appScope: 'events:write' });
+  if (caller instanceof NextResponse) return caller;
+  const { did } = caller;
 
   const { id } = await params;
 
@@ -200,23 +153,9 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const cors = corsHeaders(request);
-  let did: string;
-
-  // App auth path
-  if (request.headers.get('x-app-did')) {
-    const appResult = await requireAppAuth(request, { scope: 'events:write' });
-    if ('error' in appResult) {
-      return NextResponse.json({ error: appResult.error }, { status: appResult.status, headers: cors });
-    }
-    did = appResult.appAuth.userDid;
-  } else {
-    const authResult = await requireAuth(request);
-    if ('error' in authResult) {
-      return NextResponse.json({ error: authResult.error }, { status: authResult.status });
-    }
-    const { identity } = authResult;
-    did = resolveActingDid(identity);
-  }
+  const caller = await authenticateAppOrSession(request, cors, { appScope: 'events:write' });
+  if (caller instanceof NextResponse) return caller;
+  const { did } = caller;
 
   const { id } = await params;
 

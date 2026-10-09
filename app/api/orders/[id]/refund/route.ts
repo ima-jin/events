@@ -1,5 +1,5 @@
 import { serviceUrl } from '@/lib/kernel';
-﻿/**
+/**
  * POST /api/orders/[id]/refund
  *
  * Refunds an entire order atomically (organizer-only).

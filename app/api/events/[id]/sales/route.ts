@@ -1,5 +1,5 @@
 import type postgres from 'postgres';
-﻿/**
+/**
  * GET /api/events/[id]/sales
  *
  * Returns all sales (orders) for an event, joined with buyer identity info

@@ -1,5 +1,5 @@
 import { serviceUrl } from '@/lib/kernel';
-﻿/**
+/**
  * POST /api/checkout/balance
  *
  * Pays for tickets using the buyer's MJNx balance. Transfers funds from

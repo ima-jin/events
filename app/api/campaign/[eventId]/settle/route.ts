@@ -1,5 +1,5 @@
 import { serviceUrl } from '@/lib/kernel';
-﻿/**
+/**
  * POST /api/campaign/{eventId}/settle
  *
  * Charge all confirmed pledges for a campaign.

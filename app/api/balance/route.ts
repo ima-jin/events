@@ -1,5 +1,5 @@
 import { serviceUrl } from '@/lib/kernel';
-﻿/**
+/**
  * GET /api/balance
  *
  * Proxy route that fetches the authenticated buyer's MJNx balance from the
