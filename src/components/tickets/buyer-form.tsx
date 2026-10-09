@@ -36,11 +36,11 @@ export function BuyerForm({ title, children, submitLabel, busyLabel, busy, error
       {collectDetails && (
         <div className="space-y-2">
           <label className="block text-sm">
-            Your name
+            <span className="block">Your name</span>
             <input type="text" value={name} onChange={(e) => setName(e.target.value)} disabled={busy} className={`${INPUT} mt-1`} />
           </label>
           <label className="block text-sm">
-            Your email
+            <span className="block">Your email</span>
             <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={busy} required className={`${INPUT} mt-1`} />
           </label>
         </div>

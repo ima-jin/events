@@ -57,7 +57,7 @@ export function UnlockForm({ eventId, onUnlocked }: Readonly<UnlockFormProps>) {
         </button>
       </div>
       {error && <p role="alert" className={ERROR_TEXT}>{error}</p>}
-      {notice && <p role="status" className="text-xs text-green-500">{notice}</p>}
+      {notice && <output className="block text-xs text-green-500">{notice}</output>}
     </form>
   );
 }

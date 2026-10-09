@@ -34,9 +34,9 @@ export function ShareButton() {
         />
       </svg>
       {copied && (
-        <span role="status" className="absolute -top-8 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-gray-900 px-2 py-1 text-xs text-white shadow-lg">
+        <output className="absolute -top-8 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-gray-900 px-2 py-1 text-xs text-white shadow-lg">
           Copied!
-        </span>
+        </output>
       )}
     </button>
   );

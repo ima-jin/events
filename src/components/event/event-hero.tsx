@@ -53,8 +53,8 @@ export function StatusBanner({ status }: Readonly<{ status: string }>) {
   const banner = BANNERS[status];
   if (!banner) return null;
   return (
-    <div role="status" className={`mb-6 rounded-xl border px-4 py-3 text-center font-semibold ${banner.className}`}>
+    <output className={`mb-6 block rounded-xl border px-4 py-3 text-center font-semibold ${banner.className}`}>
       {banner.text}
-    </div>
+    </output>
   );
 }

@@ -100,9 +100,13 @@ export function useBalanceCents(enabled: boolean): number | null {
   useEffect(() => {
     if (!enabled) return undefined;
     let cancelled = false;
-    fetchBalanceCents().then((cents) => {
-      if (!cancelled) setBalance(cents);
-    });
+    fetchBalanceCents()
+      .then((cents) => {
+        if (!cancelled) setBalance(cents);
+      })
+      .catch(() => {
+        if (!cancelled) setBalance(null);
+      });
     return () => {
       cancelled = true;
     };

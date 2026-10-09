@@ -39,10 +39,10 @@ function EtransferReserved({ instructions }: Readonly<{ instructions: EtransferI
 
 function Confirmation({ title, children }: Readonly<{ title: string; children?: ReactNode }>) {
   return (
-    <section className={PANEL} role="status">
+    <output className={`block ${PANEL}`}>
       <h3 className="text-base font-semibold text-green-500">{title}</h3>
       {children && <p className={MUTED}>{children}</p>}
-    </section>
+    </output>
   );
 }
 

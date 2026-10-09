@@ -12,7 +12,7 @@ interface QuantityStepperProps {
 
 export function QuantityStepper({ label, quantity, max, onChange }: Readonly<QuantityStepperProps>) {
   return (
-    <div role="group" aria-label={`Quantity for ${label}`} className="flex items-center overflow-hidden rounded-lg border border-gray-600">
+    <fieldset aria-label={`Quantity for ${label}`} className="m-0 flex items-center overflow-hidden rounded-lg border border-gray-600 p-0">
       <button type="button" aria-label={`Remove one ${label}`} className={STEP_BUTTON} disabled={quantity <= 0} onClick={() => onChange(quantity - 1)}>
         −
       </button>
@@ -22,6 +22,6 @@ export function QuantityStepper({ label, quantity, max, onChange }: Readonly<Qua
       <button type="button" aria-label={`Add one ${label}`} className={STEP_BUTTON} disabled={quantity >= max} onClick={() => onChange(quantity + 1)}>
         +
       </button>
-    </div>
+    </fieldset>
   );
 }

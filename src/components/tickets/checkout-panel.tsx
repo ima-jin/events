@@ -55,9 +55,9 @@ export function CheckoutPanel(props: Readonly<CheckoutPanelProps>) {
         <span>{formatCents(totalCents, currency)}</span>
       </p>
       {noCardRail && (
-        <p role="status" className={MUTED}>
+        <output className={`block ${MUTED}`}>
           Card payment isn&apos;t set up for this event.
-        </p>
+        </output>
       )}
       {hasRail ? (
         <RailButtons {...props} />
