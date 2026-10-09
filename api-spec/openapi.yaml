@@ -1,38 +1,243 @@
 openapi: "3.1.0"
 info:
   title: imajin-events
-  version: "0.1.0"
-  description: >
-    A third-party app on Imajin. This spec is served by the app itself at
-    /api/spec and aggregated by the kernel's service registry, the same way
-    every other app on the platform is discovered.
+  version: "1.0.0"
+  description: |
+    Standalone Imajin events app: event creation, ticket tiers, ordering and checkout (Stripe via the pay
+    service, MJNx balance, e-Transfer, free RSVP), holds and queues, invites, cohosts, guest/sales exports,
+    broadcast messaging, .fair manifests, crowdfunding campaigns and payment webhooks.
+
+    This spec is served by the app itself at `/api/spec` (see `app/api/spec/route.ts`) and is the single
+    source of truth for the app's HTTP surface. `src/__tests__/api-spec.test.ts` keeps it in lock-step with
+    the route files under `app/api/**/route.ts`.
+
+    ## Authentication
+
+    The app talks to the kernel only through the registered-app contract. Callers authenticate to *this* app
+    with one of:
+
+    1. **Scoped app token** (preferred): `Authorization: Bearer <app-token>`, minted by the kernel for this
+       app's host (`aud` = `IMAJIN_APP_AUDIENCE`, or the host of `NEXT_PUBLIC_APP_URL`). Scopes are enforced:
+       `events:read` for safe methods (GET/HEAD/OPTIONS), `events:write` for everything else
+       (`src/lib/auth.ts`, `defaultScopesFor`).
+    2. **Session cookie** (`imajin_session`, migration fallback): same identity, but carries no scopes, so
+       scope checks are not enforced on this path.
+    3. **Legacy app headers** (`X-App-DID` + `X-App-Authorization`): still accepted on the handful of routes
+       that call `requireAppAuth` from `@ima-jin/auth`, listed as an extra alternative on those operations.
+
+    Operations declare their accepted credentials in `security` (alternatives are OR-ed). Operations that need
+    no credentials declare `security: []` and `x-public: true`. Public operations that *optionally* identify
+    the caller (for example checkout) say so in their description.
+
+    Further authorization (event creator, organizer = creator or cohost, platform admin from
+    `EVENTS_ADMIN_DIDS` / `NODE_DID`, hard identity tier) is checked inside the handlers and surfaces as 403.
+
+    ## Base path
+
+    Paths below are relative to the app base. When the app is mounted under a prefix, set
+    `NEXT_PUBLIC_BASE_PATH` (see `next.config.js`) and use the `basePath` server variable.
 
 servers:
-  - url: http://localhost:3000
-    description: local
+  - url: "{origin}{basePath}"
+    description: This app. `origin` is NEXT_PUBLIC_APP_URL; `basePath` is NEXT_PUBLIC_BASE_PATH.
+    variables:
+      origin:
+        default: http://localhost:3000
+      basePath:
+        default: ""
 
 tags:
-  - name: app-template
+  - name: platform
+    description: Health, spec, session and auth plumbing
+  - name: events
+  - name: tiers
+    description: Ticket tiers (ticket types)
+  - name: tickets
+  - name: queue
+    description: Holds and waiting queue
+  - name: invites
+  - name: checkout
+  - name: orders
+  - name: campaign
+    description: Crowdfunding campaign pledges
+  - name: exports
+  - name: webhooks
+  - name: proxy
+    description: Same-origin proxies to kernel services
+  - name: media
 
 components:
   securitySchemes:
+    appToken:
+      type: http
+      scheme: bearer
+      description: >
+        Scoped app token (`Authorization: Bearer`) minted by the kernel for this app's host. Required scopes
+        are listed per operation (`events:read` / `events:write`).
     cookieAuth:
       type: apiKey
       in: cookie
       name: imajin_session
+      description: Imajin session cookie (migration fallback; carries no scopes).
+    appDidHeader:
+      type: apiKey
+      in: header
+      name: X-App-DID
+      description: Legacy app-auth header, must be combined with X-App-Authorization.
+    appAuthorizationHeader:
+      type: apiKey
+      in: header
+      name: X-App-Authorization
+      description: Legacy app-auth header carrying the attestation id from the user's consent flow.
+    webhookBearer:
+      type: http
+      scheme: bearer
+      description: "`Bearer ${WEBHOOK_SECRET}` — shared secret with the pay service."
+    webhookSecretHeader:
+      type: apiKey
+      in: header
+      name: x-webhook-secret
+      description: "`${WEBHOOK_SECRET}` — shared secret sent by the kernel event bus."
+
+  parameters:
+    EventId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+      description: Event id (`evt_...`)
+  responses:
+    BadRequest:
+      description: Invalid or missing input
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unauthorized:
+      description: Not authenticated (no/invalid/expired credential)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Forbidden:
+      description: Authenticated but not allowed (missing scope, not organizer/creator/admin, or soft DID)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    ServerError:
+      description: Unexpected failure
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
   schemas:
     Error:
       type: object
       required: [error]
       properties:
         error: { type: string }
+    Event:
+      type: object
+      description: >
+        Row of `events.events`. Reads authenticated through the legacy app headers return the reduced
+        projection (no `privateKey`, `publicKey`, `metadata`, `eventType`, ...).
+      properties:
+        id: { type: string }
+        did: { type: string }
+        publicKey: { type: string }
+        privateKey:
+          type: string
+          nullable: true
+          description: >
+            Event signing key. NOTE: the default (non-app-header) read paths of GET /api/events and
+            GET /api/events/{id} currently serialise the whole row, including this field (kernel parity gap,
+            tracked in the port notes).
+        creatorDid: { type: string }
+        title: { type: string }
+        description: { type: string, nullable: true }
+        startsAt: { type: string, format: date-time }
+        endsAt: { type: string, format: date-time, nullable: true }
+        timezone: { type: string, nullable: true }
+        locationType: { type: string, enum: [physical, virtual, hybrid] }
+        isVirtual: { type: boolean }
+        virtualUrl: { type: string, nullable: true }
+        venue: { type: string, nullable: true }
+        address: { type: string, nullable: true }
+        city: { type: string, nullable: true }
+        country: { type: string, nullable: true }
+        status: { type: string, enum: [draft, published, paused, cancelled, completed] }
+        eventType: { type: string, enum: [event, campaign] }
+        targetAmount: { type: integer, nullable: true, description: Campaign goal in cents }
+        deadline: { type: string, format: date-time, nullable: true }
+        accessMode: { type: string }
+        imageUrl: { type: string, nullable: true }
+        imageAssetId: { type: string, nullable: true }
+        tags: { type: array, items: { type: string } }
+        metadata:
+          type: object
+          description: Free-form; `metadata.fair` holds the .fair manifest.
+        nameDisplayPolicy: { type: string, enum: [real_name, handle, anonymous, attendee_choice] }
+        chatEnabled: { type: boolean }
+        courseSlug: { type: string, nullable: true }
+        currency: { type: string, nullable: true }
+        emtEmail: { type: string, nullable: true }
+        podId: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    EventInput:
+      type: object
+      description: Event fields accepted by create and update.
+      properties:
+        title: { type: string }
+        description: { type: string }
+        startsAt: { type: string, format: date-time }
+        endsAt: { type: string, format: date-time, nullable: true }
+        timezone: { type: string, nullable: true }
+        locationType: { type: string, enum: [physical, virtual, hybrid] }
+        isVirtual: { type: boolean }
+        virtualUrl: { type: string }
+        venue: { type: string }
+        address: { type: string }
+        city: { type: string }
+        country: { type: string }
+        imageUrl: { type: string }
+        imageAssetId: { type: string, nullable: true }
+        tags: { type: array, items: { type: string } }
+        courseSlug: { type: string, nullable: true }
+        emtEmail: { type: string, nullable: true }
+        nameDisplayPolicy: { type: string, enum: [real_name, handle, anonymous, attendee_choice] }
+        chatEnabled: { type: boolean }
+    TicketTier:
+      type: object
+      description: Row of `events.ticket_types`, plus computed `available`.
+      properties:
+        id: { type: string }
+        eventId: { type: string }
+        name: { type: string }
+        description: { type: string, nullable: true }
+        price: { type: integer, description: Minor units (cents) }
+        currency: { type: string }
+        quantity: { type: integer, nullable: true, description: null = unlimited }
+        sold: { type: integer }
+        available: { type: integer, nullable: true }
+        perks: { type: array, items: { type: string } }
+        sortOrder: { type: integer }
+        requiresRegistration: { type: boolean }
+        registrationFormId: { type: string, nullable: true }
+        maxPerOrder: { type: integer, nullable: true }
+        accessCode: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
 
 paths:
   /api/health:
     get:
-      operationId: getHealth
-      summary: Health check
-      tags: [app-template]
+      tags: [platform]
+      operationId: healthCheck
+      summary: Service health check
+      x-public: true
+      security: []
       responses:
         "200":
           description: Service is healthy
@@ -45,11 +250,25 @@ paths:
                   service: { type: string, example: imajin-events }
                   timestamp: { type: string, format: date-time }
 
+  /api/spec:
+    get:
+      tags: [platform]
+      operationId: getSpec
+      summary: Serve this OpenAPI document (YAML)
+      x-public: true
+      security: []
+      responses:
+        "200":
+          description: OpenAPI YAML spec
+          content:
+            text/yaml:
+              schema: { type: string }
+
   /api/me:
     get:
+      tags: [platform]
       operationId: getMe
-      summary: Return the signed-in caller's DID
-      tags: [app-template]
+      summary: Return the signed-in caller's DID (session cookie only)
       security:
         - cookieAuth: []
       responses:
@@ -61,8 +280,452 @@ paths:
                 type: object
                 properties:
                   did: { type: string }
-        "401":
-          description: Not authenticated
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/auth/callback:
+    get:
+      tags: [platform]
+      operationId: authCallback
+      summary: Kernel login redirect target (published `@ima-jin/auth-client` handler)
+      description: >
+        Receives `attestation_id` and `user_did` from the kernel consent flow, sets the session cookie and
+        redirects. Failures redirect back with `?auth_error=...`.
+      x-public: true
+      security: []
+      parameters:
+        - { name: attestation_id, in: query, schema: { type: string } }
+        - { name: user_did, in: query, schema: { type: string } }
+      responses:
+        "302":
+          description: Redirect to the post-login page
+
+  /api/auth/logout:
+    post:
+      tags: [platform]
+      operationId: authLogout
+      summary: Clear the session cookie (published `@ima-jin/auth-client` handler)
+      x-public: true
+      security: []
+      responses:
+        "302":
+          description: Redirect to the post-logout page with the session cookie cleared
+
+  /api/auth/session:
+    get:
+      tags: [platform]
+      operationId: authSession
+      summary: Current session user from the cookie, or null (published `@ima-jin/auth-client` handler)
+      x-public: true
+      security: []
+      responses:
+        "200":
+          description: The session user, or `null` when signed out
+          content:
+            application/json:
+              schema:
+                type: object
+                nullable: true
+                properties:
+                  did: { type: string }
+                  displayName: { type: string }
+                  handle: { type: string }
+                  avatar: { type: string }
+
+  # ───────────────────────── events ─────────────────────────
+  /api/events:
+    get:
+      tags: [events]
+      operationId: listEvents
+      summary: List events
+      description: >
+        Public. When `X-App-DID` is sent, the legacy app path is used instead: it requires `events:read` and
+        returns the reduced event projection.
+      x-public: true
+      security: []
+      parameters:
+        - { name: status, in: query, schema: { type: string, default: published } }
+        - { name: limit, in: query, schema: { type: integer, default: 20 } }
+        - { name: courseSlug, in: query, schema: { type: string } }
+        - name: upcoming
+          in: query
+          schema: { type: boolean }
+          description: Only events that have not started yet (also switches ordering to soonest-first)
+      responses:
+        "200":
+          description: Events
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  events:
+                    type: array
+                    items: { $ref: "#/components/schemas/Event" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/ServerError" }
+    post:
+      tags: [events]
+      operationId: createEvent
+      summary: Create an event (requires a hard DID)
+      description: >
+        Registers a new event DID with the kernel, builds the .fair manifest, creates optional ticket types
+        and, when chat is available, the event conversation. Hard-DID check: soft (email-only) identities get 403.
+        Also accepts the legacy app headers (`events:write`).
+      security:
+        - appToken: [events:write]
+        - cookieAuth: []
+        - appDidHeader: []
+          appAuthorizationHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - { $ref: "#/components/schemas/EventInput" }
+                - type: object
+                  required: [title, startsAt]
+                  properties:
+                    eventType: { type: string, enum: [event, campaign], default: event }
+                    targetAmount:
+                      type: integer
+                      description: Required positive integer (cents) when `eventType` is `campaign`
+                    deadline: { type: string, format: date-time }
+                    tickets:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          name: { type: string }
+                          description: { type: string }
+                          price: { type: integer }
+                          currency: { type: string }
+                          quantity: { type: integer }
+                          perks: { type: array, items: { type: string } }
+      responses:
+        "201":
+          description: Event created (status `draft`)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  event: { $ref: "#/components/schemas/Event" }
+                  ticketTypes:
+                    type: array
+                    items: { $ref: "#/components/schemas/TicketTier" }
+                  eventKeypair:
+                    type: object
+                    description: Returned exactly once; the creator must store the private key.
+                    properties:
+                      publicKey: { type: string }
+                      privateKey: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /api/events/mine:
+    get:
+      tags: [events]
+      operationId: listMyEvents
+      summary: List the caller's events with ticket stats
+      security:
+        - appToken: [events:read]
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Events created by the caller, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  events:
+                    type: array
+                    items:
+                      allOf:
+                        - { $ref: "#/components/schemas/Event" }
+                        - type: object
+                          properties:
+                            ticketsSold: { type: integer }
+                            revenue: { type: integer, description: Sum of price × sold across tiers (minor units) }
+                            statusBadge: { type: string, description: "`live`/`past` for published events, otherwise the status" }
+                            ticketTypes:
+                              type: array
+                              items: { $ref: "#/components/schemas/TicketTier" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /api/events/by-did/{did}:
+    get:
+      tags: [events]
+      operationId: getEventByDid
+      summary: Look up an event by its DID
+      x-public: true
+      security: []
+      parameters:
+        - { name: did, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Event found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  event:
+                    type: object
+                    properties:
+                      id: { type: string }
+                      title: { type: string }
+                      did: { type: string }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /api/events/{id}:
+    parameters:
+      - $ref: "#/components/parameters/EventId"
+    get:
+      tags: [events]
+      operationId: getEvent
+      summary: Get an event with its ticket types
+      description: >
+        Public. When `X-App-DID` is sent, the legacy app path requires `events:read` and returns the reduced
+        event projection.
+      x-public: true
+      security: []
+      responses:
+        "200":
+          description: Event details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  event: { $ref: "#/components/schemas/Event" }
+                  ticketTypes:
+                    type: array
+                    items: { $ref: "#/components/schemas/TicketTier" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+    put:
+      tags: [events]
+      operationId: updateEvent
+      summary: Update event fields (creator or cohost)
+      security:
+        - appToken: [events:write]
+        - cookieAuth: []
+        - appDidHeader: []
+          appAuthorizationHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - { $ref: "#/components/schemas/EventInput" }
+                - type: object
+                  properties:
+                    status: { type: string }
+                    metadata: { type: object }
+                    accessMode: { type: string }
+      responses:
+        "200":
+          description: Event updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  event: { $ref: "#/components/schemas/Event" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+    patch:
+      tags: [events]
+      operationId: updateEventStatus
+      summary: Change event status (creator only, allowed transitions only)
+      description: >
+        Transitions: draft → published; published → paused, cancelled, completed; paused → published,
+        cancelled. `cancelled` and `completed` are terminal.
+      security:
+        - appToken: [events:write]
+        - cookieAuth: []
+        - appDidHeader: []
+          appAuthorizationHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [draft, published, paused, cancelled, completed] }
+      responses:
+        "200":
+          description: Status updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  event: { $ref: "#/components/schemas/Event" }
+        "400":
+          description: Invalid status or disallowed transition
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /api/events/{id}/tiers:
+    parameters:
+      - $ref: "#/components/parameters/EventId"
+    get:
+      tags: [tiers]
+      operationId: listTiers
+      summary: List public ticket tiers (access-code tiers excluded)
+      description: Public. With `X-App-DID` the legacy app path requires `events:read`.
+      x-public: true
+      security: []
+      responses:
+        "200":
+          description: Tiers ordered by `sortOrder`
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tiers:
+                    type: array
+                    items: { $ref: "#/components/schemas/TicketTier" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500": { $ref: "#/components/responses/ServerError" }
+    post:
+      tags: [tiers]
+      operationId: createTier
+      summary: Create a tier (creator or cohost)
+      description: When `currency` is omitted it defaults to the event's most common tier currency, else `CAD`.
+      security:
+        - appToken: [events:write]
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, price]
+              properties:
+                name: { type: string }
+                description: { type: string }
+                price: { type: integer, minimum: 0 }
+                currency: { type: string }
+                quantity: { type: integer, nullable: true }
+                perks: { type: array, items: { type: string } }
+                sortOrder: { type: integer }
+                requiresRegistration: { type: boolean }
+                registrationFormId: { type: string }
+                accessCode: { type: string }
+      responses:
+        "201":
+          description: Tier created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tier: { $ref: "#/components/schemas/TicketTier" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/ServerError" }
+    put:
+      tags: [tiers]
+      operationId: updateTier
+      summary: Update a tier under append-only rules (creator or cohost)
+      description: >
+        Once tickets are sold the currency cannot change, the price cannot go down and quantity/perks may only
+        grow; violations return 400 with a `violations` list. An empty change set returns the tier unchanged
+        with `message: "No changes"`.
+      security:
+        - appToken: [events:write]
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tierId]
+              properties:
+                tierId: { type: string }
+                name: { type: string }
+                description: { type: string }
+                price: { type: integer }
+                currency: { type: string }
+                quantity: { type: integer, nullable: true }
+                perks: { type: array, items: { type: string } }
+                sortOrder: { type: integer }
+                requiresRegistration: { type: boolean }
+                registrationFormId: { type: string, nullable: true }
+                accessCode: { type: string, nullable: true }
+      responses:
+        "200":
+          description: Tier updated (or unchanged)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tier: { $ref: "#/components/schemas/TicketTier" }
+                  message: { type: string }
+        "400":
+          description: Missing `tierId` or append-only policy violation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error: { type: string }
+                  violations: { type: array, items: { type: string } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /api/events/{id}/tiers/unlock:
+    parameters:
+      - $ref: "#/components/parameters/EventId"
+    get:
+      tags: [tiers]
+      operationId: unlockTiers
+      summary: Reveal hidden tiers matching an access code (case-insensitive)
+      x-public: true
+      security: []
+      parameters:
+        - { name: code, in: query, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Matching tiers
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tiers:
+                    type: array
+                    items: { $ref: "#/components/schemas/TicketTier" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  # ───────────────────────── tickets ─────────────────────────
