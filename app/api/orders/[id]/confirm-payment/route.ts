@@ -1,4 +1,4 @@
-﻿/**
+/**
  * POST /api/orders/[id]/confirm-payment
  *
  * Confirms an e-Transfer payment for an order atomically.

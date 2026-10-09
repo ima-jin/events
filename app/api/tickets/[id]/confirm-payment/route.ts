@@ -1,4 +1,4 @@
-﻿/**
+/**
  * POST /api/tickets/[id]/confirm-payment
  *
  * Confirms an e-Transfer payment for a held ticket.

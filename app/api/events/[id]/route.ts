@@ -13,6 +13,7 @@ import { requireAppAuth } from '@ima-jin/auth';
 import { corsHeaders } from '@ima-jin/config';
 import { isEventOrganizer } from '@/lib/organizer';
 import { eq } from 'drizzle-orm';
+import { toPublicEvent } from '@/lib/event-public';
 
 /** Fields safe to return for events:read app scope */
 function filterEventForApp(event: Record<string, unknown>): Record<string, unknown> {
@@ -85,7 +86,7 @@ export async function GET(
       .where(eq(ticketTypes.eventId, id));
 
     return NextResponse.json({
-      event,
+      event: toPublicEvent(event),
       ticketTypes: types.map(t => ({
         ...t,
         available: t.quantity ? t.quantity - (t.sold || 0) : null,
@@ -184,7 +185,7 @@ export async function PATCH(
       payload: { eventId: id, status: newStatus },
     }).catch((err) => log.error({ err: String(err) }, 'Publish error'));
 
-    return NextResponse.json({ event: updated });
+    return NextResponse.json({ event: toPublicEvent(updated) });
   } catch (error) {
     log.error({ err: String(error) }, 'Failed to update event status');
     return NextResponse.json({ error: 'Failed to update event status' }, { status: 500 });
@@ -268,7 +269,7 @@ export async function PUT(
       payload: { eventId: id },
     }).catch((err) => log.error({ err: String(err) }, 'Publish error'));
 
-    return NextResponse.json({ event: updated });
+    return NextResponse.json({ event: toPublicEvent(updated) });
   } catch (error) {
     log.error({ err: String(error) }, 'Failed to update event');
     return NextResponse.json({ error: 'Failed to update event' }, { status: 500 });

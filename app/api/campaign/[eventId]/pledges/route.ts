@@ -1,4 +1,4 @@
-﻿/**
+/**
  * GET /api/campaign/{eventId}/pledges
  *
  * Returns all pledges for a campaign event.

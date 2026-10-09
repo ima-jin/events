@@ -1,3 +1,4 @@
+import { toPublicEvent } from '@/lib/event-public';
 import { appAuthHeaders, serviceUrl } from '@/lib/kernel';
 import { NextResponse } from 'next/server';
 import { withLogger, type Logger } from '@ima-jin/logger';
@@ -374,7 +375,7 @@ export const GET = withLogger('events', async (request, { log }) => {
       .orderBy(upcoming ? asc(events.startsAt) : desc(events.startsAt))
       .limit(limit);
 
-    return NextResponse.json({ events: eventList });
+    return NextResponse.json({ events: eventList.map(toPublicEvent) });
   } catch (error) {
     log.error({ err: String(error) }, 'Failed to list events');
     return NextResponse.json({ error: 'Failed to list events' }, { status: 500 });

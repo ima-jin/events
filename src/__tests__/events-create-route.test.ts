@@ -110,7 +110,7 @@ beforeEach(() => {
   fetchMock.mockReset().mockResolvedValue(jsonOk({ did: EVENT_DID }));
   vi.stubGlobal('fetch', fetchMock);
   mocks.publishMock.mockReset().mockResolvedValue({});
-  mocks.returningMock.mockReset().mockImplementation(async () => [lastInsertedValues()]);
+  mocks.returningMock.mockReset().mockImplementation(async () => [lastInsertedValues()].flat());
   requireHardDIDMock.mockResolvedValue(authSuccess(CREATOR_DID));
 });
 
@@ -371,7 +371,11 @@ describe('GET /api/events', () => {
     const res = await GET(makeGet('?upcoming=true&limit=5'));
 
     expect(res.status).toBe(200);
-    expect((await res.json()).events).toEqual([EVENT_ROW]);
+    const { events } = await res.json();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ id: EVENT_ROW.id, title: 'Listed' });
+    // The ticket-signing key must never leave the server on a read route (deviation from the kernel).
+    expect(events[0]).not.toHaveProperty('privateKey');
   });
 
   it('restricts app-auth callers to the public event fields', async () => {

@@ -142,7 +142,7 @@ describe('POST /api/webhook/payment — settle via events’ app token (imajin-a
   });
 
   it('passes no transactionId through when the pay webhook does not carry one (settle then skips loudly)', async () => {
-    const { transactionId: _omitted, ...withoutTransactionId } = PAYLOAD;
+    const withoutTransactionId = { ...PAYLOAD, transactionId: undefined };
 
     const res = await callRoute(withoutTransactionId);
 

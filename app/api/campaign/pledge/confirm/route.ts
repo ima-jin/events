@@ -1,4 +1,4 @@
-﻿/**
+/**
  * POST /api/campaign/pledge/confirm
  *
  * Confirm a pledge after Stripe.js successfully confirms the SetupIntent.

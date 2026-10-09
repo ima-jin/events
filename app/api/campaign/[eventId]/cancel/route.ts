@@ -1,4 +1,4 @@
-﻿/**
+/**
  * POST /api/campaign/{eventId}/cancel
  *
  * Cancel a campaign and all pending/confirmed pledges.

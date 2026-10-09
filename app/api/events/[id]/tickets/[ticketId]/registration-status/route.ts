@@ -1,4 +1,4 @@
-﻿/**
+/**
  * GET /api/events/:id/tickets/:ticketId/registration-status
  *
  * Returns the authoritative registration status for a ticket from the DB.

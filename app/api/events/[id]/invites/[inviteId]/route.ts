@@ -1,4 +1,4 @@
-﻿/**
+/**
  * DELETE /api/events/[id]/invites/[inviteId] - Revoke invite (owner only)
  */
 

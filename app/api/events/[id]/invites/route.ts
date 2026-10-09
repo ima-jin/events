@@ -1,4 +1,4 @@
-﻿/**
+/**
  * GET  /api/events/[id]/invites - List invites (owner/cohost only)
  * POST /api/events/[id]/invites - Create invite link (owner/cohost only)
  */

@@ -1,4 +1,5 @@
-﻿import { NextResponse } from 'next/server';
+import { toPublicEvent } from '@/lib/event-public';
+import { NextResponse } from 'next/server';
 import { withLogger } from '@ima-jin/logger';
 import { db, events, ticketTypes } from '@/db';
 import { requireAuth, resolveActingDid } from '@/lib/auth';
@@ -50,7 +51,7 @@ export const GET = withLogger('events', async (request, { log }) => {
         }
 
         return {
-          ...event,
+          ...toPublicEvent(event),
           ticketsSold: totalTicketsSold,
           revenue: totalRevenue,
           statusBadge,

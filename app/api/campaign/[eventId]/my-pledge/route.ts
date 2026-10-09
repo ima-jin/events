@@ -1,4 +1,4 @@
-﻿/**
+/**
  * GET /api/campaign/{eventId}/my-pledge
  *
  * Returns the current user's pledge for a campaign, if any.

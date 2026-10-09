@@ -1,4 +1,4 @@
-﻿/**
+/**
  * POST /api/events/[id]/tickets/[ticketId]/cancel
  *
  * Cancels a held or available (unconfirmed) ticket.
