@@ -18,10 +18,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db, pledges } from '@/db';
 import { eq, and, sql } from 'drizzle-orm';
 import { corsHeaders } from '@ima-jin/config';
-import { findEvent, jsonError, pathEventId, preflight } from '@/lib/campaign-route';
+import { findEvent, jsonError, pathEventId, createPreflight } from '@/lib/campaign-route';
 import { withLogger } from '@ima-jin/logger';
 
-export const OPTIONS = preflight;
+export const OPTIONS = createPreflight();
 
 export const GET = withLogger('events', async (request: NextRequest, { log }) => {
   const cors = corsHeaders(request);

@@ -20,13 +20,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db, pledges } from '@/db';
 import { eq, and } from 'drizzle-orm';
 import { corsHeaders } from '@ima-jin/config';
-import { authenticateDid, findEvent, jsonError, pathEventId, preflight, rateLimitResponse } from '@/lib/campaign-route';
+import { authenticateDid, findEvent, jsonError, pathEventId, createPreflight, rateLimitResponse } from '@/lib/campaign-route';
 import { withLogger } from '@ima-jin/logger';
 
 const PAY_SERVICE_URL = (serviceUrl('pay') ?? '');
 const PAY_SERVICE_API_KEY = process.env.PAY_SERVICE_API_KEY!;
 
-export const OPTIONS = preflight;
+export const OPTIONS = createPreflight();
 
 export const POST = withLogger('events', async (request: NextRequest, { log }) => {
   const cors = corsHeaders(request);

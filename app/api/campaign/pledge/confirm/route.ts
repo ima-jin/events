@@ -21,10 +21,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db, pledges } from '@/db';
 import { eq, and } from 'drizzle-orm';
 import { corsHeaders } from '@ima-jin/config';
-import { authenticateDid, preflight, rateLimitResponse } from '@/lib/campaign-route';
+import { authenticateDid, createPreflight, rateLimitResponse } from '@/lib/campaign-route';
 import { withLogger } from '@ima-jin/logger';
 
-export const OPTIONS = preflight;
+export const OPTIONS = createPreflight();
 
 export const POST = withLogger('events', async (request: NextRequest, { log }) => {
   const cors = corsHeaders(request);

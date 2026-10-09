@@ -6,9 +6,9 @@ import { requireAuth, resolveActingDid } from '@/lib/auth';
 
 /** Shared building blocks of the crowdfunding campaign routes (CORS, rate limit, auth, event lookup). */
 
-/** `OPTIONS` preflight shared by every campaign route (each route exports it as `OPTIONS`). */
-export function preflight(request: NextRequest) {
-  return new NextResponse(null, { status: 204, headers: corsHeaders(request) });
+/** Builds the `OPTIONS` preflight handler every campaign route exports. */
+export function createPreflight() {
+  return (request: NextRequest) => new NextResponse(null, { status: 204, headers: corsHeaders(request) });
 }
 
 /** JSON `{ error }` response carrying the route's CORS headers. */
