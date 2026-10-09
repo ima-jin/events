@@ -17,7 +17,13 @@ export const POST = withLogger('events', async (request, { log, correlationId })
 
   try {
     const input = (await request.json()) as CreateEventInput;
-    const result = await createEvent({ creatorDid: auth.did, identityId: auth.identity.id, input, correlationId });
+    const result = await createEvent({
+      creatorDid: auth.did,
+      identityId: auth.identity.id,
+      input,
+      correlationId,
+      actingAs: auth.identity.actingAs,
+    });
     return NextResponse.json(result, { status: 201 });
   } catch (error) {
     return failureResponse(error, { fallback: 'Failed to create event', log });

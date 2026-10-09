@@ -74,6 +74,7 @@ import { events, ticketTypes } from '@/db';
 const EVENTS_URL = 'https://events.test/api/events';
 const REGISTER_URL = 'https://auth.events.test/api/register';
 const CREATOR_DID = 'did:imajin:creator';
+const FOREST_DID = 'did:imajin:forest';
 const EVENT_DID = 'did:imajin:event123';
 const APP_DID_HEADER = 'x-app-did';
 const APP_DID = 'did:imajin:app';
@@ -141,15 +142,23 @@ describe('POST /api/events (#2000: node config sourced via getNodeSelf())', () =
     expectDefaultShares(fairChainOf(await res.json()));
   });
 
-  // gap(kernel): act-as (forest scope) is not part of the app-token contract,
-  // so the kernel's "applies the forest scope fee (#2001)" case cannot hold:
-  // events are never created on behalf of a scope DID in the standalone app.
-  it('never looks up a forest scope fee and emits no scope entry in the manifest', async () => {
+  it('does not look up a forest scope fee, and emits no scope entry, without an act-as claim', async () => {
     const res = await POST(makePost(VALID_BODY));
     expect(res.status).toBe(201);
 
     expect(getForestScopeConfigMock).not.toHaveBeenCalled();
     expect(findChainRole(fairChainOf(await res.json()), 'scope')).toBeUndefined();
+  });
+
+  it('applies the forest scope fee (#2001) when the token carries a verified act-as claim', async () => {
+    requireHardDIDMock.mockResolvedValue({ identity: { ...authSuccess(CREATOR_DID).identity, actingAs: FOREST_DID } });
+    getForestScopeConfigMock.mockResolvedValue({ scopeFeeBps: 150 });
+
+    const res = await POST(makePost(VALID_BODY));
+    expect(res.status).toBe(201);
+
+    expect(getForestScopeConfigMock).toHaveBeenCalledWith(FOREST_DID);
+    expect(findChainRole(fairChainOf(await res.json()), 'scope')).toMatchObject({ did: FOREST_DID });
   });
 });
 
