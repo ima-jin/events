@@ -7,7 +7,7 @@ import { serviceUrl } from '@/lib/kernel';
  */
 
 import { NextResponse } from 'next/server';
-import { withLogger } from '@ima-jin/logger';
+import { withLogger, type Logger } from '@ima-jin/logger';
 import { publish } from '@/lib/domain-events';
 import { eventInvites, db } from '@/db';
 import { eq } from 'drizzle-orm';
@@ -51,6 +51,33 @@ function rateLimitedResponse(request: Request): NextResponse | null {
     { error: 'Too many requests', retryAfter: rl.retryAfter },
     { status: 429, headers: { 'Retry-After': String(rl.retryAfter) } }
   );
+}
+
+/** Response for a pay-service failure, carrying the machine-readable `code` (e.g. SELLER_NO_CARD_RAIL) when present. */
+function payFailureResponse(failure: { error: string; status: number; code?: string }): NextResponse {
+  const body = failure.code ? { error: failure.error, code: failure.code } : { error: failure.error };
+  return NextResponse.json(body, { status: failure.status });
+}
+
+/** Count one use of the invite that gated this checkout, if any. */
+async function consumeInvite(invite: { id: string; usedCount: number } | null | undefined): Promise<void> {
+  if (!invite) return;
+  await db
+    .update(eventInvites)
+    .set({ usedCount: invite.usedCount + 1 })
+    .where(eq(eventInvites.id, invite.id));
+}
+
+/** Map a thrown checkout failure to its response: validation errors keep their status, anything else is a logged 500. */
+function checkoutErrorResponse(error: unknown, log: Logger): NextResponse {
+  if (error instanceof CheckoutValidationError) {
+    return NextResponse.json(
+      { error: error.message, ...(error.field ? { field: error.field } : {}) },
+      { status: error.statusCode },
+    );
+  }
+  log.error({ err: String(error) }, 'Checkout error');
+  return NextResponse.json({ error: 'Checkout failed' }, { status: 500 });
 }
 
 export const POST = withLogger('events', async (request, { log, correlationId }) => {
@@ -139,12 +166,7 @@ export const POST = withLogger('events', async (request, { log, correlationId })
       log,
     });
 
-    if ('error' in payResult) {
-      return NextResponse.json(
-        { error: payResult.error, ...(payResult.code && { code: payResult.code }) },
-        { status: payResult.status },
-      );
-    }
+    if ('error' in payResult) return payFailureResponse(payResult);
     const { checkout } = payResult;
 
     publish('ticket.purchase', {
@@ -160,12 +182,7 @@ export const POST = withLogger('events', async (request, { log, correlationId })
       correlationId,
     }).catch((err) => log.error({ err: String(err) }, 'Publish error'));
 
-    if (inviteRecord) {
-      await db
-        .update(eventInvites)
-        .set({ usedCount: inviteRecord.usedCount + 1 })
-        .where(eq(eventInvites.id, inviteRecord.id));
-    }
+    await consumeInvite(inviteRecord);
 
     return NextResponse.json({
       url: checkout.url,
@@ -173,16 +190,6 @@ export const POST = withLogger('events', async (request, { log, correlationId })
     });
 
   } catch (error) {
-    if (error instanceof CheckoutValidationError) {
-      return NextResponse.json(
-        { error: error.message, ...(error.field ? { field: error.field } : {}) },
-        { status: error.statusCode },
-      );
-    }
-    log.error({ err: String(error) }, 'Checkout error');
-    return NextResponse.json(
-      { error: 'Checkout failed' },
-      { status: 500 }
-    );
+    return checkoutErrorResponse(error, log);
   }
 });
