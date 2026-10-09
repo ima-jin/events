@@ -15,7 +15,7 @@ import { isEventOrganizer } from '@/lib/organizer';
 import { eq } from 'drizzle-orm';
 
 /** Fields safe to return for events:read app scope */
-function filterEventForApp(event: Record<string, any>): Record<string, any> {
+function filterEventForApp(event: Record<string, unknown>): Record<string, unknown> {
   const { id, did, creatorDid, title, description, startsAt, endsAt, timezone, locationType, isVirtual, virtualUrl, venue, address, city, country, status, accessMode, imageUrl, imageAssetId, tags, courseSlug, nameDisplayPolicy, chatEnabled, createdAt, updatedAt } = event;
   return { id, did, creatorDid, title, description, startsAt, endsAt, timezone, locationType, isVirtual, virtualUrl, venue, address, city, country, status, accessMode, imageUrl, imageAssetId, tags, courseSlug, nameDisplayPolicy, chatEnabled, createdAt, updatedAt };
 }
@@ -54,7 +54,7 @@ export async function GET(
         .where(eq(ticketTypes.eventId, id));
 
       return NextResponse.json({
-        event: filterEventForApp(event as Record<string, any>),
+        event: filterEventForApp(event as Record<string, unknown>),
         ticketTypes: types.map(t => ({
           ...t,
           available: t.quantity ? t.quantity - (t.sold || 0) : null,

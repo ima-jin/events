@@ -46,7 +46,22 @@ function lookupResolved(did: string | null | undefined, resolvedMap: Map<string,
 }
 
 /** Build the JSON-shaped orphan-ticket sale row (#1998: owner identity now comes from the batched resolve map). */
-function buildOrphanSale(r: any, resolvedMap: Map<string, ResolvedBuyer>, fallbackCurrency: string) {
+interface OrphanRow {
+  ticket_id: string;
+  status: string | null;
+  owner_did: string | null;
+  price_paid: number | null;
+  currency: string | null;
+  purchased_at: string | Date | null;
+  payment_method: string | null;
+  payment_id: string | null;
+  ticket_type_name: string | null;
+  registration_form_id: string | null;
+  attendee_name?: string | null;
+  attendee_email?: string | null;
+}
+
+function buildOrphanSale(r: OrphanRow, resolvedMap: Map<string, ResolvedBuyer>, fallbackCurrency: string) {
   const ownerResolved = lookupResolved(r.owner_did, resolvedMap);
   return {
     ticketId: r.ticket_id,
@@ -131,12 +146,12 @@ async function fetchOrderSales(eventId: string, fallbackCurrency: string | null)
 
   const surveyByTicket = await getSurveyResponsesForTickets(
     orderRows
-      .filter((r: any) => r.ticket_id)
-      .map((r: any) => ({ ticketId: r.ticket_id, formId: r.registration_form_id }))
+      .filter((r) => r.ticket_id)
+      .map((r) => ({ ticketId: r.ticket_id, formId: r.registration_form_id }))
   );
 
   // Batch-resolve buyer DIDs via the kernel's batched profile resolve route.
-  const buyerDids = [...new Set(orderRows.map((r: any) => r.buyer_did).filter(Boolean))] as string[];
+  const buyerDids = [...new Set(orderRows.map((r) => r.buyer_did).filter(Boolean))] as string[];
   const buyerResolvedMap = await resolveIdentitiesForDids(buyerDids);
 
   function buildSaleFromOrderRow(row: typeof orderRows[number]): Sale {
@@ -195,7 +210,7 @@ function attendeeNameOf(answers: SurveyAnswers | undefined): string | null {
 
 /** Fetch orphan tickets (no order_id) — these predate the orders system — with resolved owner identities. */
 async function fetchOrphanSales(eventId: string, fallbackCurrency: string) {
-  const orphanRows = await sql`
+  const orphanRows = (await sql`
     SELECT
       t.id AS ticket_id,
       t.status,
@@ -212,22 +227,22 @@ async function fetchOrphanSales(eventId: string, fallbackCurrency: string) {
     WHERE t.event_id = ${eventId}
       AND t.order_id IS NULL
     ORDER BY t.purchased_at DESC NULLS LAST, t.created_at DESC
-  `;
+  `) as unknown as OrphanRow[];
 
   const orphanSurveys = await getSurveyResponsesForTickets(
-    orphanRows.map((r: any) => ({ ticketId: r.ticket_id, formId: r.registration_form_id }))
+    orphanRows.map((r) => ({ ticketId: r.ticket_id, formId: r.registration_form_id }))
   );
-  for (const r of orphanRows as any[]) {
+  for (const r of orphanRows) {
     const answers = orphanSurveys.get(r.ticket_id)?.answers;
     r.attendee_name = attendeeNameOf(answers);
     r.attendee_email = answers?.email ?? null;
   }
 
   // Batch-resolve orphan ticket owner DIDs the same way as order buyers.
-  const orphanOwnerDids = [...new Set(orphanRows.map((r: any) => r.owner_did).filter(Boolean))] as string[];
+  const orphanOwnerDids = [...new Set(orphanRows.map((r) => r.owner_did).filter(Boolean))] as string[];
   const orphanOwnerResolvedMap = await resolveIdentitiesForDids(orphanOwnerDids);
 
-  return orphanRows.map((r: any) => buildOrphanSale(r, orphanOwnerResolvedMap, fallbackCurrency));
+  return orphanRows.map((r) => buildOrphanSale(r, orphanOwnerResolvedMap, fallbackCurrency));
 }
 
 /* ─── Response builders ─── */

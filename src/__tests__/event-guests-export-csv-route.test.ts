@@ -8,6 +8,7 @@
  * resolveIdentitiesForDids (backed by the profile service's /api/resolve).
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { NextRequest } from 'next/server';
 import {
   nextSql,
   resetResolveRouteMocks,
@@ -40,8 +41,8 @@ vi.mock('@/lib/guest-export-helpers', () => ({
 
 import { GET } from '../../app/api/events/[id]/guests/export.csv/route';
 
-function makeRequest(query = ''): Request {
-  return new Request(`https://events.test/api/events/evt_1/guests/export.csv${query}`, {
+function makeRequest(query = ''): NextRequest {
+  return new NextRequest(`https://events.test/api/events/evt_1/guests/export.csv${query}`, {
     headers: { cookie: 'session=abc' },
   });
 }
@@ -86,7 +87,7 @@ describe('GET .../guests/export.csv — batched identity resolution (#1998)', ()
       ['did:imajin:buyer', { displayName: 'Buyer Name', handle: 'buyer-handle', email: 'buyer@example.com' }],
     ]));
 
-    const res = await GET(makeRequest() as any, ROUTE_PARAMS);
+    const res = await GET(makeRequest(), ROUTE_PARAMS);
     const text = await res.text();
 
     expect(res.status).toBe(200);
@@ -104,7 +105,7 @@ describe('GET .../guests/export.csv — batched identity resolution (#1998)', ()
       ['did:imajin:buyer', { displayName: 'Buyer Name', handle: 'buyer-handle', email: 'buyer@example.com' }],
     ]));
 
-    const res = await GET(makeRequest() as any, ROUTE_PARAMS);
+    const res = await GET(makeRequest(), ROUTE_PARAMS);
     const text = await res.text();
 
     expect(text).toContain('Buyer Name');
@@ -114,7 +115,7 @@ describe('GET .../guests/export.csv — batched identity resolution (#1998)', ()
     nextSql([EVENT_ROW]);
     nextSql([{ ...TICKET_ROW, status: 'cancelled' }]);
 
-    const res = await GET(makeRequest('?summary=1') as any, ROUTE_PARAMS);
+    const res = await GET(makeRequest('?summary=1'), ROUTE_PARAMS);
     const json = await res.json();
 
     expect(res.status).toBe(200);

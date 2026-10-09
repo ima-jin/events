@@ -128,11 +128,10 @@ async function createEventChat(params: {
   eventDid: string;
   creatorDid: string;
   creatorId: string;
-  title: string;
   nameDisplayPolicy: string | undefined;
   log: Logger;
 }): Promise<void> {
-  const { chatUrl, eventDid, creatorDid, creatorId, title, nameDisplayPolicy, log } = params;
+  const { chatUrl, eventDid, creatorDid, creatorId, nameDisplayPolicy, log } = params;
 
   try {
     await fetch(`${chatUrl}/api/d/${encodeURIComponent(eventDid)}/members`, {
@@ -296,7 +295,6 @@ export const POST = withLogger('events', async (request, { log, correlationId })
         eventDid,
         creatorDid: did,
         creatorId: identity.id,
-        title,
         nameDisplayPolicy,
         log,
       });
@@ -325,7 +323,7 @@ export const POST = withLogger('events', async (request, { log, correlationId })
  * Supports: ?courseSlug=intro-to-ai&upcoming=true&status=published&limit=20
  */
 /** Fields safe to return for events:read app scope */
-function filterEventForApp(event: Record<string, any>): Record<string, any> {
+function filterEventForApp(event: Record<string, unknown>): Record<string, unknown> {
   const { id, did, creatorDid, title, description, startsAt, endsAt, timezone, locationType, isVirtual, virtualUrl, venue, address, city, country, status, accessMode, imageUrl, imageAssetId, tags, courseSlug, nameDisplayPolicy, chatEnabled, createdAt, updatedAt } = event;
   return { id, did, creatorDid, title, description, startsAt, endsAt, timezone, locationType, isVirtual, virtualUrl, venue, address, city, country, status, accessMode, imageUrl, imageAssetId, tags, courseSlug, nameDisplayPolicy, chatEnabled, createdAt, updatedAt };
 }
@@ -356,7 +354,7 @@ export const GET = withLogger('events', async (request, { log }) => {
         .orderBy(upcoming ? asc(events.startsAt) : desc(events.startsAt))
         .limit(limit);
 
-      return NextResponse.json({ events: eventList.map(e => filterEventForApp(e as Record<string, any>)) }, { headers: cors });
+      return NextResponse.json({ events: eventList.map(e => filterEventForApp(e as Record<string, unknown>)) }, { headers: cors });
     } catch (error) {
       log.error({ err: String(error) }, 'Failed to list events (app auth)');
       return NextResponse.json({ error: 'Failed to list events' }, { status: 500, headers: cors });

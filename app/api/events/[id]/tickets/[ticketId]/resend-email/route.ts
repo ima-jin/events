@@ -1,4 +1,3 @@
-import { serviceUrl } from '@/lib/kernel';
 ﻿import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@ima-jin/logger';
 
@@ -9,7 +8,6 @@ import { getContactEmail as resolveEmailForDid } from '@/lib/kernel';
 import { getSurveyResponseForTicket } from '@/lib/ticket-survey';
 import { isEventOrganizer } from '@/lib/organizer';
 import { db, tickets, events, ticketTypes } from '@/db';
-import { getClient } from '@/db';
 import { generateQRCode } from '@/lib/email';
 import { publish } from '@/lib/domain-events';
 

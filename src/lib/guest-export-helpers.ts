@@ -71,16 +71,22 @@ export async function loadSurveyFormData(
   return { surveyColumns, formFieldMap };
 }
 
+interface RawSurveyField {
+  name: string;
+  title?: string;
+  exportLabel?: string;
+}
+
 function extractSurveyFields(rawFields: unknown): SurveyField[] {
-  let fields: Array<{ name: string; title?: string; exportLabel?: string }>;
+  let fields: RawSurveyField[];
   if (Array.isArray(rawFields)) {
     fields = rawFields;
-  } else if (rawFields && typeof rawFields === 'object' && Array.isArray((rawFields as any).elements)) {
-    fields = (rawFields as any).elements;
+  } else if (rawFields && typeof rawFields === 'object' && Array.isArray((rawFields as { elements?: unknown }).elements)) {
+    fields = (rawFields as { elements: RawSurveyField[] }).elements;
   } else {
     fields = [];
   }
-  return fields.map((f: any) => ({
+  return fields.map((f) => ({
     name: f.name,
     title: f.title || f.name,
     exportLabel: f.exportLabel,

@@ -8,6 +8,7 @@
  * resolveIdentitiesForDids (backed by the profile service's /api/resolve).
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { NextRequest } from 'next/server';
 import {
   nextSql,
   resetResolveRouteMocks,
@@ -21,8 +22,8 @@ vi.mock('@ima-jin/config', () => ({
 
 import { GET } from '../../app/api/events/[id]/guests/route';
 
-function makeRequest(): Request {
-  return new Request('https://events.test/api/events/evt_1/guests', {
+function makeRequest(): NextRequest {
+  return new NextRequest('https://events.test/api/events/evt_1/guests', {
     headers: { cookie: 'session=abc' },
   });
 }
@@ -56,7 +57,7 @@ describe('GET .../guests — batched identity resolution (#1998)', () => {
   it('resolves owner and buyer DIDs in a single batched call', async () => {
     nextSql([TICKET_ROW]);
 
-    const res = await GET(makeRequest() as any, ROUTE_PARAMS);
+    const res = await GET(makeRequest(), ROUTE_PARAMS);
     expect(res.status).toBe(200);
 
     expect(resolveIdentitiesForDidsMock).toHaveBeenCalledTimes(1);
@@ -71,7 +72,7 @@ describe('GET .../guests — batched identity resolution (#1998)', () => {
       ['did:imajin:buyer', { did: 'did:imajin:buyer', handle: 'buyer-handle', displayName: 'Buyer Name' }],
     ]));
 
-    const res = await GET(makeRequest() as any, ROUTE_PARAMS);
+    const res = await GET(makeRequest(), ROUTE_PARAMS);
     const json = await res.json();
 
     expect(json.guests).toHaveLength(1);
@@ -88,7 +89,7 @@ describe('GET .../guests — batched identity resolution (#1998)', () => {
   it('returns null profile for a ticket with no owner DID and skips resolution for it', async () => {
     nextSql([{ ...TICKET_ROW, owner_did: null, buyer_did: null }]);
 
-    const res = await GET(makeRequest() as any, ROUTE_PARAMS);
+    const res = await GET(makeRequest(), ROUTE_PARAMS);
     const json = await res.json();
 
     expect(json.guests[0].profile).toBeNull();
@@ -98,7 +99,7 @@ describe('GET .../guests — batched identity resolution (#1998)', () => {
   it('returns 403 for a non-organizer', async () => {
     isEventOrganizerMock.mockResolvedValue({ authorized: false });
 
-    const res = await GET(makeRequest() as any, ROUTE_PARAMS);
+    const res = await GET(makeRequest(), ROUTE_PARAMS);
     expect(res.status).toBe(403);
     expect(resolveIdentitiesForDidsMock).not.toHaveBeenCalled();
   });

@@ -12,9 +12,15 @@ import { NextRequest } from 'next/server';
 
 const mocks = vi.hoisted(() => {
   const resultQueue: unknown[][] = [];
-  function makeChain() {
+  interface Chain {
+    from: () => Chain;
+    where: () => Chain;
+    limit: () => Chain;
+    then: (resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) => Promise<unknown>;
+  }
+  function makeChain(): Chain {
     const value = resultQueue.shift() ?? [];
-    const chain: any = {
+    const chain: Chain = {
       from: () => chain,
       where: () => chain,
       limit: () => chain,
@@ -197,7 +203,7 @@ describe('POST /api/events/[id]/cohosts — kernel pods API (#2155)', () => {
 
   it('adds a new cohost via the kernel pods/members endpoint, forwarding the cookie', async () => {
     mocks.resultQueue.push([EVENT_ROW]);
-    mocks.fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+    mocks.fetchMock.mockImplementation((url: string) => {
       const u = String(url);
       if (u.includes('/api/pods/pod_1/members')) {
         return Promise.resolve(

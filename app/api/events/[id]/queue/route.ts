@@ -10,10 +10,7 @@ import { randomBytes } from 'node:crypto';
 /**
  * GET /api/events/[id]/queue - Check queue position
  */
-export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function GET(request: NextRequest) {
   const authResult = await requireAuth(request);
   if ('error' in authResult) {
     return NextResponse.json({ error: authResult.error }, { status: authResult.status });
@@ -162,10 +159,7 @@ export async function POST(
 /**
  * DELETE /api/events/[id]/queue - Leave the queue
  */
-export async function DELETE(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function DELETE(request: NextRequest) {
   const authResult = await requireAuth(request);
   if ('error' in authResult) {
     return NextResponse.json({ error: authResult.error }, { status: authResult.status });

@@ -7,6 +7,7 @@
  * service's /api/resolve) once for all buyer DIDs.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
+import { NextRequest } from 'next/server';
 import {
   nextSql,
   resetResolveRouteMocks,
@@ -19,8 +20,8 @@ import {
 
 import { GET } from '../../app/api/events/[id]/sales/export/route';
 
-function makeRequest(query = ''): Request {
-  return new Request(`https://events.test/api/events/evt_1/sales/export${query}`, {
+function makeRequest(query = ''): NextRequest {
+  return new NextRequest(`https://events.test/api/events/evt_1/sales/export${query}`, {
     headers: { cookie: 'session=abc' },
   });
 }
@@ -55,7 +56,7 @@ describe('GET .../sales/export — batched identity resolution (#1998)', () => {
       ['did:imajin:buyer', { displayName: 'Buyer Name', handle: 'buyer-handle', email: 'buyer@example.com' }],
     ]));
 
-    const res = await GET(makeRequest() as any, ROUTE_PARAMS);
+    const res = await GET(makeRequest(), ROUTE_PARAMS);
     const text = await res.text();
 
     expect(res.status).toBe(200);
@@ -71,7 +72,7 @@ describe('GET .../sales/export — batched identity resolution (#1998)', () => {
     nextSql([ORDER_ROW]);
     nextSql([]); // no tickets -> computeOrderStatus 'unknown'
 
-    const res = await GET(makeRequest() as any, ROUTE_PARAMS);
+    const res = await GET(makeRequest(), ROUTE_PARAMS);
     const text = await res.text();
 
     expect(res.status).toBe(200);
@@ -83,7 +84,7 @@ describe('GET .../sales/export — batched identity resolution (#1998)', () => {
     nextSql([]); // no orders
     nextSql([]); // no tickets
 
-    const res = await GET(makeRequest('?format=xlsx') as any, ROUTE_PARAMS);
+    const res = await GET(makeRequest('?format=xlsx'), ROUTE_PARAMS);
 
     expect(res.status).toBe(200);
     expect(res.headers.get('Content-Type')).toContain('spreadsheetml');

@@ -8,6 +8,7 @@
  * resolution left in this file.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { NextRequest } from 'next/server';
 
 const mocks = vi.hoisted(() => {
 
@@ -84,8 +85,8 @@ vi.mock('@ima-jin/config', () => ({
 
 import { POST } from '../../app/api/events/[id]/tickets/[ticketId]/resend-email/route';
 
-function makeRequest(): Request {
-  return new Request('https://events.test/api/events/evt_1/tickets/tkt_1/resend-email', {
+function makeRequest(): NextRequest {
+  return new NextRequest('https://events.test/api/events/evt_1/tickets/tkt_1/resend-email', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', cookie: 'session=abc' },
   });
@@ -147,7 +148,7 @@ describe('POST .../resend-email — email resolution (#1998)', () => {
       answers: { email: 'survey@example.com' },
     });
 
-    const res = await POST(makeRequest() as any, ROUTE_PARAMS);
+    const res = await POST(makeRequest(), ROUTE_PARAMS);
 
     expect(res.status).toBe(200);
     expect(mocks.resolveEmailForDidMock).not.toHaveBeenCalled();
@@ -159,7 +160,7 @@ describe('POST .../resend-email — email resolution (#1998)', () => {
     nextDrizzleSelect([BASE_TICKET_TYPE]);
     mocks.resolveEmailForDidMock.mockResolvedValue('resolved@example.com');
 
-    const res = await POST(makeRequest() as any, ROUTE_PARAMS);
+    const res = await POST(makeRequest(), ROUTE_PARAMS);
 
     expect(res.status).toBe(200);
     expect(mocks.resolveEmailForDidMock).toHaveBeenCalledWith('did:imajin:buyer');
@@ -171,7 +172,7 @@ describe('POST .../resend-email — email resolution (#1998)', () => {
     nextDrizzleSelect([BASE_TICKET_TYPE]);
     mocks.resolveEmailForDidMock.mockResolvedValue(null);
 
-    const res = await POST(makeRequest() as any, ROUTE_PARAMS);
+    const res = await POST(makeRequest(), ROUTE_PARAMS);
 
     expect(res.status).toBe(422);
     const body = await res.json();
@@ -181,7 +182,7 @@ describe('POST .../resend-email — email resolution (#1998)', () => {
   it('returns 404 when the ticket is not found', async () => {
     nextDrizzleSelect([]);
 
-    const res = await POST(makeRequest() as any, ROUTE_PARAMS);
+    const res = await POST(makeRequest(), ROUTE_PARAMS);
     expect(res.status).toBe(404);
   });
 });

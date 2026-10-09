@@ -51,7 +51,7 @@ export interface ValidateCartOptions {
   checkAvailability?: boolean;
   availabilityStatusCode?: number;
   checkMaxPerOrder?: boolean;
-  eventMetadata?: Record<string, any>;
+  eventMetadata?: Record<string, unknown>;
   releaseExpiredHolds?: boolean;
 }
 
@@ -82,7 +82,7 @@ export interface CreateOrderWithTicketsParams {
   eventDid?: string;
   eventPrivateKey?: string | null;
   customerEmail?: string;
-  log?: any;
+  log?: Logger;
   incrementSold?: boolean;
 }
 
@@ -202,7 +202,8 @@ export async function validateCart(
     const tt = getCartItemTicketType(item, typesById);
 
     if (checkMaxPerOrder) {
-      assertMaxPerOrder(item, tt, eventMetadata?.maxTicketsPerOrder);
+      const metaMax = eventMetadata?.maxTicketsPerOrder;
+      assertMaxPerOrder(item, tt, typeof metaMax === 'number' ? metaMax : undefined);
     }
     if (releaseExpiredHolds) {
       await releaseExpiredHoldsForItem(item);
@@ -529,7 +530,7 @@ export async function createOrderWithTickets(
 export async function resolveCheckoutIdentity(
   request: NextRequest,
   body: { email?: string; name?: string },
-  log: any,
+  log: Logger,
   opts?: { createSoftDid?: boolean },
 ): Promise<{ did?: string; email?: string }> {
   const session = await optionalAuth(request);
@@ -587,7 +588,7 @@ async function createSoftDidFromEmail(email: string, name?: string): Promise<str
  * Backfill the DID's contact email via the kernel (NULL-guarded server-side).
  * This app never writes `profile.profiles` / `auth.identities` directly.
  */
-async function backfillProfileContactEmail(did: string, email: string, log: any): Promise<void> {
+async function backfillProfileContactEmail(did: string, email: string, log: Logger): Promise<void> {
   const ok = await backfillKernelContactEmail(did, email);
   if (!ok) {
     log.warn({ did }, 'backfillProfileContactEmail: kernel refused or unreachable (non-fatal)');

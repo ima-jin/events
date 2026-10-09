@@ -91,7 +91,7 @@ export async function GET(
     // Resolve buyer identities via the profile service's batched
     // /api/resolve route (#1998) — replaces the per-DID AUTH_SERVICE_URL
     // /api/lookup internal-route fallback this file used to call.
-    const uniqueDids = [...new Set(orderRows.map((o: any) => o.buyer_did).filter(Boolean))] as string[];
+    const uniqueDids = [...new Set(orderRows.map((o) => o.buyer_did).filter(Boolean))] as string[];
     const profileMap = await resolveIdentitiesForDids(uniqueDids);
 
     const dateStr = new Date().toISOString().split('T')[0];

@@ -14,6 +14,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { NextRequest } from 'next/server';
 
 // ─── Mocks ──────────────────────────────────────────────────────────────────
 
@@ -56,15 +57,14 @@ import { GET } from '../../app/api/events/[id]/tickets/[ticketId]/registration-s
 
 const ROUTE_PARAMS = { params: Promise.resolve({ id: 'evt_1', ticketId: 'tkt_1' }) };
 
-function makeRequest(): Request {
-  return new Request('https://events.test/api/events/evt_1/tickets/tkt_1/registration-status', {
+function makeRequest(): NextRequest {
+  return new NextRequest('https://events.test/api/events/evt_1/tickets/tkt_1/registration-status', {
     headers: { cookie: 'session=abc' },
   });
 }
 
 function nextSelect(rows: unknown[]): void {
-  const p = Promise.resolve(rows) as any;
-  p.limit = vi.fn().mockResolvedValue(rows);
+  const p = Object.assign(Promise.resolve(rows), { limit: vi.fn().mockResolvedValue(rows) });
   mocks.whereMock.mockImplementationOnce(() => p);
 }
 
@@ -90,13 +90,13 @@ describe('GET /api/events/[id]/tickets/[ticketId]/registration-status', () => {
 
   it('returns 401 when auth fails', async () => {
     mocks.requireAuthMock.mockResolvedValue({ error: 'Unauthorized', status: 401 });
-    const res = await GET(makeRequest() as any, ROUTE_PARAMS);
+    const res = await GET(makeRequest(), ROUTE_PARAMS);
     expect(res.status).toBe(401);
   });
 
   it('returns 404 when ticket is not found', async () => {
     nextSelect([]);
-    const res = await GET(makeRequest() as any, ROUTE_PARAMS);
+    const res = await GET(makeRequest(), ROUTE_PARAMS);
     expect(res.status).toBe(404);
     expect(await res.json()).toMatchObject({ error: 'Ticket not found' });
   });
@@ -106,7 +106,7 @@ describe('GET /api/events/[id]/tickets/[ticketId]/registration-status', () => {
     nextSelect([{ ...BASE_TICKET, ownerDid: 'did:imajin:someone-else' }]);
     mocks.isEventOrganizerMock.mockResolvedValue({ authorized: false });
 
-    const res = await GET(makeRequest() as any, ROUTE_PARAMS);
+    const res = await GET(makeRequest(), ROUTE_PARAMS);
     expect(res.status).toBe(403);
   });
 
@@ -120,7 +120,7 @@ describe('GET /api/events/[id]/tickets/[ticketId]/registration-status', () => {
     nextSelect([BASE_TICKET]);                                      // (1) ticket
     nextSelect([{ registrationFormId: 'form_abc' }]);              // (2) ticket type
 
-    const res = await GET(makeRequest() as any, ROUTE_PARAMS);
+    const res = await GET(makeRequest(), ROUTE_PARAMS);
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.status).toBe('complete');
@@ -133,7 +133,7 @@ describe('GET /api/events/[id]/tickets/[ticketId]/registration-status', () => {
     nextSelect([BASE_TICKET]);                                      // (1) ticket
     nextSelect([{ registrationFormId: null }]);                    // (2) ticket type — no form
 
-    const res = await GET(makeRequest() as any, ROUTE_PARAMS);
+    const res = await GET(makeRequest(), ROUTE_PARAMS);
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.status).toBe('complete');
@@ -144,7 +144,7 @@ describe('GET /api/events/[id]/tickets/[ticketId]/registration-status', () => {
     nextSelect([{ ...BASE_TICKET, registrationStatus: null }]);    // (1) ticket
     nextSelect([{ registrationFormId: null }]);                    // (2) ticket type
 
-    const res = await GET(makeRequest() as any, ROUTE_PARAMS);
+    const res = await GET(makeRequest(), ROUTE_PARAMS);
     expect(res.status).toBe(200);
     expect((await res.json()).status).toBe('not_required');
   });

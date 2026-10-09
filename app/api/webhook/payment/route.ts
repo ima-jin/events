@@ -1,4 +1,4 @@
-import { serviceUrl, publicServiceUrl } from '@/lib/kernel';
+import { serviceUrl, publicServiceUrl, createOnboardToken } from '@/lib/kernel';
 /**
  * POST /api/webhook/payment
  *
@@ -21,7 +21,6 @@ import { eventRegisterUrl, eventMyTicketsUrl, buildPublicUrlAbsolute } from '@im
 import * as bus from '@/lib/domain-events';
 import {
   parseCartFromMetadata,
-  createOnboardToken,
   syncBuyerToEventChat,
   publishConfirmationEmails,
   type CartEntry,
@@ -221,7 +220,7 @@ interface WebhookSettlementParams {
  */
 async function triggerWebhookSettlement(params: WebhookSettlementParams): Promise<void> {
   const { ownerDid, event, orderId, amountTotal, currency, createdTickets, firstTypeId, sessionId } = params;
-  const eventMetadata = (event.metadata || {}) as Record<string, any>;
+  const eventMetadata = (event.metadata || {}) as Record<string, unknown>;
 
   try {
     await bus.publish('order.completed', {
@@ -260,9 +259,7 @@ interface WebhookRegistrationInfo {
  */
 async function resolveWebhookRegistrationInfo(
   createdTickets: Array<{ id: string; registrationStatus?: string | null }>,
-  event: { id: string; title: string },
-  customerEmail: string,
-  customerName: string | null | undefined,
+  event: { id: string },
 ): Promise<WebhookRegistrationInfo> {
   const EVENTS_URL = buildPublicUrlAbsolute('events');
   const eventsAuthUrl = publicServiceUrl('auth');
@@ -271,11 +268,7 @@ async function resolveWebhookRegistrationInfo(
   const ctaTicket = registrationPendingTickets[0] ?? null;
   const anyPendingRegistration = registrationPendingTickets.length > 0;
 
-  const onboardRedirectUrl = ctaTicket
-    ? eventRegisterUrl(EVENTS_URL, event.id, ctaTicket.id)
-    : eventMyTicketsUrl(EVENTS_URL, event.id);
-
-  const onboardToken = await createOnboardToken(customerEmail, customerName, onboardRedirectUrl, event.title, log);
+  const onboardToken = await createOnboardToken();
   const magicLink = onboardToken ? `${eventsAuthUrl}/api/onboard/verify?token=${onboardToken}` : undefined;
   const registrationBaseUrl = onboardToken
     ? `${eventsAuthUrl}/api/onboard/verify?token=${onboardToken}`
@@ -419,8 +412,6 @@ async function handleCheckoutCompleted(payload: PaymentWebhookPayload) {
   const { magicLink, registrationUrl } = await resolveWebhookRegistrationInfo(
     createdTickets,
     event,
-    customerEmail,
-    customerName,
   );
 
   await publishConfirmationEmails({

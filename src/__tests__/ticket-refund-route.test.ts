@@ -18,6 +18,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { NextRequest } from 'next/server';
 
 // ─── Mocks ──────────────────────────────────────────────────────────────────
 
@@ -107,8 +108,8 @@ import { POST } from '../../app/api/events/[id]/tickets/[ticketId]/refund/route'
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-function makeRequest(): Request {
-  return new Request('https://events.test/api/events/evt_1/tickets/tkt_1/refund', {
+function makeRequest(): NextRequest {
+  return new NextRequest('https://events.test/api/events/evt_1/tickets/tkt_1/refund', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', cookie: 'session=abc' },
   });
@@ -118,8 +119,7 @@ const ROUTE_PARAMS = { params: Promise.resolve({ id: 'evt_1', ticketId: 'tkt_1' 
 
 /** Queue a Drizzle select result (event lookup) for the next whereMock call. */
 function nextDrizzleSelect(rows: unknown[]): void {
-  const p = Promise.resolve(rows) as any;
-  p.limit = vi.fn().mockResolvedValue(rows);
+  const p = Object.assign(Promise.resolve(rows), { limit: vi.fn().mockResolvedValue(rows) });
   mocks.whereMock.mockImplementationOnce(() => p);
 }
 
@@ -176,13 +176,13 @@ describe('POST /api/events/[id]/tickets/[ticketId]/refund', () => {
 
   it('returns 401 when auth fails', async () => {
     mocks.requireAuthMock.mockResolvedValue({ error: 'Unauthorized', status: 401 });
-    const res = await POST(makeRequest() as any, ROUTE_PARAMS);
+    const res = await POST(makeRequest(), ROUTE_PARAMS);
     expect(res.status).toBe(401);
   });
 
   it('returns 404 when event is not found', async () => {
     nextDrizzleSelect([]);  // event not found
-    const res = await POST(makeRequest() as any, ROUTE_PARAMS);
+    const res = await POST(makeRequest(), ROUTE_PARAMS);
     expect(res.status).toBe(404);
     expect(await res.json()).toMatchObject({ error: 'Event not found' });
   });
@@ -190,7 +190,7 @@ describe('POST /api/events/[id]/tickets/[ticketId]/refund', () => {
   it('returns 403 when caller is not an organizer', async () => {
     nextDrizzleSelect([BASE_EVENT]);
     mocks.isEventOrganizerMock.mockResolvedValue({ authorized: false });
-    const res = await POST(makeRequest() as any, ROUTE_PARAMS);
+    const res = await POST(makeRequest(), ROUTE_PARAMS);
     expect(res.status).toBe(403);
     expect(mocks.fetchMock).not.toHaveBeenCalled();
   });
@@ -198,7 +198,7 @@ describe('POST /api/events/[id]/tickets/[ticketId]/refund', () => {
   it('returns 404 when ticket is not found', async () => {
     nextDrizzleSelect([BASE_EVENT]);
     nextSql([]);  // ticket SELECT → empty
-    const res = await POST(makeRequest() as any, ROUTE_PARAMS);
+    const res = await POST(makeRequest(), ROUTE_PARAMS);
     expect(res.status).toBe(404);
     expect(await res.json()).toMatchObject({ error: 'Ticket not found' });
   });
@@ -206,7 +206,7 @@ describe('POST /api/events/[id]/tickets/[ticketId]/refund', () => {
   it('returns 400 when ticket is not valid (e.g. already refunded)', async () => {
     nextDrizzleSelect([BASE_EVENT]);
     nextSql([{ ...STRIPE_TICKET, status: 'refunded' }]);
-    const res = await POST(makeRequest() as any, ROUTE_PARAMS);
+    const res = await POST(makeRequest(), ROUTE_PARAMS);
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ error: 'Only valid tickets can be refunded' });
     expect(mocks.fetchMock).not.toHaveBeenCalled();
@@ -217,7 +217,7 @@ describe('POST /api/events/[id]/tickets/[ticketId]/refund', () => {
     nextSql([STRIPE_TICKET]);
     mocks.fetchMock.mockResolvedValue({ ok: false, text: async () => 'Stripe error' });
 
-    const res = await POST(makeRequest() as any, ROUTE_PARAMS);
+    const res = await POST(makeRequest(), ROUTE_PARAMS);
     expect(res.status).toBe(502);
     expect(await res.json()).toMatchObject({ error: 'Payment refund failed — ticket status not changed' });
 
@@ -230,7 +230,7 @@ describe('POST /api/events/[id]/tickets/[ticketId]/refund', () => {
     nextSql([STRIPE_TICKET]);                  // (1) SELECT ticket
     nextSql([{ id: 'tkt_1', status: 'refunded' }]); // (2) UPDATE ticket RETURNING
 
-    const res = await POST(makeRequest() as any, ROUTE_PARAMS);
+    const res = await POST(makeRequest(), ROUTE_PARAMS);
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.ticket.status).toBe('refunded');
@@ -262,7 +262,7 @@ describe('POST /api/events/[id]/tickets/[ticketId]/refund', () => {
     nextSql([etransferTicket]);                         // (1) SELECT ticket
     nextSql([{ id: 'tkt_1', status: 'refund_pending' }]); // (2) UPDATE ticket RETURNING
 
-    const res = await POST(makeRequest() as any, ROUTE_PARAMS);
+    const res = await POST(makeRequest(), ROUTE_PARAMS);
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.ticket.status).toBe('refund_pending');
@@ -285,7 +285,7 @@ describe('POST /api/events/[id]/tickets/[ticketId]/refund', () => {
     nextSql([freeTicket]);                             // (1) SELECT ticket
     nextSql([{ id: 'tkt_1', status: 'refunded' }]);   // (2) UPDATE ticket RETURNING
 
-    const res = await POST(makeRequest() as any, ROUTE_PARAMS);
+    const res = await POST(makeRequest(), ROUTE_PARAMS);
     expect(res.status).toBe(200);
     expect((await res.json()).ticket.status).toBe('refunded');
     expect(mocks.fetchMock).not.toHaveBeenCalled();

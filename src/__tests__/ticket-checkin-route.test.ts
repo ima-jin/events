@@ -17,6 +17,7 @@
  * return ([]) which causes it to exit early harmlessly.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { NextRequest } from 'next/server';
 
 // ─── Mocks ─────────────────────────────────────────────────────────────────────────
 
@@ -64,8 +65,8 @@ import { POST } from '../../app/api/events/[id]/tickets/[ticketId]/check-in/rout
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-function makeRequest(): Request {
-  return new Request('https://events.test/api/events/evt_1/tickets/tkt_1/check-in', {
+function makeRequest(): NextRequest {
+  return new NextRequest('https://events.test/api/events/evt_1/tickets/tkt_1/check-in', {
     method: 'POST',
     headers: { cookie: 'session=abc' },
   });
@@ -107,27 +108,27 @@ describe('POST /api/events/[id]/tickets/[ticketId]/check-in', () => {
 
   it('returns 401 when auth fails', async () => {
     mocks.requireAuthMock.mockResolvedValue({ error: 'Unauthorized', status: 401 });
-    const res = await POST(makeRequest() as any, ROUTE_PARAMS);
+    const res = await POST(makeRequest(), ROUTE_PARAMS);
     expect(res.status).toBe(401);
   });
 
   it('returns 403 when caller is not an organizer', async () => {
     mocks.isEventOrganizerMock.mockResolvedValue({ authorized: false });
-    const res = await POST(makeRequest() as any, ROUTE_PARAMS);
+    const res = await POST(makeRequest(), ROUTE_PARAMS);
     expect(res.status).toBe(403);
     expect(mocks.sqlMock).not.toHaveBeenCalled();
   });
 
   it('returns 404 when ticket is not found', async () => {
     nextSql([]);   // ticket SELECT → empty
-    const res = await POST(makeRequest() as any, ROUTE_PARAMS);
+    const res = await POST(makeRequest(), ROUTE_PARAMS);
     expect(res.status).toBe(404);
     expect(await res.json()).toMatchObject({ error: 'Ticket not found' });
   });
 
   it('returns 400 when ticket status is not valid', async () => {
     nextSql([{ ...VALID_TICKET, status: 'held' }]);
-    const res = await POST(makeRequest() as any, ROUTE_PARAMS);
+    const res = await POST(makeRequest(), ROUTE_PARAMS);
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ error: 'Ticket is not valid' });
     // No UPDATE should have been issued
@@ -136,7 +137,7 @@ describe('POST /api/events/[id]/tickets/[ticketId]/check-in', () => {
 
   it('returns 400 when ticket is already checked in', async () => {
     nextSql([{ ...VALID_TICKET, used_at: USED_AT }]);
-    const res = await POST(makeRequest() as any, ROUTE_PARAMS);
+    const res = await POST(makeRequest(), ROUTE_PARAMS);
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ error: 'Ticket already checked in' });
     expect(mocks.sqlMock).toHaveBeenCalledOnce();
@@ -146,19 +147,19 @@ describe('POST /api/events/[id]/tickets/[ticketId]/check-in', () => {
     nextSql([VALID_TICKET]);                                    // (1) SELECT ticket
     nextSql([{ id: 'tkt_1', used_at: USED_AT, status: 'used' }]); // (2) UPDATE RETURNING
 
-    const res = await POST(makeRequest() as any, ROUTE_PARAMS);
+    const res = await POST(makeRequest(), ROUTE_PARAMS);
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.ticket.id).toBe('tkt_1');
     expect(body.ticket.usedAt).toBe(USED_AT);
 
     // Both bus events published
-    const publishedTypes = mocks.publishMock.mock.calls.map((c: any[]) => c[0]);
+    const publishedTypes = mocks.publishMock.mock.calls.map((c: unknown[]) => c[0]);
     expect(publishedTypes).toContain('checkin.create');
     expect(publishedTypes).toContain('event.attendance');
 
     // event.attendance carries the attendee DID
-    const attendanceCall = mocks.publishMock.mock.calls.find((c: any[]) => c[0] === 'event.attendance');
+    const attendanceCall = mocks.publishMock.mock.calls.find((c: unknown[]) => c[0] === 'event.attendance');
     expect(attendanceCall![1]).toMatchObject({
       subject: 'did:imajin:attendee',
       payload: expect.objectContaining({ ticketId: 'tkt_1' }),
@@ -174,7 +175,7 @@ describe('POST /api/events/[id]/tickets/[ticketId]/check-in', () => {
     nextSql([{ ...VALID_TICKET, owner_did: null }]);
     nextSql([{ id: 'tkt_1', used_at: USED_AT, status: 'used' }]);
 
-    const res = await POST(makeRequest() as any, ROUTE_PARAMS);
+    const res = await POST(makeRequest(), ROUTE_PARAMS);
     expect(res.status).toBe(200);
     expect(mocks.evaluateEligibilityMock).not.toHaveBeenCalled();
   });
@@ -184,7 +185,7 @@ describe('POST /api/events/[id]/tickets/[ticketId]/check-in', () => {
     nextSql([{ id: 'tkt_1', used_at: USED_AT, status: 'used' }]);
     mocks.evaluateEligibilityMock.mockRejectedValue(new Error('kernel unreachable'));
 
-    const res = await POST(makeRequest() as any, ROUTE_PARAMS);
+    const res = await POST(makeRequest(), ROUTE_PARAMS);
     expect(res.status).toBe(200);
     await vi.waitFor(() => expect(mocks.evaluateEligibilityMock).toHaveBeenCalled());
   });

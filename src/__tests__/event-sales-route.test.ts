@@ -7,6 +7,7 @@
  * client (backed by the profile service's /api/resolve).
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { NextRequest } from 'next/server';
 import {
   nextSql,
   resetResolveRouteMocks,
@@ -27,8 +28,8 @@ vi.mock('@/lib/surveys', () => ({
 
 import { GET } from '../../app/api/events/[id]/sales/route';
 
-function makeRequest(query = ''): Request {
-  return new Request(`https://events.test/api/events/evt_1/sales${query}`, {
+function makeRequest(query = ''): NextRequest {
+  return new NextRequest(`https://events.test/api/events/evt_1/sales${query}`, {
     headers: { cookie: 'session=abc' },
   });
 }
@@ -88,19 +89,19 @@ describe('GET .../sales — batched identity resolution (#1998)', () => {
       .mockResolvedValueOnce(new Map([['did:imajin:buyer', { displayName: 'Buyer Name', handle: 'buyer-handle', email: 'buyer@example.com' }]]))
       .mockResolvedValueOnce(new Map([['did:imajin:orphan-owner', { displayName: 'Orphan Owner', handle: 'orphan-handle', email: 'owner@example.com' }]]));
 
-    const res = await GET(makeRequest() as any, ROUTE_PARAMS);
+    const res = await GET(makeRequest(), ROUTE_PARAMS);
     const json = await res.json();
 
     expect(res.status).toBe(200);
     expect(resolveIdentitiesForDidsMock).toHaveBeenNthCalledWith(1, ['did:imajin:buyer']);
     expect(resolveIdentitiesForDidsMock).toHaveBeenNthCalledWith(2, ['did:imajin:orphan-owner']);
 
-    const orderSale = json.sales.find((s: any) => s.orderId === 'ord_1');
+    const orderSale = json.sales.find((s: { orderId: string }) => s.orderId === 'ord_1');
     expect(orderSale.buyerName).toBe('Buyer Name');
     expect(orderSale.buyerHandle).toBe('buyer-handle');
     expect(orderSale.buyerEmail).toBe('buyer@example.com');
 
-    const orphanSale = json.sales.find((s: any) => s.orderId === 'tkt_orphan');
+    const orphanSale = json.sales.find((s: { orderId: string }) => s.orderId === 'tkt_orphan');
     expect(orphanSale.buyerName).toBe('Orphan Owner');
     expect(orphanSale.buyerHandle).toBe('orphan-handle');
     expect(orphanSale.buyerEmail).toBe('owner@example.com');
@@ -114,10 +115,10 @@ describe('GET .../sales — batched identity resolution (#1998)', () => {
       new Map([['tkt_orphan', { id: 'resp_1', surveyId: 'form_1', answers: { full_name: 'Orphan Attendee' } }]])
     );
 
-    const res = await GET(makeRequest() as any, ROUTE_PARAMS);
+    const res = await GET(makeRequest(), ROUTE_PARAMS);
     const json = await res.json();
 
-    const orphanSale = json.sales.find((s: any) => s.orderId === 'tkt_orphan');
+    const orphanSale = json.sales.find((s: { orderId: string }) => s.orderId === 'tkt_orphan');
     expect(orphanSale.buyerName).toBe('Orphan Attendee');
     expect(orphanSale.buyerHandle).toBeNull();
     expect(orphanSale.buyerEmail).toBeNull();
@@ -131,7 +132,7 @@ describe('GET .../sales — batched identity resolution (#1998)', () => {
       .mockResolvedValueOnce(new Map([['did:imajin:buyer', { displayName: 'Buyer Name', handle: 'buyer-handle', email: 'buyer@example.com' }]]))
       .mockResolvedValueOnce(new Map());
 
-    const res = await GET(makeRequest('?format=csv') as any, ROUTE_PARAMS);
+    const res = await GET(makeRequest('?format=csv'), ROUTE_PARAMS);
     const text = await res.text();
 
     expect(res.status).toBe(200);

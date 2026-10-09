@@ -60,11 +60,12 @@ export function normalizeCheckoutCart(body: {
 export function validateCheckoutCartLimits(
   cart: CartItem[],
   typesById: Map<string, { name: string; maxPerOrder?: number | null; quantity: number | null; sold?: number | null }>,
-  eventMeta: Record<string, any>,
+  eventMeta: Record<string, unknown>,
 ): NextResponse | null {
   for (const item of cart) {
     const tt = typesById.get(item.ticketTypeId)!;
-    const maxPerOrder = Math.min(tt.maxPerOrder ?? eventMeta.maxTicketsPerOrder ?? 10, MAX_QUANTITY);
+    const metaMax = typeof eventMeta.maxTicketsPerOrder === 'number' ? eventMeta.maxTicketsPerOrder : undefined;
+    const maxPerOrder = Math.min(tt.maxPerOrder ?? metaMax ?? 10, MAX_QUANTITY);
     if (item.quantity > maxPerOrder) {
       return NextResponse.json(
         { error: `Maximum ${maxPerOrder} ${tt.name} tickets per order` },

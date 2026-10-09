@@ -12,6 +12,7 @@
  * orders-refund-route.test.ts) to pin the failure-visibility behavior.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { NextRequest } from 'next/server';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -90,8 +91,8 @@ vi.mock('@/lib/auth', () => ({
 
 import { GET } from '../../app/api/balance/route';
 
-function makeRequest(): Request {
-  return new Request('https://events.test/api/balance', {
+function makeRequest(): NextRequest {
+  return new NextRequest('https://events.test/api/balance', {
     headers: { cookie: 'session=abc' },
   });
 }
@@ -108,7 +109,7 @@ describe('GET /api/balance (#2137: upstream failures must not hide as a real zer
   it('returns 401 when auth fails', async () => {
     mocks.requireAuthMock.mockResolvedValue({ error: 'Unauthorized', status: 401 });
 
-    const res = await GET(makeRequest() as any);
+    const res = await GET(makeRequest());
     expect(res.status).toBe(401);
     expect(mocks.fetchMock).not.toHaveBeenCalled();
   });
@@ -116,7 +117,7 @@ describe('GET /api/balance (#2137: upstream failures must not hide as a real zer
   it('surfaces a 404 from the pay service as an unavailable balance, logs the status + url, and does not silently return a bare 200 zero', async () => {
     mocks.fetchMock.mockResolvedValue({ ok: false, status: 404 });
 
-    const res = await GET(makeRequest() as any);
+    const res = await GET(makeRequest());
 
     // A 404 must be visibly distinguishable from a real zero balance.
     expect(res.status).not.toBe(200);
@@ -132,7 +133,7 @@ describe('GET /api/balance (#2137: upstream failures must not hide as a real zer
   it('surfaces a fetch/network failure the same way (unavailable, non-200, logged)', async () => {
     mocks.fetchMock.mockRejectedValue(new Error('ECONNREFUSED'));
 
-    const res = await GET(makeRequest() as any);
+    const res = await GET(makeRequest());
 
     expect(res.status).not.toBe(200);
     const body = await res.json();
@@ -146,7 +147,7 @@ describe('GET /api/balance (#2137: upstream failures must not hide as a real zer
       json: async () => ({ total: 42.5, currency: 'USD' }),
     });
 
-    const res = await GET(makeRequest() as any);
+    const res = await GET(makeRequest());
 
     expect(res.status).toBe(200);
     const body = await res.json();
@@ -157,7 +158,7 @@ describe('GET /api/balance (#2137: upstream failures must not hide as a real zer
   it("requests the documented /api/balance/{did} path with the caller's DID and forwarded session cookie", async () => {
     mocks.fetchMock.mockResolvedValue({ ok: true, json: async () => ({ total: 0, currency: 'CAD' }) });
 
-    await GET(makeRequest() as any);
+    await GET(makeRequest());
 
     expect(mocks.fetchMock).toHaveBeenCalledOnce();
     const [url, init] = mocks.fetchMock.mock.calls[0];

@@ -11,6 +11,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { NextRequest } from 'next/server';
 
 // ─── Mocks ──────────────────────────────────────────────────────────────────
 
@@ -84,16 +85,15 @@ import { POST } from '../../app/api/orders/[id]/refund/route';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-function makeRequest(): Request {
-  return new Request('https://events.test/api/orders/ord_test_1/refund', {
+function makeRequest(): NextRequest {
+  return new NextRequest('https://events.test/api/orders/ord_test_1/refund', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', cookie: 'session=abc' },
   });
 }
 
 function nextSelect(rows: unknown[]): void {
-  const p = Promise.resolve(rows) as any;
-  p.limit = vi.fn().mockResolvedValue(rows);
+  const p = Object.assign(Promise.resolve(rows), { limit: vi.fn().mockResolvedValue(rows) });
   mocks.whereMock.mockImplementationOnce(() => p);
 }
 
@@ -161,14 +161,14 @@ describe('POST /api/orders/[id]/refund (#949)', () => {
   it('returns 401 when auth fails', async () => {
     mocks.requireAuthMock.mockResolvedValue({ error: 'Unauthorized', status: 401 });
 
-    const res = await POST(makeRequest() as any, { params: Promise.resolve({ id: 'ord_test_1' }) });
+    const res = await POST(makeRequest(), { params: Promise.resolve({ id: 'ord_test_1' }) });
     expect(res.status).toBe(401);
   });
 
   it('returns 404 when order is not found', async () => {
     nextSelect([]);  // no order
 
-    const res = await POST(makeRequest() as any, { params: Promise.resolve({ id: 'ord_missing' }) });
+    const res = await POST(makeRequest(), { params: Promise.resolve({ id: 'ord_missing' }) });
     expect(res.status).toBe(404);
     const body = await res.json();
     expect(body.error).toMatch(/not found/i);
@@ -177,7 +177,7 @@ describe('POST /api/orders/[id]/refund (#949)', () => {
   it('returns 400 when order is already refunded', async () => {
     nextSelect([{ ...BASE_ORDER, status: 'refunded' }]);
 
-    const res = await POST(makeRequest() as any, { params: Promise.resolve({ id: 'ord_test_1' }) });
+    const res = await POST(makeRequest(), { params: Promise.resolve({ id: 'ord_test_1' }) });
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.error).toBe('Order already refunded');
@@ -188,7 +188,7 @@ describe('POST /api/orders/[id]/refund (#949)', () => {
     nextSelect([BASE_ORDER]);
     mocks.isEventOrganizerMock.mockResolvedValue({ authorized: false });
 
-    const res = await POST(makeRequest() as any, { params: Promise.resolve({ id: 'ord_test_1' }) });
+    const res = await POST(makeRequest(), { params: Promise.resolve({ id: 'ord_test_1' }) });
     expect(res.status).toBe(403);
     expect(mocks.fetchMock).not.toHaveBeenCalled();
   });
@@ -197,7 +197,7 @@ describe('POST /api/orders/[id]/refund (#949)', () => {
     nextSelect([BASE_ORDER]);   // order found
     nextSelect([]);             // no valid/used tickets
 
-    const res = await POST(makeRequest() as any, { params: Promise.resolve({ id: 'ord_test_1' }) });
+    const res = await POST(makeRequest(), { params: Promise.resolve({ id: 'ord_test_1' }) });
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.error).toMatch(/no refundable/i);
@@ -212,7 +212,7 @@ describe('POST /api/orders/[id]/refund (#949)', () => {
       text: async () => 'Stripe error',
     });
 
-    const res = await POST(makeRequest() as any, { params: Promise.resolve({ id: 'ord_test_1' }) });
+    const res = await POST(makeRequest(), { params: Promise.resolve({ id: 'ord_test_1' }) });
     expect(res.status).toBe(502);
     const body = await res.json();
     expect(body.error).toMatch(/payment refund failed/i);
@@ -225,7 +225,7 @@ describe('POST /api/orders/[id]/refund (#949)', () => {
     nextSelect([BASE_ORDER]);
     nextSelect(BASE_TICKETS);
 
-    const res = await POST(makeRequest() as any, { params: Promise.resolve({ id: 'ord_test_1' }) });
+    const res = await POST(makeRequest(), { params: Promise.resolve({ id: 'ord_test_1' }) });
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.orderId).toBe('ord_test_1');
@@ -240,7 +240,7 @@ describe('POST /api/orders/[id]/refund (#949)', () => {
     expect(reqBody.paymentId).toBe('pi_test_intent');
 
     // Tickets and order both updated to 'refunded'
-    const statusUpdates = mocks.setMock.mock.calls.map((c: any[]) => c[0].status);
+    const statusUpdates = mocks.setMock.mock.calls.map((c: unknown[]) => (c[0] as { status: string }).status);
     expect(statusUpdates.filter((s: string) => s === 'refunded').length).toBeGreaterThanOrEqual(2);
 
     // Bus event published
@@ -254,7 +254,7 @@ describe('POST /api/orders/[id]/refund (#949)', () => {
     nextSelect([freeOrder]);
     nextSelect(BASE_TICKETS);
 
-    const res = await POST(makeRequest() as any, { params: Promise.resolve({ id: 'ord_test_1' }) });
+    const res = await POST(makeRequest(), { params: Promise.resolve({ id: 'ord_test_1' }) });
     expect(res.status).toBe(200);
 
     // No fetch call for non-Stripe orders

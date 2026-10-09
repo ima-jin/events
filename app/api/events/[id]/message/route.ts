@@ -46,7 +46,7 @@ async function queryRecipients(eventId: string, filter?: MessageFilter) {
               AND owner_did IS NOT NULL
               AND ticket_type_id = ANY(${filter.ticketTypeIds})
           `;
-          return rows.map((r: any) => r.owner_did as string);
+          return rows.map((r) => r.owner_did as string);
         }
         break;
       case 'registration_complete': {
@@ -58,7 +58,7 @@ async function queryRecipients(eventId: string, filter?: MessageFilter) {
             AND owner_did IS NOT NULL
             AND registration_status = 'complete'
         `;
-        return rows.map((r: any) => r.owner_did as string);
+        return rows.map((r) => r.owner_did as string);
       }
       case 'registration_incomplete': {
         const rows = await sql`
@@ -69,7 +69,7 @@ async function queryRecipients(eventId: string, filter?: MessageFilter) {
             AND owner_did IS NOT NULL
             AND (registration_status IS NULL OR registration_status != 'complete')
         `;
-        return rows.map((r: any) => r.owner_did as string);
+        return rows.map((r) => r.owner_did as string);
       }
       case 'everyone':
       default:
@@ -84,7 +84,7 @@ async function queryRecipients(eventId: string, filter?: MessageFilter) {
       AND status IN ('valid', 'used')
       AND owner_did IS NOT NULL
   `;
-  return rows.map((r: any) => r.owner_did as string);
+  return rows.map((r) => r.owner_did as string);
 }
 
 /**

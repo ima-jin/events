@@ -15,7 +15,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const mocks = vi.hoisted(() => {
   const returningMock = vi.fn();
-  const valuesMock = vi.fn((_values: unknown) => ({ returning: returningMock }));
+  const valuesMock = vi.fn<(values: unknown) => { returning: typeof returningMock }>(() => ({ returning: returningMock }));
   const insertMock = vi.fn(() => ({ values: valuesMock }));
 
   const requireHardDIDMock = vi.fn();

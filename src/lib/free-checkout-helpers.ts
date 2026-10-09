@@ -13,7 +13,6 @@ import { eventUrl } from '@ima-jin/config';
 import { generateQRCode } from '@/lib/email';
 import { publish } from '@/lib/domain-events';
 import { createOnboardToken, getIdentityTier } from '@/lib/kernel';
-import { randomBytes } from 'node:crypto';
 import type { Logger } from '@ima-jin/logger';
 import type { TicketType, Ticket, EventInvite } from '@/db/schema';
 

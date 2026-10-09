@@ -15,6 +15,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { NextRequest } from 'next/server';
 
 // ─── Mocks ──────────────────────────────────────────────────────────────────
 
@@ -75,16 +76,15 @@ import { POST } from '../../app/api/events/[id]/tickets/[ticketId]/cancel/route'
 
 const ROUTE_PARAMS = { params: Promise.resolve({ id: 'evt_1', ticketId: 'tkt_1' }) };
 
-function makeRequest(): Request {
-  return new Request('https://events.test/api/events/evt_1/tickets/tkt_1/cancel', {
+function makeRequest(): NextRequest {
+  return new NextRequest('https://events.test/api/events/evt_1/tickets/tkt_1/cancel', {
     method: 'POST',
     headers: { cookie: 'session=abc' },
   });
 }
 
 function nextSelect(rows: unknown[]): void {
-  const p = Promise.resolve(rows) as any;
-  p.limit = vi.fn().mockResolvedValue(rows);
+  const p = Object.assign(Promise.resolve(rows), { limit: vi.fn().mockResolvedValue(rows) });
   mocks.whereMock.mockImplementationOnce(() => p);
 }
 
@@ -105,27 +105,27 @@ describe('POST /api/events/[id]/tickets/[ticketId]/cancel', () => {
 
   it('returns 401 when auth fails', async () => {
     mocks.requireAuthMock.mockResolvedValue({ error: 'Unauthorized', status: 401 });
-    const res = await POST(makeRequest() as any, ROUTE_PARAMS);
+    const res = await POST(makeRequest(), ROUTE_PARAMS);
     expect(res.status).toBe(401);
   });
 
   it('returns 403 when caller is not an organizer', async () => {
     mocks.isEventOrganizerMock.mockResolvedValue({ authorized: false });
-    const res = await POST(makeRequest() as any, ROUTE_PARAMS);
+    const res = await POST(makeRequest(), ROUTE_PARAMS);
     expect(res.status).toBe(403);
     expect(mocks.selectMock).not.toHaveBeenCalled();
   });
 
   it('returns 404 when ticket is not found', async () => {
     nextSelect([]);
-    const res = await POST(makeRequest() as any, ROUTE_PARAMS);
+    const res = await POST(makeRequest(), ROUTE_PARAMS);
     expect(res.status).toBe(404);
     expect(await res.json()).toMatchObject({ error: 'Ticket not found' });
   });
 
   it('returns 400 when ticket status is "valid" (must use refund instead)', async () => {
     nextSelect([{ id: 'tkt_1', status: 'valid', eventId: 'evt_1' }]);
-    const res = await POST(makeRequest() as any, ROUTE_PARAMS);
+    const res = await POST(makeRequest(), ROUTE_PARAMS);
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ error: expect.stringContaining('valid') });
     expect(mocks.updateMock).not.toHaveBeenCalled();
@@ -133,7 +133,7 @@ describe('POST /api/events/[id]/tickets/[ticketId]/cancel', () => {
 
   it('returns 400 when ticket status is "refunded"', async () => {
     nextSelect([{ id: 'tkt_1', status: 'refunded', eventId: 'evt_1' }]);
-    const res = await POST(makeRequest() as any, ROUTE_PARAMS);
+    const res = await POST(makeRequest(), ROUTE_PARAMS);
     expect(res.status).toBe(400);
     expect(mocks.updateMock).not.toHaveBeenCalled();
   });
@@ -144,7 +144,7 @@ describe('POST /api/events/[id]/tickets/[ticketId]/cancel', () => {
     nextSelect([heldTicket]);
     mocks.returningMock.mockResolvedValueOnce([cancelledTicket]);
 
-    const res = await POST(makeRequest() as any, ROUTE_PARAMS);
+    const res = await POST(makeRequest(), ROUTE_PARAMS);
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.ticket.status).toBe('cancelled');
@@ -161,7 +161,7 @@ describe('POST /api/events/[id]/tickets/[ticketId]/cancel', () => {
     nextSelect([availableTicket]);
     mocks.returningMock.mockResolvedValueOnce([{ ...availableTicket, status: 'cancelled' }]);
 
-    const res = await POST(makeRequest() as any, ROUTE_PARAMS);
+    const res = await POST(makeRequest(), ROUTE_PARAMS);
     expect(res.status).toBe(200);
     expect((await res.json()).ticket.status).toBe('cancelled');
   });

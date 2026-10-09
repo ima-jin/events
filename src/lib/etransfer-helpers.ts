@@ -6,7 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, tickets, orders } from '@/db';
 import { eq, and } from 'drizzle-orm';
-import { getContactEmail as getKernelContactEmail, serviceUrl, publicServiceUrl } from '@/lib/kernel';
+import { getContactEmail as getKernelContactEmail, serviceUrl } from '@/lib/kernel';
 import { publish } from '@/lib/domain-events';
 import { eventUrl, eventMyTicketsUrl, buildPublicUrlAbsolute } from '@ima-jin/config';
 import type { Logger } from '@ima-jin/logger';
@@ -138,7 +138,7 @@ export interface MagicLinkParams {
   /** Invite token (optional) appended to the redirect URL. */
   invite?: string;
   totalQuantity: number;
-  log: any;
+  log: Logger;
 }
 
 /**
@@ -187,7 +187,7 @@ export async function handleAnonymousMagicLink(params: MagicLinkParams): Promise
   });
 }
 
-async function buildMagicLinkErrorResponse(res: Response, log: any): Promise<NextResponse> {
+async function buildMagicLinkErrorResponse(res: Response, log: Logger): Promise<NextResponse> {
   const errBody = await res.text().catch(() => '');
   log.error({ status: res.status, body: errBody }, 'Magic-link send failed');
   const propagateStatus = res.status === 429 || res.status === 410 ? res.status : 502;
@@ -296,7 +296,7 @@ async function checkOrderMatchesCart(
 export async function resolveBuyerEmailFromDb(
   ownerDid: string,
   ownerEmail: string | undefined,
-  log: any,
+  log: Logger,
 ): Promise<string | undefined> {
   if (ownerEmail) return ownerEmail;
   try {
@@ -328,7 +328,7 @@ export interface ReservationEmailParams {
   etransferEmail: string;
   memo: string;
   holdUntil: Date;
-  log: any;
+  log: Logger;
 }
 
 /**
