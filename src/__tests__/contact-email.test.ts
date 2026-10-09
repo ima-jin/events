@@ -1,80 +1,91 @@
 /**
- * Tests for apps/events/src/lib/contact-email.ts (#2058).
+ * Tests for src/lib/contact-email.ts (kernel parity #2058).
  *
- * `backfillContactEmail` no longer writes `auth.identities` directly — it
- * delegates to the kernel's `POST /auth/api/identity/:did/contact` via the
- * `@imajin/auth` client (mocked here), mirroring how the check-in route
- * (#1999/#2053) delegates to `evaluateEligibility`. `getContactEmail` is
- * unaffected (still a direct read) and is covered too for completeness.
+ * Neither helper touches a database: `getContactEmail` reads and
+ * `backfillContactEmail` writes through the kernel's public API
+ * (`@/lib/kernel`, mocked here), mirroring how the check-in route
+ * delegates to `evaluateEligibility`. Both are non-throwing.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { Logger } from '@ima-jin/logger';
 
 const mocks = vi.hoisted(() => ({
-  sqlMock: vi.fn(),
+  getContactEmailMock: vi.fn(),
   backfillContactEmailMock: vi.fn(),
 }));
 
-vi.mock('@imajin/db', () => ({
-  getClient: () => mocks.sqlMock,
-}));
-
-vi.mock('@imajin/auth', () => ({
+vi.mock('@/lib/kernel', () => ({
+  getContactEmail: mocks.getContactEmailMock,
   backfillContactEmail: mocks.backfillContactEmailMock,
 }));
 
 import { getContactEmail, backfillContactEmail } from '../lib/contact-email';
 
+const BUYER_DID = 'did:imajin:buyer';
+const BUYER_EMAIL = 'buyer@example.com';
+
 function makeLog() {
-  return { error: vi.fn(), warn: vi.fn(), info: vi.fn() };
+  const log = { error: vi.fn(), warn: vi.fn(), info: vi.fn() };
+  return { log, logger: log as unknown as Logger };
 }
 
 beforeEach(() => {
-  vi.clearAllMocks();
-  mocks.sqlMock.mockReset();
+  mocks.getContactEmailMock.mockReset();
   mocks.backfillContactEmailMock.mockReset();
 });
 
 describe('getContactEmail', () => {
-  it('returns the contact_email column for the DID', async () => {
-    mocks.sqlMock.mockResolvedValueOnce([{ contact_email: 'buyer@example.com' }]);
+  it('returns the contact email the kernel exposes for the DID', async () => {
+    mocks.getContactEmailMock.mockResolvedValueOnce(BUYER_EMAIL);
+    const { logger } = makeLog();
 
-    const result = await getContactEmail('did:imajin:buyer', makeLog());
+    const result = await getContactEmail(BUYER_DID, logger);
 
-    expect(result).toBe('buyer@example.com');
+    expect(result).toBe(BUYER_EMAIL);
+    expect(mocks.getContactEmailMock).toHaveBeenCalledWith(BUYER_DID);
   });
 
-  it('returns null and logs a warning when the query throws', async () => {
-    mocks.sqlMock.mockRejectedValueOnce(new Error('db down'));
-    const log = makeLog();
+  it('returns null without warning when the kernel has no visible email', async () => {
+    mocks.getContactEmailMock.mockResolvedValueOnce(null);
+    const { log, logger } = makeLog();
 
-    const result = await getContactEmail('did:imajin:buyer', log);
+    const result = await getContactEmail(BUYER_DID, logger);
 
     expect(result).toBeNull();
-    expect(log.warn).toHaveBeenCalled();
+    expect(log.warn).not.toHaveBeenCalled();
+  });
+
+  it('returns null and logs a warning when the kernel client throws', async () => {
+    mocks.getContactEmailMock.mockRejectedValueOnce(new Error('kernel down'));
+    const { log, logger } = makeLog();
+
+    const result = await getContactEmail(BUYER_DID, logger);
+
+    expect(result).toBeNull();
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ err: expect.stringContaining('kernel down') }),
+      expect.any(String),
+    );
   });
 });
 
 describe('backfillContactEmail (#2058 — delegates to the kernel route)', () => {
-  it('calls the @imajin/auth client with the did and email, and never touches sql directly', async () => {
-    mocks.backfillContactEmailMock.mockResolvedValueOnce({
-      did: 'did:imajin:buyer',
-      contactEmail: 'buyer@example.com',
-      backfilled: true,
-    });
+  it('calls the kernel client with the did and email and stays quiet on success', async () => {
+    mocks.backfillContactEmailMock.mockResolvedValueOnce(true);
+    const { log, logger } = makeLog();
 
-    await backfillContactEmail('did:imajin:buyer', 'buyer@example.com', makeLog());
+    await backfillContactEmail(BUYER_DID, BUYER_EMAIL, logger);
 
-    expect(mocks.backfillContactEmailMock).toHaveBeenCalledWith('did:imajin:buyer', 'buyer@example.com');
-    expect(mocks.sqlMock).not.toHaveBeenCalled();
+    expect(mocks.backfillContactEmailMock).toHaveBeenCalledWith(BUYER_DID, BUYER_EMAIL);
+    expect(log.warn).not.toHaveBeenCalled();
   });
 
   it('logs a warning (non-fatal) when the kernel call fails, without throwing', async () => {
-    mocks.backfillContactEmailMock.mockResolvedValueOnce(null);
-    const log = makeLog();
+    mocks.backfillContactEmailMock.mockResolvedValueOnce(false);
+    const { log, logger } = makeLog();
 
-    await expect(
-      backfillContactEmail('did:imajin:buyer', 'buyer@example.com', log),
-    ).resolves.toBeUndefined();
-    expect(log.warn).toHaveBeenCalled();
+    await expect(backfillContactEmail(BUYER_DID, BUYER_EMAIL, logger)).resolves.toBeUndefined();
+
+    expect(log.warn).toHaveBeenCalledWith({ did: BUYER_DID }, expect.any(String));
   });
 });

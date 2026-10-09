@@ -1,59 +1,43 @@
 /**
- * Tests for apps/events/app/api/events/[id]/guests/export.csv/route.ts
+ * Tests for app/api/events/[id]/guests/export.csv/route.ts
  *
- * #1998: this route used to LEFT JOIN auth.identities / auth.credentials
- * directly in its ticket query, plus make a separate per-DID HTTP call to
- * AUTH_SERVICE_URL /api/lookup. It now runs a plain ticket query and
- * resolves owner/buyer identities in one batched call to
- * resolveIdentitiesForDids (backed by the profile service's /api/resolve).
+ * Kernel parity (#1998): owner/buyer identities resolve in ONE batched
+ * `resolveProfiles` call (the kernel's `/profile/api/resolve`). Survey
+ * answers/forms come from dykil's public API (`@/lib/surveys`).
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import {
+  BUYER_DID,
+  EVENT_ID,
+  OWNER_DID,
+  ROUTE_PARAMS,
+  expectOrganizerCheckedFor,
+  getSurveyFormsMock,
+  getSurveyResponsesForTicketsMock,
+  makeEventRequest,
   nextSql,
+  profile,
+  profileMap,
   resetResolveRouteMocks,
-  resolveIdentitiesForDidsMock,
+  resolveProfilesMock,
+  surveyMap,
   testReturns401WhenAuthFails,
   testReturns403ForNonOrganizer,
   testReturns404WhenEventNotFound,
   testReturns500OnUnexpectedError,
 } from './support/resolve-route-test-support';
 
-const helperMocks = vi.hoisted(() => ({
-  warnDuplicateSurveyResponsesMock: vi.fn().mockResolvedValue(undefined),
-  loadSurveyFormDataMock: vi.fn().mockResolvedValue({ surveyColumns: [], formFieldMap: {} }),
-  buildSurveyValuesMock: vi.fn().mockReturnValue([]),
-}));
-
-// `csvRow`/`csvEscape` are given their real (simple, dependency-free)
-// implementation here rather than pulled in via `importOriginal` — this
-// module is resolved through the `@/` alias, which this vitest config points
-// at apps/kernel, so a real cross-package import would fail to resolve.
-vi.mock('@/lib/guest-export-helpers', () => ({
-  warnDuplicateSurveyResponses: helperMocks.warnDuplicateSurveyResponsesMock,
-  loadSurveyFormData: helperMocks.loadSurveyFormDataMock,
-  buildSurveyValues: helperMocks.buildSurveyValuesMock,
-  csvRow: (values: unknown[]) =>
-    values
-      .map((v) => (v == null ? '' : String(v)))
-      .join(',') + '\r\n',
-}));
-
 import { GET } from '../../app/api/events/[id]/guests/export.csv/route';
 
-function makeRequest(query = ''): Request {
-  return new Request(`https://events.test/api/events/evt_1/guests/export.csv${query}`, {
-    headers: { cookie: 'session=abc' },
-  });
-}
+const makeRequest = (query = '') => makeEventRequest('guests/export.csv', query);
 
-const ROUTE_PARAMS = { params: Promise.resolve({ id: 'evt_1' }) };
-const EVENT_ROW = { id: 'evt_1', title: 'Test Event' };
+const EVENT_ROW = { id: EVENT_ID, title: 'Test Event' };
 
 const TICKET_ROW = {
   id: 'tkt_1',
   status: 'valid',
-  owner_did: 'did:imajin:owner',
-  purchased_at: new Date().toISOString(),
+  owner_did: OWNER_DID,
+  purchased_at: '2026-01-02T10:00:00.000Z',
   payment_method: 'stripe',
   ticket_payment_id: 'pi_1',
   payment_confirmed_at: null,
@@ -61,71 +45,102 @@ const TICKET_ROW = {
   order_id: 'ord_1',
   ticket_type: 'General',
   registration_form_id: null,
-  survey_response_id: null,
-  survey_form_id: null,
-  survey_answers: null,
   order_payment_id: null,
   stripe_session_id: null,
   buyer_email: null,
-  buyer_did: 'did:imajin:buyer',
+  buyer_did: BUYER_DID,
 };
 
-beforeEach(() => {
-  resetResolveRouteMocks();
-  helperMocks.warnDuplicateSurveyResponsesMock.mockResolvedValue(undefined);
-  helperMocks.loadSurveyFormDataMock.mockResolvedValue({ surveyColumns: [], formFieldMap: {} });
-  helperMocks.buildSurveyValuesMock.mockReturnValue([]);
-});
+const OWNER_PROFILE = profile(OWNER_DID, 'Owner Name', 'owner-handle', 'owner@example.com');
+const BUYER_PROFILE = profile(BUYER_DID, 'Buyer Name', 'buyer-handle', 'buyer@example.com');
+
+beforeEach(resetResolveRouteMocks);
 
 describe('GET .../guests/export.csv — batched identity resolution (#1998)', () => {
   it('resolves owner and buyer DIDs in a single batched call and includes them in the CSV', async () => {
     nextSql([EVENT_ROW]);
     nextSql([TICKET_ROW]);
-    resolveIdentitiesForDidsMock.mockResolvedValue(new Map([
-      ['did:imajin:owner', { displayName: 'Owner Name', handle: 'owner-handle', email: 'owner@example.com' }],
-      ['did:imajin:buyer', { displayName: 'Buyer Name', handle: 'buyer-handle', email: 'buyer@example.com' }],
-    ]));
+    resolveProfilesMock.mockResolvedValue(profileMap(OWNER_PROFILE, BUYER_PROFILE));
 
-    const res = await GET(makeRequest() as any, ROUTE_PARAMS);
+    const res = await GET(makeRequest(), ROUTE_PARAMS);
     const text = await res.text();
 
     expect(res.status).toBe(200);
-    expect(new Set(resolveIdentitiesForDidsMock.mock.calls[0][0])).toEqual(
-      new Set(['did:imajin:owner', 'did:imajin:buyer']),
-    );
+    expectOrganizerCheckedFor();
+    expect(resolveProfilesMock).toHaveBeenCalledTimes(1);
+    expect(new Set(resolveProfilesMock.mock.calls[0][0])).toEqual(new Set([OWNER_DID, BUYER_DID]));
+    expect(res.headers.get('Content-Type')).toBe('text/csv; charset=utf-8');
+    expect(res.headers.get('Content-Disposition')).toMatch(/test-event-guests-\d{4}-\d{2}-\d{2}\.csv/);
     expect(text).toContain('Owner Name');
     expect(text).toContain('owner@example.com');
+    expect(text).toContain('stripe / paid');
   });
 
   it('falls back to the buyer identity when the owner does not resolve', async () => {
     nextSql([EVENT_ROW]);
     nextSql([TICKET_ROW]);
-    resolveIdentitiesForDidsMock.mockResolvedValue(new Map([
-      ['did:imajin:buyer', { displayName: 'Buyer Name', handle: 'buyer-handle', email: 'buyer@example.com' }],
-    ]));
+    resolveProfilesMock.mockResolvedValue(profileMap(BUYER_PROFILE));
 
-    const res = await GET(makeRequest() as any, ROUTE_PARAMS);
+    const res = await GET(makeRequest(), ROUTE_PARAMS);
     const text = await res.text();
 
     expect(text).toContain('Buyer Name');
   });
 
-  it('returns a JSON summary when summary=1 without resolving identities', async () => {
+  it('adds one Survey column per dykil form field and fills it from the ticket response', async () => {
+    nextSql([EVENT_ROW]);
+    nextSql([{ ...TICKET_ROW, registration_form_id: 'form_1' }]);
+    getSurveyResponsesForTicketsMock.mockResolvedValue(
+      surveyMap({ tkt_1: { full_name: 'Survey Name', diet: 'vegan' } }),
+    );
+    getSurveyFormsMock.mockResolvedValue(
+      new Map([['form_1', { id: 'form_1', fields: [{ name: 'diet', title: 'Dietary needs' }] }]]),
+    );
+
+    const res = await GET(makeRequest(), ROUTE_PARAMS);
+    const [header, row] = (await res.text()).replace('\uFEFF', '').split('\r\n');
+
+    expect(getSurveyFormsMock).toHaveBeenCalledWith(['form_1']);
+    expect(header).toContain('Survey: Dietary needs');
+    expect(row).toContain('Survey Name');
+    expect(row).toContain('vegan');
+  });
+
+  it('lists cancelled tickets with their status when includeCancelled=1', async () => {
     nextSql([EVENT_ROW]);
     nextSql([{ ...TICKET_ROW, status: 'cancelled' }]);
 
-    const res = await GET(makeRequest('?summary=1') as any, ROUTE_PARAMS);
+    const res = await GET(makeRequest('?includeCancelled=1'), ROUTE_PARAMS);
+    const [, row] = (await res.text()).replace('\uFEFF', '').split('\r\n');
+
+    expect(res.status).toBe(200);
+    expect(row).toContain('cancelled');
+    expect(row).toContain('stripe / cancelled');
+  });
+
+  it('returns a JSON summary when summary=1 without resolving identities', async () => {
+    nextSql([EVENT_ROW]);
+    nextSql([
+      { ...TICKET_ROW, status: 'cancelled' },
+      { ...TICKET_ROW, id: 'tkt_2', registration_status: 'pending' },
+    ]);
+
+    const res = await GET(makeRequest('?summary=1'), ROUTE_PARAMS);
     const json = await res.json();
 
     expect(res.status).toBe(200);
-    expect(json).toMatchObject({ total: 1, cancelled: 1, valid: 0 });
-    expect(resolveIdentitiesForDidsMock).not.toHaveBeenCalled();
+    expect(json).toEqual({
+      total: 2,
+      valid: 1,
+      pendingRegistration: 1,
+      completeRegistration: 1,
+      cancelled: 1,
+    });
+    expect(resolveProfilesMock).not.toHaveBeenCalled();
   });
 
-  testReturns404WhenEventNotFound(GET, makeRequest, ROUTE_PARAMS);
-  testReturns403ForNonOrganizer(GET, makeRequest, ROUTE_PARAMS, () => {
-    expect(resolveIdentitiesForDidsMock).not.toHaveBeenCalled();
-  });
-  testReturns401WhenAuthFails(GET, makeRequest, ROUTE_PARAMS);
-  testReturns500OnUnexpectedError(GET, makeRequest, ROUTE_PARAMS);
+  testReturns404WhenEventNotFound(GET, makeRequest);
+  testReturns403ForNonOrganizer(GET, makeRequest);
+  testReturns401WhenAuthFails(GET, makeRequest);
+  testReturns500OnUnexpectedError(GET, makeRequest);
 });

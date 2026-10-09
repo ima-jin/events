@@ -1,16 +1,22 @@
 /**
- * Tests for apps/events/app/api/events/[id]/sales/export/route.ts
+ * Tests for app/api/events/[id]/sales/export/route.ts
  *
- * #1998: this route used to hit a per-DID AUTH_SERVICE_URL /api/lookup
- * internal-route fallback to resolve buyer name/handle/email. It now calls
- * the batched resolveIdentitiesForDids client (backed by the profile
- * service's /api/resolve) once for all buyer DIDs.
+ * Kernel parity (#1998): buyer name/handle/email come from ONE batched
+ * `resolveProfiles` call for all buyer DIDs (the kernel's
+ * `/profile/api/resolve`), not a per-DID lookup fallback.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
+  BUYER_DID,
+  EVENT_ID,
+  ROUTE_PARAMS,
+  expectOrganizerCheckedFor,
+  makeEventRequest,
   nextSql,
+  profile,
+  profileMap,
   resetResolveRouteMocks,
-  resolveIdentitiesForDidsMock,
+  resolveProfilesMock,
   testReturns401WhenAuthFails,
   testReturns403ForNonOrganizer,
   testReturns404WhenEventNotFound,
@@ -19,30 +25,30 @@ import {
 
 import { GET } from '../../app/api/events/[id]/sales/export/route';
 
-function makeRequest(query = ''): Request {
-  return new Request(`https://events.test/api/events/evt_1/sales/export${query}`, {
-    headers: { cookie: 'session=abc' },
-  });
-}
+const makeRequest = (query = '') => makeEventRequest('sales/export', query);
 
-const ROUTE_PARAMS = { params: Promise.resolve({ id: 'evt_1' }) };
-
-const EVENT_ROW = { id: 'evt_1', title: 'Test Event' };
+const EVENT_ROW = { id: EVENT_ID, title: 'Test Event' };
 
 const ORDER_ROW = {
   order_id: 'ord_1',
-  buyer_did: 'did:imajin:buyer',
+  buyer_did: BUYER_DID,
   quantity: 1,
   amount_total: 5000,
   currency: 'CAD',
   payment_method: 'stripe',
   stripe_session_id: 'cs_1',
   payment_id: 'pi_1',
-  purchased_at: new Date().toISOString(),
+  purchased_at: '2026-01-02T10:00:00.000Z',
   ticket_type: 'General',
 };
 
 const TICKET_ROW = { id: 'tkt_1', status: 'valid', order_id: 'ord_1' };
+
+/** Parse the CSV body (BOM stripped) into header + first data row. */
+function parseCsv(text: string): { header: string[]; row: string[] } {
+  const [header, row] = text.replace('\uFEFF', '').split('\r\n');
+  return { header: header.split(','), row: (row ?? '').split(',') };
+}
 
 beforeEach(resetResolveRouteMocks);
 
@@ -51,31 +57,38 @@ describe('GET .../sales/export — batched identity resolution (#1998)', () => {
     nextSql([EVENT_ROW]);
     nextSql([ORDER_ROW]);
     nextSql([TICKET_ROW]);
-    resolveIdentitiesForDidsMock.mockResolvedValue(new Map([
-      ['did:imajin:buyer', { displayName: 'Buyer Name', handle: 'buyer-handle', email: 'buyer@example.com' }],
-    ]));
+    resolveProfilesMock.mockResolvedValue(
+      profileMap(profile(BUYER_DID, 'Buyer Name', 'buyer-handle', 'buyer@example.com')),
+    );
 
-    const res = await GET(makeRequest() as any, ROUTE_PARAMS);
+    const res = await GET(makeRequest(), ROUTE_PARAMS);
     const text = await res.text();
 
     expect(res.status).toBe(200);
-    expect(resolveIdentitiesForDidsMock).toHaveBeenCalledWith(['did:imajin:buyer']);
-    expect(text).toContain('Buyer Name');
-    expect(text).toContain('buyer-handle');
-    expect(text).toContain('buyer@example.com');
-    expect(text).toContain('completed'); // computeOrderStatus: valid ticket -> completed
+    expectOrganizerCheckedFor();
+    expect(resolveProfilesMock).toHaveBeenCalledTimes(1);
+    expect(resolveProfilesMock).toHaveBeenCalledWith([BUYER_DID]);
+
+    const { header, row } = parseCsv(text);
+    expect(header.slice(0, 5)).toEqual(['Order ID', 'Buyer Name', 'Buyer Handle', 'Buyer Email', 'Buyer DID']);
+    expect(row.slice(0, 5)).toEqual(['ord_1', 'Buyer Name', 'buyer-handle', 'buyer@example.com', BUYER_DID]);
+    expect(row).toContain('completed'); // computeOrderStatus: valid ticket -> completed
+    expect(row).toContain('50'); // amount_total is exported in dollars
+    expect(res.headers.get('Content-Type')).toBe('text/csv; charset=utf-8');
+    expect(res.headers.get('Content-Disposition')).toMatch(/test-event-sales-\d{4}-\d{2}-\d{2}\.csv/);
   });
 
-  it('emits blank buyer fields when the DID does not resolve to any identity', async () => {
+  it('emits blank buyer fields and an unknown status when nothing resolves', async () => {
     nextSql([EVENT_ROW]);
     nextSql([ORDER_ROW]);
     nextSql([]); // no tickets -> computeOrderStatus 'unknown'
 
-    const res = await GET(makeRequest() as any, ROUTE_PARAMS);
-    const text = await res.text();
+    const res = await GET(makeRequest(), ROUTE_PARAMS);
+    const { row } = parseCsv(await res.text());
 
     expect(res.status).toBe(200);
-    expect(text).toContain('unknown');
+    expect(row.slice(0, 5)).toEqual(['ord_1', '', '', '', BUYER_DID]);
+    expect(row).toContain('unknown');
   });
 
   it('uses the xlsx content type and filename extension when format=xlsx', async () => {
@@ -83,17 +96,15 @@ describe('GET .../sales/export — batched identity resolution (#1998)', () => {
     nextSql([]); // no orders
     nextSql([]); // no tickets
 
-    const res = await GET(makeRequest('?format=xlsx') as any, ROUTE_PARAMS);
+    const res = await GET(makeRequest('?format=xlsx'), ROUTE_PARAMS);
 
     expect(res.status).toBe(200);
     expect(res.headers.get('Content-Type')).toContain('spreadsheetml');
     expect(res.headers.get('Content-Disposition')).toContain('.xlsx');
   });
 
-  testReturns404WhenEventNotFound(GET, makeRequest, ROUTE_PARAMS);
-  testReturns403ForNonOrganizer(GET, makeRequest, ROUTE_PARAMS, () => {
-    expect(resolveIdentitiesForDidsMock).not.toHaveBeenCalled();
-  });
-  testReturns401WhenAuthFails(GET, makeRequest, ROUTE_PARAMS);
-  testReturns500OnUnexpectedError(GET, makeRequest, ROUTE_PARAMS);
+  testReturns404WhenEventNotFound(GET, makeRequest);
+  testReturns403ForNonOrganizer(GET, makeRequest);
+  testReturns401WhenAuthFails(GET, makeRequest);
+  testReturns500OnUnexpectedError(GET, makeRequest);
 });

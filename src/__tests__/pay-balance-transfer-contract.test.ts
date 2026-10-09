@@ -1,57 +1,101 @@
 /**
- * Contract test (#2002): the events app's balance/transfer call site and the
- * kernel's documented pay.yaml spec must agree on the same path, method, and
- * auth requirement.
+ * Contract test (#2002): the events app's balance transfer call
+ * (`transferBuyerBalance`) and the pay service's published API (the
+ * checked-in fixture `test/fixtures/pay-contract.ts`) must agree on the same
+ * path, method, auth scheme and request body.
  *
- * Not a network test — reads the two source files directly (same style as
- * apps/kernel/src/lib/kernel/__tests__/api-specs.test.ts, which pins reads
- * to the real shipped spec files) so a future drift between the call site
- * and the spec fails CI immediately instead of surfacing as a runtime 404.
+ * The helper is exercised for real against a stubbed `fetch`; its outbound
+ * request is checked against the fixture, so a future drift fails CI
+ * immediately instead of surfacing as a runtime 404/400.
  */
-import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type { Logger } from '@ima-jin/logger';
+import { transferBuyerBalance } from '../lib/balance-checkout-helpers';
+import {
+  PAY_BASE_URL,
+  createFetchMock,
+  expectBodyMatchesContract,
+  expectCallUrl,
+  expectCookieAuth,
+  payOperation,
+} from './support/pay-contract-support';
 
-const HERE = dirname(fileURLToPath(import.meta.url));
-const CALL_SITE_PATH = resolve(HERE, '../lib/balance-checkout-helpers.ts');
-// apps/events/src/__tests__ -> apps/events/src -> apps/events -> apps -> apps/kernel
-const PAY_SPEC_PATH = resolve(HERE, '../../../kernel/api-spec/pay.yaml');
+const TRANSFER_PATH = '/api/balance/transfer';
+const SESSION_COOKIE = 'session=abc';
+
+const fetchMock = createFetchMock();
+const log = { error: vi.fn(), info: vi.fn(), warn: vi.fn() };
+
+const TRANSFER_PARAMS = {
+  payServiceUrl: PAY_BASE_URL,
+  cookieHeader: SESSION_COOKIE,
+  fromDid: 'did:imajin:buyer',
+  toDid: 'did:imajin:creator',
+  amountCents: 2550,
+  eventId: 'evt_1',
+  cart: [],
+  log: log as unknown as Logger,
+};
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  fetchMock.mockReset();
+  vi.stubGlobal('fetch', fetchMock);
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe('pay.yaml balance/transfer contract', () => {
-  const spec = readFileSync(PAY_SPEC_PATH, 'utf-8');
-  const callSite = readFileSync(CALL_SITE_PATH, 'utf-8');
+  it('documents POST /api/balance/transfer with cookie or bearer auth', () => {
+    const operation = payOperation(TRANSFER_PATH, 'post');
 
-  it('documents POST /api/balance/transfer', () => {
-    expect(spec).toMatch(/\n {2}\/api\/balance\/transfer:\n {4}post:/);
+    expect(operation.operationId).toBe('transferBalance');
+    expect(operation.security).toEqual(expect.arrayContaining(['cookieAuth', 'bearerAuth']));
+    expect(operation.requestBody?.required).toEqual(['from_did', 'to_did', 'amount']);
   });
 
-  it('mounts every documented path under the /{service} (pay) prefix in its servers block', () => {
-    // servers[].url ends in /{service}, and the {service} variable defaults
-    // to "pay" — so /api/balance/transfer is actually served at
-    // /pay/api/balance/transfer, which is exactly what the events call site
-    // must reach once PAY_SERVICE_URL (already /pay-suffixed) is combined
-    // with the endpoint path.
-    expect(spec).toMatch(/servers:\n(?:.*\n)*? {6}service:\n {8}default: pay\b/);
+  it('POSTs the documented path (no duplicated /pay prefix) with the forwarded session cookie', async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ transactionId: 'tx_1' }) });
+
+    await transferBuyerBalance(TRANSFER_PARAMS);
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const call = fetchMock.mock.calls[0];
+    expectCallUrl(call, TRANSFER_PATH);
+    expect(call[1]?.method).toBe('POST');
+    expectCookieAuth(call, payOperation(TRANSFER_PATH, 'post'), SESSION_COOKIE);
   });
 
-  it("requires cookieAuth or bearerAuth on the transfer endpoint, matching resolveEffectiveDid's session-or-bearer contract", () => {
-    const section = spec.slice(spec.indexOf('\n  /api/balance/transfer:'));
-    const nextPathIndex = section.indexOf('\n  /api/balance/topup:');
-    const transferSection = section.slice(0, nextPathIndex);
+  it('sends a body with every required field, only documented fields, and the amount in dollars', async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ transactionId: 'tx_1' }) });
 
-    expect(transferSection).toContain('- cookieAuth: []');
-    expect(transferSection).toContain('- bearerAuth: []');
+    await transferBuyerBalance(TRANSFER_PARAMS);
+
+    const body = expectBodyMatchesContract(fetchMock.mock.calls[0], payOperation(TRANSFER_PATH, 'post'));
+    expect(body).toMatchObject({
+      from_did: 'did:imajin:buyer',
+      to_did: 'did:imajin:creator',
+      amount: 25.5, // transfer expects dollars, not cents
+      metadata: { service: 'events', eventId: 'evt_1' },
+    });
   });
 
-  it('the events call site targets the documented /api/balance/transfer path, not a duplicated /pay prefix', () => {
-    expect(callSite).toContain('${payServiceUrl}/api/balance/transfer');
-    expect(callSite).not.toContain('/pay/api/balance/transfer');
+  it('returns the transaction id from a successful transfer', async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ transactionId: 'tx_9' }) });
+
+    await expect(transferBuyerBalance(TRANSFER_PARAMS)).resolves.toEqual({ transactionId: 'tx_9' });
   });
 
-  it('the events call site authenticates with the forwarded session cookie, matching cookieAuth', () => {
-    // The route forwards the buyer's own session cookie rather than an
-    // internal service API key — cookieAuth, not apiKeyAuth.
-    expect(callSite).toMatch(/'Cookie':\s*cookieHeader/);
+  it.each([
+    [402, 402, 'Insufficient balance'],
+    [403, 403, 'Forbidden'],
+    [500, 502, 'boom'],
+  ])('maps a documented/undocumented %i upstream failure to status %i', async (upstream, expected, error) => {
+    fetchMock.mockResolvedValue({ ok: false, status: upstream, json: async () => ({ error }) });
+
+    await expect(transferBuyerBalance(TRANSFER_PARAMS)).resolves.toEqual({ error, status: expected });
+    expect(log.warn).toHaveBeenCalled();
   });
 });
