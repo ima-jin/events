@@ -1,395 +1,462 @@
 /**
- * Tests for apps/events/app/api/events/[id]/cohosts/route.ts (GET/POST)
+ * Tests for app/api/events/[id]/cohosts/route.ts (GET/POST)
  *
- * #2155: this route used to run raw SQL directly against the kernel-owned
- * `connections.pod_members` table (a `SELECT` in GET, an `INSERT ... ON
- * CONFLICT DO NOTHING` in POST). It now calls the kernel connections
- * service's `GET /api/pods/{id}` and `POST /api/pods/{id}/members` routes
- * instead, forwarding the caller's session cookie.
+ * #2155: this route reads/writes pod membership through the kernel
+ * connections service's `GET /api/pods/{id}` and `POST /api/pods/{id}/members`
+ * routes (public kernel HTTP API), forwarding the caller's session cookie,
+ * and resolves profiles through the kernel auth service's `/api/lookup/{did}`.
+ * Service base URLs come from env (`CONNECTIONS_SERVICE_URL`,
+ * `AUTH_SERVICE_URL`, `CHAT_SERVICE_URL`) via `serviceUrl()`.
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-
-const mocks = vi.hoisted(() => {
-  const resultQueue: unknown[][] = [];
-  function makeChain() {
-    const value = resultQueue.shift() ?? [];
-    const chain: any = {
-      from: () => chain,
-      where: () => chain,
-      limit: () => chain,
-      then: (resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) =>
-        Promise.resolve(value).then(resolve, reject),
-    };
-    return chain;
-  }
-
-  return {
-    resultQueue,
-    selectMock: vi.fn(() => makeChain()),
-    requireAuthMock: vi.fn(),
-    resolveCoHostDidMock: vi.fn(),
-    fetchMock: vi.fn(),
-  };
-});
-
-vi.mock('@/db', () => ({
-  db: { select: mocks.selectMock },
-  events: { id: 'col_id', podId: 'col_pod_id', creatorDid: 'col_creator_did', did: 'col_did' },
-}));
-
-vi.mock('@imajin/auth', () => ({
-  requireAuth: mocks.requireAuthMock,
-  resolveActingDid: (identity: { actingAs?: string | null; id: string }) => identity.actingAs ?? identity.id,
-}));
-
-vi.mock('@ima-jin/logger', () => ({
-  createLogger: () => ({ error: vi.fn(), info: vi.fn(), warn: vi.fn() }),
-}));
-
-vi.mock('@/lib/cohost-helpers', () => ({
-  resolveCoHostDid: mocks.resolveCoHostDidMock,
-}));
-
-vi.stubGlobal('fetch', mocks.fetchMock);
-
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import {
+  authServiceUrl,
+  connectionsServiceUrl,
+  fakeResponse,
+  fetchMock,
+  logMock,
+  makeRequest,
+  nextSelect,
+  requireAuthMock,
+  resetTicketRouteMocks,
+  selectMock,
+  ERR_EVENT_NOT_FOUND,
+  ERR_UNAUTHORIZED,
+  itReturns401WhenAuthFails,
+} from '@/__tests__/support/ticket-route-support';
 import { GET, POST } from '../route';
 
-const ROUTE_PARAMS = { params: Promise.resolve({ id: 'evt_1' }) };
-const EVENT_ROW = { id: 'evt_1', podId: 'pod_1', creatorDid: 'did:imajin:owner', did: 'did:imajin:event' };
+// `@/lib/cohost-helpers` resolves handle → DID via the profile service; it has its own seam here.
+const resolveCoHostDidMock = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/cohost-helpers', () => ({ resolveCoHostDid: resolveCoHostDidMock }));
 
-function makeGetRequest(): Request {
-  return new Request('https://events.test/api/events/evt_1/cohosts', { headers: { cookie: 'session=abc' } });
+const OWNER_DID = 'did:imajin:owner';
+const COHOST1_DID = 'did:imajin:cohost1';
+const JOINED_AT = '2026-01-01T00:00:00Z';
+const NEW_JOINED_AT = '2026-03-01T00:00:00Z';
+const AVATAR_URL = 'https://cdn.test/a.png';
+const ERR_ADD_COHOST = 'Failed to add cohost';
+const COHOSTS_PATH = '/api/events/evt_1/cohosts';
+const NEW_COHOST_DID = 'did:imajin:newcohost';
+const EVENT_DID = 'did:imajin:event';
+const CHAT_ENV = 'CHAT_SERVICE_URL';
+const CHAT_URL = 'https://chat.test';
+const POD_URL = `${connectionsServiceUrl}/api/pods/pod_1`;
+const ROUTE_PARAMS = { params: Promise.resolve({ id: 'evt_1' }) };
+const EVENT_ROW = { id: 'evt_1', podId: 'pod_1', creatorDid: OWNER_DID, did: EVENT_DID };
+const ERR_ADD_MEMBER_FORBIDDEN = 'Only the owner can add members';
+
+const callGet = () => GET(makeRequest(COHOSTS_PATH, 'GET'), ROUTE_PARAMS);
+const callPost = (body: Record<string, unknown>) =>
+  POST(makeRequest(COHOSTS_PATH, 'POST', body), ROUTE_PARAMS);
+
+function podMember(did: string, overrides: Record<string, unknown> = {}) {
+  return {
+    podId: 'pod_1',
+    did,
+    role: 'cohost',
+    addedBy: OWNER_DID,
+    joinedAt: JOINED_AT,
+    removedAt: null,
+    ...overrides,
+  };
 }
 
-function makePostRequest(body: Record<string, unknown>): Request {
-  return new Request('https://events.test/api/events/evt_1/cohosts', {
-    method: 'POST',
-    headers: { cookie: 'session=abc', 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+type Outcome = Response | Error;
+
+interface KernelStub {
+  /** GET /connections/api/pods/{id} */
+  pod?: Outcome;
+  /** POST /connections/api/pods/{id}/members */
+  add?: Outcome;
+  /** GET /auth/api/lookup/{did} */
+  lookup?: Outcome;
+  /** POST {chat}/api/d/{did}/members */
+  chat?: Outcome;
+}
+
+/** Route `fetch` by URL; an `Error` outcome rejects, an unconfigured route answers 200 `{}`. */
+function stubKernel(stub: KernelStub = {}): void {
+  const routes: [string, Outcome | undefined][] = [
+    ['/api/pods/pod_1/members', stub.add],
+    ['/api/pods/pod_1', stub.pod],
+    ['/api/lookup/', stub.lookup],
+    ['/api/d/', stub.chat],
+  ];
+  fetchMock.mockImplementation((url: string) => {
+    const outcome = routes.find(([fragment]) => String(url).includes(fragment))?.[1] ?? fakeResponse(200, {});
+    return outcome instanceof Error ? Promise.reject(outcome) : Promise.resolve(outcome);
   });
 }
 
-/** Builds a minimal fetch Response-like object. */
-function fakeResponse(status: number, body: unknown): Response {
-  return {
-    ok: status >= 200 && status < 300,
-    status,
-    json: async () => body,
-  } as Response;
-}
+/** URLs of every `fetch` call so far. */
+const fetchedUrls = () => fetchMock.mock.calls.map(([url]) => String(url));
+
+/** The `fetch` call whose URL contains `fragment`. */
+const fetchCall = (fragment: string) => fetchMock.mock.calls.find(([url]) => String(url).includes(fragment));
 
 beforeEach(() => {
-  vi.clearAllMocks();
-  mocks.resultQueue.length = 0;
-  mocks.requireAuthMock.mockResolvedValue({ identity: { id: 'did:imajin:owner', actingAs: null } });
+  resetTicketRouteMocks();
+  requireAuthMock.mockResolvedValue({ identity: { id: OWNER_DID, scopes: [], via: 'token' } });
+  resolveCoHostDidMock.mockReset();
+  resolveCoHostDidMock.mockResolvedValue({
+    coHostDid: NEW_COHOST_DID,
+    profileData: { name: 'New Cohost', handle: 'newcohost' },
+  });
 });
 
 describe('GET /api/events/[id]/cohosts — kernel pods API (#2155)', () => {
   it('fetches pod members from the kernel connections service, forwarding the cookie', async () => {
-    mocks.resultQueue.push([EVENT_ROW]);
-    mocks.fetchMock.mockImplementation((url: string) => {
-      if (String(url).includes('/api/pods/pod_1')) {
-        return Promise.resolve(
-          fakeResponse(200, {
-            pod: { id: 'pod_1' },
-            members: [
-              { podId: 'pod_1', did: 'did:imajin:cohost1', role: 'cohost', addedBy: 'did:imajin:owner', joinedAt: '2026-01-01T00:00:00Z', removedAt: null },
-            ],
-          }),
-        );
-      }
-      return Promise.resolve(fakeResponse(200, { name: null, handle: null }));
-    });
+    nextSelect([EVENT_ROW]);
+    stubKernel({ pod: fakeResponse(200, { pod: { id: 'pod_1' }, members: [podMember(COHOST1_DID)] }) });
 
-    const res = await GET(makeGetRequest(), ROUTE_PARAMS);
+    const res = await callGet();
+
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.cohosts).toHaveLength(1);
-    expect(json.cohosts[0].addedAt).toBe('2026-01-01T00:00:00Z');
+    expect(json.cohosts[0]).toMatchObject({ did: COHOST1_DID, role: 'cohost', addedAt: JOINED_AT });
 
-    const podFetchCall = mocks.fetchMock.mock.calls.find(([url]) => String(url).includes('/api/pods/pod_1'));
-    expect(podFetchCall?.[1]?.headers).toMatchObject({ cookie: 'session=abc' });
+    const podCall = fetchCall('/api/pods/pod_1');
+    expect(podCall?.[0]).toBe(POD_URL);
+    expect(podCall?.[1]?.headers).toMatchObject({ cookie: 'session=abc' });
+  });
+
+  it('resolves each cohost profile through the kernel auth service', async () => {
+    nextSelect([EVENT_ROW]);
+    stubKernel({
+      pod: fakeResponse(200, { members: [podMember(COHOST1_DID)] }),
+      lookup: fakeResponse(200, { identity: { name: 'Co Host', handle: 'cohost', avatarUrl: AVATAR_URL } }),
+    });
+
+    const json = await (await callGet()).json();
+
+    expect(fetchedUrls()).toContain(`${authServiceUrl}/api/lookup/${encodeURIComponent(COHOST1_DID)}`);
+    expect(json.cohosts[0]).toMatchObject({
+      did: COHOST1_DID,
+      name: 'Co Host',
+      handle: 'cohost',
+      avatar: AVATAR_URL,
+    });
+  });
+
+  it('lists cohosts oldest-first', async () => {
+    nextSelect([EVENT_ROW]);
+    stubKernel({
+      pod: fakeResponse(200, {
+        members: [
+          podMember('did:imajin:later', { joinedAt: NEW_JOINED_AT }),
+          podMember('did:imajin:earlier', { joinedAt: JOINED_AT }),
+        ],
+      }),
+    });
+
+    const json = await (await callGet()).json();
+
+    expect(json.cohosts.map((c: { did: string }) => c.did)).toEqual(['did:imajin:earlier', 'did:imajin:later']);
   });
 
   it('filters out non-cohost members and removed members', async () => {
-    mocks.resultQueue.push([EVENT_ROW]);
-    mocks.fetchMock.mockImplementation((url: string) => {
-      if (String(url).includes('/api/pods/pod_1')) {
-        return Promise.resolve(
-          fakeResponse(200, {
-            members: [
-              { podId: 'pod_1', did: 'did:imajin:owner-member', role: 'owner', addedBy: null, joinedAt: '2026-01-01', removedAt: null },
-              { podId: 'pod_1', did: 'did:imajin:removed', role: 'cohost', addedBy: null, joinedAt: '2026-01-01', removedAt: '2026-02-01' },
-            ],
-          }),
-        );
-      }
-      return Promise.resolve(fakeResponse(200, {}));
+    nextSelect([EVENT_ROW]);
+    stubKernel({
+      pod: fakeResponse(200, {
+        members: [
+          podMember('did:imajin:owner-member', { role: 'owner', addedBy: null, joinedAt: '2026-01-01' }),
+          podMember('did:imajin:removed', { addedBy: null, joinedAt: '2026-01-01', removedAt: '2026-02-01' }),
+        ],
+      }),
     });
 
-    const res = await GET(makeGetRequest(), ROUTE_PARAMS);
-    const json = await res.json();
+    const json = await (await callGet()).json();
+
     expect(json.cohosts).toHaveLength(0);
   });
 
   it('returns cohosts: [] without calling the connections service when the event has no pod', async () => {
-    mocks.resultQueue.push([{ ...EVENT_ROW, podId: null }]);
+    nextSelect([{ ...EVENT_ROW, podId: null }]);
 
-    const res = await GET(makeGetRequest(), ROUTE_PARAMS);
-    const json = await res.json();
+    const json = await (await callGet()).json();
+
     expect(json.cohosts).toEqual([]);
-    expect(mocks.fetchMock).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('returns 404 when the event is not found', async () => {
-    mocks.resultQueue.push([]);
-    const res = await GET(makeGetRequest(), ROUTE_PARAMS);
+    nextSelect([]);
+
+    const res = await callGet();
+
     expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: ERR_EVENT_NOT_FOUND });
   });
 
-  it('fails soft to an empty list when the connections service is unreachable', async () => {
-    mocks.resultQueue.push([EVENT_ROW]);
-    mocks.fetchMock.mockRejectedValue(new Error('network error'));
+  it('does not require authentication (public cohost list)', async () => {
+    requireAuthMock.mockResolvedValue({ error: ERR_UNAUTHORIZED, status: 401 });
+    nextSelect([{ ...EVENT_ROW, podId: null }]);
 
-    const res = await GET(makeGetRequest(), ROUTE_PARAMS);
+    const res = await callGet();
+
     expect(res.status).toBe(200);
-    const json = await res.json();
-    expect(json.cohosts).toEqual([]);
+    expect(requireAuthMock).not.toHaveBeenCalled();
   });
 
-  it('returns null profile fields when the auth lookup service is unreachable', async () => {
-    mocks.resultQueue.push([EVENT_ROW]);
-    mocks.fetchMock.mockImplementation((url: string) => {
-      const u = String(url);
-      if (u.includes('/api/pods/pod_1')) {
-        return Promise.resolve(
-          fakeResponse(200, {
-            members: [{ podId: 'pod_1', did: 'did:imajin:cohost1', role: 'cohost', addedBy: null, joinedAt: '2026-01-01', removedAt: null }],
-          }),
-        );
-      }
-      if (u.includes('/api/lookup/')) {
-        return Promise.reject(new Error('auth service down'));
-      }
-      return Promise.resolve(fakeResponse(200, {}));
-    });
+  it.each([
+    ['unreachable', new Error('network error')],
+    ['non-2xx', fakeResponse(503, {})],
+  ])('fails soft to an empty list when the connections service is %s', async (_label, outcome) => {
+    nextSelect([EVENT_ROW]);
+    stubKernel({ pod: outcome });
 
-    const res = await GET(makeGetRequest(), ROUTE_PARAMS);
-    const json = await res.json();
-    expect(json.cohosts[0]).toMatchObject({ did: 'did:imajin:cohost1', name: null, handle: null, avatar: null });
+    const res = await callGet();
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).cohosts).toEqual([]);
+  });
+
+  it.each([
+    ['unreachable', new Error('auth service down')],
+    ['non-2xx', fakeResponse(500, {})],
+  ])('returns null profile fields when the auth lookup service is %s', async (_label, outcome) => {
+    nextSelect([EVENT_ROW]);
+    stubKernel({ pod: fakeResponse(200, { members: [podMember(COHOST1_DID)] }), lookup: outcome });
+
+    const json = await (await callGet()).json();
+
+    expect(json.cohosts[0]).toMatchObject({ did: COHOST1_DID, name: null, handle: null, avatar: null });
   });
 
   it('returns 500 when an unexpected error is thrown', async () => {
-    mocks.selectMock.mockImplementationOnce(() => {
+    selectMock.mockImplementationOnce(() => {
       throw new Error('db down');
     });
 
-    const res = await GET(makeGetRequest(), ROUTE_PARAMS);
+    const res = await callGet();
+
     expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: 'Failed to list cohosts' });
+    expect(logMock.error).toHaveBeenCalled();
   });
 });
 
 describe('POST /api/events/[id]/cohosts — kernel pods API (#2155)', () => {
-  beforeEach(() => {
-    mocks.resolveCoHostDidMock.mockResolvedValue({ coHostDid: 'did:imajin:newcohost', profileData: { name: 'New Cohost', handle: 'newcohost' } });
-  });
+  itReturns401WhenAuthFails(() => callPost({ did: NEW_COHOST_DID }));
 
   it('adds a new cohost via the kernel pods/members endpoint, forwarding the cookie', async () => {
-    mocks.resultQueue.push([EVENT_ROW]);
-    mocks.fetchMock.mockImplementation((url: string, init?: RequestInit) => {
-      const u = String(url);
-      if (u.includes('/api/pods/pod_1/members')) {
-        return Promise.resolve(
-          fakeResponse(201, { member: { podId: 'pod_1', did: 'did:imajin:newcohost', role: 'cohost', addedBy: 'did:imajin:owner', joinedAt: '2026-03-01T00:00:00Z', removedAt: null } }),
-        );
-      }
-      if (u.includes('/api/pods/pod_1')) {
-        return Promise.resolve(fakeResponse(200, { members: [] }));
-      }
-      return Promise.resolve(fakeResponse(200, {}));
+    nextSelect([EVENT_ROW]);
+    stubKernel({
+      pod: fakeResponse(200, { members: [] }),
+      add: fakeResponse(201, { member: podMember(NEW_COHOST_DID, { joinedAt: NEW_JOINED_AT }) }),
     });
 
-    const res = await POST(makePostRequest({ did: 'did:imajin:newcohost' }), ROUTE_PARAMS);
-    expect(res.status).toBe(201);
-    const json = await res.json();
-    expect(json.cohost).toMatchObject({ did: 'did:imajin:newcohost', addedAt: '2026-03-01T00:00:00Z' });
+    const res = await callPost({ did: NEW_COHOST_DID });
 
-    const addCall = mocks.fetchMock.mock.calls.find(([url]) => String(url).includes('/members'));
-    expect(addCall?.[1]).toMatchObject({ method: 'POST' });
-    expect(JSON.parse(addCall?.[1]?.body as string)).toEqual({ did: 'did:imajin:newcohost', role: 'cohost' });
+    expect(res.status).toBe(201);
+    expect((await res.json()).cohost).toEqual({
+      did: NEW_COHOST_DID,
+      name: 'New Cohost',
+      handle: 'newcohost',
+      avatar: null,
+      role: 'cohost',
+      addedAt: NEW_JOINED_AT,
+    });
+
+    const addCall = fetchCall('/members');
+    expect(addCall?.[0]).toBe(`${POD_URL}/members`);
+    expect(addCall?.[1]).toMatchObject({ method: 'POST', headers: { cookie: 'session=abc' } });
+    expect(JSON.parse(addCall?.[1]?.body as string)).toEqual({ did: NEW_COHOST_DID, role: 'cohost' });
+    expect(resolveCoHostDidMock).toHaveBeenCalledWith(NEW_COHOST_DID, undefined);
+  });
+
+  it('derives the handle from the request (minus "@") and the avatar from the profile when the resolver omits them', async () => {
+    nextSelect([EVENT_ROW]);
+    resolveCoHostDidMock.mockResolvedValue({ coHostDid: NEW_COHOST_DID, profileData: { avatarUrl: AVATAR_URL } });
+    stubKernel({
+      pod: fakeResponse(200, { members: [] }),
+      add: fakeResponse(201, { member: podMember(NEW_COHOST_DID) }),
+    });
+
+    const json = await (await callPost({ handle: '@newcohost' })).json();
+
+    expect(resolveCoHostDidMock).toHaveBeenCalledWith(undefined, '@newcohost');
+    expect(json.cohost).toMatchObject({ name: null, handle: 'newcohost', avatar: AVATAR_URL });
   });
 
   it('is idempotent: re-adding an existing cohost succeeds without calling the kernel insert route', async () => {
-    mocks.resultQueue.push([EVENT_ROW]);
-    mocks.fetchMock.mockImplementation((url: string) => {
-      const u = String(url);
-      if (u.includes('/api/pods/pod_1/members')) {
-        throw new Error('should not be called for an existing member');
-      }
-      if (u.includes('/api/pods/pod_1')) {
-        return Promise.resolve(
-          fakeResponse(200, {
-            members: [{ podId: 'pod_1', did: 'did:imajin:newcohost', role: 'cohost', addedBy: 'did:imajin:owner', joinedAt: '2026-01-01T00:00:00Z', removedAt: null }],
-          }),
-        );
-      }
-      return Promise.resolve(fakeResponse(200, {}));
-    });
+    nextSelect([EVENT_ROW]);
+    stubKernel({ pod: fakeResponse(200, { members: [podMember(NEW_COHOST_DID)] }) });
 
-    const res = await POST(makePostRequest({ did: 'did:imajin:newcohost' }), ROUTE_PARAMS);
+    const res = await callPost({ did: NEW_COHOST_DID });
+
     expect(res.status).toBe(201);
-    const json = await res.json();
-    expect(json.cohost.addedAt).toBe('2026-01-01T00:00:00Z');
+    expect((await res.json()).cohost.addedAt).toBe(JOINED_AT);
+    expect(fetchCall('/members')).toBeUndefined();
   });
 
   it('returns 403 when the caller is not the event owner', async () => {
-    mocks.requireAuthMock.mockResolvedValue({ identity: { id: 'did:imajin:someone-else', actingAs: null } });
-    mocks.resultQueue.push([EVENT_ROW]);
+    requireAuthMock.mockResolvedValue({ identity: { id: 'did:imajin:someone-else', scopes: [], via: 'token' } });
+    nextSelect([EVENT_ROW]);
 
-    const res = await POST(makePostRequest({ did: 'did:imajin:newcohost' }), ROUTE_PARAMS);
+    const res = await callPost({ did: NEW_COHOST_DID });
+
     expect(res.status).toBe(403);
-    expect(mocks.fetchMock).not.toHaveBeenCalled();
+    expect(await res.json()).toEqual({ error: 'Only the event owner can add cohosts' });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('propagates a kernel error when adding the member fails', async () => {
-    mocks.resultQueue.push([EVENT_ROW]);
-    mocks.fetchMock.mockImplementation((url: string) => {
-      const u = String(url);
-      if (u.includes('/api/pods/pod_1/members')) {
-        return Promise.resolve(fakeResponse(403, { error: 'Only the owner can add members' }));
-      }
-      if (u.includes('/api/pods/pod_1')) {
-        return Promise.resolve(fakeResponse(200, { members: [] }));
-      }
-      return Promise.resolve(fakeResponse(200, {}));
+    nextSelect([EVENT_ROW]);
+    stubKernel({
+      pod: fakeResponse(200, { members: [] }),
+      add: fakeResponse(403, { error: ERR_ADD_MEMBER_FORBIDDEN }),
     });
 
-    const res = await POST(makePostRequest({ did: 'did:imajin:newcohost' }), ROUTE_PARAMS);
+    const res = await callPost({ did: NEW_COHOST_DID });
+
     expect(res.status).toBe(403);
-    const json = await res.json();
-    expect(json.error).toBe('Only the owner can add members');
+    expect((await res.json()).error).toBe(ERR_ADD_MEMBER_FORBIDDEN);
+  });
+
+  it('falls back to a generic message when the kernel error has no body message', async () => {
+    nextSelect([EVENT_ROW]);
+    stubKernel({ pod: fakeResponse(200, { members: [] }), add: fakeResponse(500, {}) });
+
+    const res = await callPost({ did: NEW_COHOST_DID });
+
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toBe(ERR_ADD_COHOST);
   });
 
   it('returns a 502 when the connections service is unreachable while adding the member', async () => {
-    mocks.resultQueue.push([EVENT_ROW]);
-    mocks.fetchMock.mockImplementation((url: string) => {
-      const u = String(url);
-      if (u.includes('/api/pods/pod_1/members')) {
-        return Promise.reject(new Error('network down'));
-      }
-      if (u.includes('/api/pods/pod_1')) {
-        return Promise.resolve(fakeResponse(200, { members: [] }));
-      }
-      return Promise.resolve(fakeResponse(200, {}));
-    });
+    nextSelect([EVENT_ROW]);
+    stubKernel({ pod: fakeResponse(200, { members: [] }), add: new Error('network down') });
 
-    const res = await POST(makePostRequest({ did: 'did:imajin:newcohost' }), ROUTE_PARAMS);
+    const res = await callPost({ did: NEW_COHOST_DID });
+
     expect(res.status).toBe(502);
-    const json = await res.json();
-    expect(json.error).toBe('Failed to reach connections service');
+    expect((await res.json()).error).toBe('Failed to reach connections service');
   });
 
   it('returns 404 when the event is not found', async () => {
-    mocks.resultQueue.push([]);
-    const res = await POST(makePostRequest({ did: 'did:imajin:newcohost' }), ROUTE_PARAMS);
+    nextSelect([]);
+
+    const res = await callPost({ did: NEW_COHOST_DID });
+
     expect(res.status).toBe(404);
   });
 
   it('returns 500 when the event pod is not initialized', async () => {
-    mocks.resultQueue.push([{ ...EVENT_ROW, podId: null }]);
-    const res = await POST(makePostRequest({ did: 'did:imajin:newcohost' }), ROUTE_PARAMS);
+    nextSelect([{ ...EVENT_ROW, podId: null }]);
+
+    const res = await callPost({ did: NEW_COHOST_DID });
+
     expect(res.status).toBe(500);
-    const json = await res.json();
-    expect(json.error).toBe('Event pod not initialized');
+    expect((await res.json()).error).toBe('Event pod not initialized');
   });
 
   it('returns 400 when neither did nor handle is provided', async () => {
-    mocks.resultQueue.push([EVENT_ROW]);
-    const res = await POST(makePostRequest({}), ROUTE_PARAMS);
+    nextSelect([EVENT_ROW]);
+
+    const res = await callPost({});
+
     expect(res.status).toBe(400);
-    expect(mocks.resolveCoHostDidMock).not.toHaveBeenCalled();
+    expect((await res.json()).error).toBe('did or handle is required');
+    expect(resolveCoHostDidMock).not.toHaveBeenCalled();
   });
 
   it('propagates an error resolving the cohost target (e.g. handle not found)', async () => {
-    mocks.resultQueue.push([EVENT_ROW]);
-    mocks.resolveCoHostDidMock.mockResolvedValue({ error: 'Handle not found', status: 404 });
+    nextSelect([EVENT_ROW]);
+    resolveCoHostDidMock.mockResolvedValue({ error: 'Handle not found', status: 404 });
 
-    const res = await POST(makePostRequest({ handle: '@nobody' }), ROUTE_PARAMS);
+    const res = await callPost({ handle: '@nobody' });
+
     expect(res.status).toBe(404);
-    expect(mocks.fetchMock).not.toHaveBeenCalled();
+    expect((await res.json()).error).toBe('Handle not found');
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('returns 400 when the caller tries to add themselves as cohost', async () => {
-    mocks.resultQueue.push([EVENT_ROW]);
-    mocks.resolveCoHostDidMock.mockResolvedValue({ coHostDid: 'did:imajin:owner', profileData: {} });
+    nextSelect([EVENT_ROW]);
+    resolveCoHostDidMock.mockResolvedValue({ coHostDid: OWNER_DID, profileData: {} });
 
-    const res = await POST(makePostRequest({ did: 'did:imajin:owner' }), ROUTE_PARAMS);
+    const res = await callPost({ did: OWNER_DID });
+
     expect(res.status).toBe(400);
-    const json = await res.json();
-    expect(json.error).toBe('Cannot add yourself as cohost');
+    expect((await res.json()).error).toBe('Cannot add yourself as cohost');
+  });
+
+  it('returns 500 when the request body is not valid JSON', async () => {
+    nextSelect([EVENT_ROW]);
+    const request = makeRequest(COHOSTS_PATH, 'POST');
+
+    const res = await POST(request, ROUTE_PARAMS);
+
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toBe(ERR_ADD_COHOST);
   });
 
   it('returns 500 when an unexpected error is thrown', async () => {
-    mocks.selectMock.mockImplementationOnce(() => {
+    selectMock.mockImplementationOnce(() => {
       throw new Error('db down');
     });
 
-    const res = await POST(makePostRequest({ did: 'did:imajin:newcohost' }), ROUTE_PARAMS);
+    const res = await callPost({ did: NEW_COHOST_DID });
+
     expect(res.status).toBe(500);
+    expect(logMock.error).toHaveBeenCalled();
   });
 
   describe('chat sync (non-fatal)', () => {
-    const originalChatUrl = process.env.CHAT_URL;
+    const queueNewCohost = () => {
+      nextSelect([EVENT_ROW]);
+      return {
+        pod: fakeResponse(200, { members: [] }),
+        add: fakeResponse(201, { member: podMember(NEW_COHOST_DID, { joinedAt: NEW_JOINED_AT }) }),
+      };
+    };
 
-    afterEach(() => {
-      process.env.CHAT_URL = originalChatUrl;
+    it('syncs the new cohost to the event chat when CHAT_SERVICE_URL is configured', async () => {
+      vi.stubEnv(CHAT_ENV, CHAT_URL);
+      stubKernel(queueNewCohost());
+
+      const res = await callPost({ did: NEW_COHOST_DID });
+
+      expect(res.status).toBe(201);
+      const chatCall = fetchCall('/api/d/');
+      expect(chatCall?.[0]).toBe(`${CHAT_URL}/api/d/${encodeURIComponent(EVENT_DID)}/members`);
+      expect(JSON.parse(chatCall?.[1]?.body as string)).toEqual({ memberDid: NEW_COHOST_DID, role: 'admin' });
     });
 
-    it('syncs the new cohost to the event chat when CHAT_URL is configured', async () => {
-      process.env.CHAT_URL = 'https://chat.test';
-      mocks.resultQueue.push([EVENT_ROW]);
-      mocks.fetchMock.mockImplementation((url: string) => {
-        const u = String(url);
-        if (u.includes('/api/pods/pod_1/members')) {
-          return Promise.resolve(
-            fakeResponse(201, { member: { podId: 'pod_1', did: 'did:imajin:newcohost', role: 'cohost', addedBy: 'did:imajin:owner', joinedAt: '2026-03-01T00:00:00Z', removedAt: null } }),
-          );
-        }
-        if (u.includes('/api/pods/pod_1')) {
-          return Promise.resolve(fakeResponse(200, { members: [] }));
-        }
-        return Promise.resolve(fakeResponse(200, {}));
-      });
+    it('skips the chat sync when no chat service is configured', async () => {
+      stubKernel(queueNewCohost());
 
-      const res = await POST(makePostRequest({ did: 'did:imajin:newcohost' }), ROUTE_PARAMS);
+      const res = await callPost({ did: NEW_COHOST_DID });
+
       expect(res.status).toBe(201);
+      expect(fetchCall('/api/d/')).toBeUndefined();
+    });
 
-      const chatCall = mocks.fetchMock.mock.calls.find(([url]) => String(url).includes('/api/d/'));
-      expect(chatCall).toBeDefined();
-      expect(JSON.parse(chatCall?.[1]?.body as string)).toEqual({ memberDid: 'did:imajin:newcohost', role: 'admin' });
+    it('skips the chat sync when the event has no DID', async () => {
+      vi.stubEnv(CHAT_ENV, CHAT_URL);
+      stubKernel({
+        pod: fakeResponse(200, { members: [] }),
+        add: fakeResponse(201, { member: podMember(NEW_COHOST_DID) }),
+      });
+      nextSelect([{ ...EVENT_ROW, did: null }]);
+
+      const res = await callPost({ did: NEW_COHOST_DID });
+
+      expect(res.status).toBe(201);
+      expect(fetchCall('/api/d/')).toBeUndefined();
     });
 
     it('does not fail the request when the chat sync itself fails', async () => {
-      process.env.CHAT_URL = 'https://chat.test';
-      mocks.resultQueue.push([EVENT_ROW]);
-      mocks.fetchMock.mockImplementation((url: string) => {
-        const u = String(url);
-        if (u.includes('/api/pods/pod_1/members')) {
-          return Promise.resolve(
-            fakeResponse(201, { member: { podId: 'pod_1', did: 'did:imajin:newcohost', role: 'cohost', addedBy: 'did:imajin:owner', joinedAt: '2026-03-01T00:00:00Z', removedAt: null } }),
-          );
-        }
-        if (u.includes('/api/pods/pod_1')) {
-          return Promise.resolve(fakeResponse(200, { members: [] }));
-        }
-        if (u.includes('/api/d/')) {
-          return Promise.reject(new Error('chat down'));
-        }
-        return Promise.resolve(fakeResponse(200, {}));
-      });
+      vi.stubEnv(CHAT_ENV, CHAT_URL);
+      stubKernel({ ...queueNewCohost(), chat: new Error('chat down') });
 
-      const res = await POST(makePostRequest({ did: 'did:imajin:newcohost' }), ROUTE_PARAMS);
+      const res = await callPost({ did: NEW_COHOST_DID });
+
       expect(res.status).toBe(201);
+      expect(logMock.warn).toHaveBeenCalledWith({ err: 'Error: chat down' }, 'Cohost chat sync failed (non-fatal)');
     });
   });
 });

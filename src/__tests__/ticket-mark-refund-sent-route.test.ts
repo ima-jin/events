@@ -1,5 +1,5 @@
 /**
- * Tests for apps/events/app/api/events/[id]/tickets/[ticketId]/mark-refund-sent/route.ts
+ * Tests for app/api/events/[id]/tickets/[ticketId]/mark-refund-sent/route.ts
  *
  * Completes the e-transfer refund flow: organizer clicks "Mark Sent" after
  * manually sending the e-transfer, flipping ticket status from
@@ -15,140 +15,95 @@
  *  - 404 ticket not found
  *  - 400 ticket not in 'refund_pending' status (e.g. already 'refunded')
  *  - 200 flips 'refund_pending' → 'refunded'
+ *  - 500 on an unexpected error
  */
-
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-
-// ─── Mocks ──────────────────────────────────────────────────────────────────
-
-const mocks = vi.hoisted(() => {
-  // Raw postgres client (getClient) — ticket SELECT and UPDATE
-  const sqlMock = vi.fn().mockResolvedValue([]);
-
-  // Drizzle select chain — event lookup only
-  const whereMock = vi.fn();
-  const fromMock = vi.fn(() => ({ where: whereMock }));
-  const selectMock = vi.fn(() => ({ from: fromMock }));
-
-  const requireAuthMock = vi.fn();
-  const isEventOrganizerMock = vi.fn();
-
-  return { sqlMock, whereMock, fromMock, selectMock, requireAuthMock, isEventOrganizerMock };
-});
-
-vi.mock('@ima-jin/logger', () => ({
-  createLogger: vi.fn(() => ({ error: vi.fn(), info: vi.fn(), warn: vi.fn() })),
-}));
-
-vi.mock('@imajin/db', () => ({
-  getClient: () => mocks.sqlMock,
-}));
-
-vi.mock('@/db', () => ({
-  db: { select: mocks.selectMock },
-  events: { id: 'col_id' },
-}));
-
-vi.mock('@imajin/auth', () => ({
-  requireAuth: mocks.requireAuthMock,
-  resolveActingDid: (identity: { actingFor?: string; actingAs?: string | null; id: string }) =>
-    identity.actingFor ?? identity.actingAs ?? identity.id,
-}));
-
-vi.mock('@/lib/organizer', () => ({
-  isEventOrganizer: mocks.isEventOrganizerMock,
-}));
-
-// ─── Subject ────────────────────────────────────────────────────────────────
-
+import { describe, it, expect, beforeEach } from 'vitest';
+import {
+  ERR_EVENT_NOT_FOUND,
+  ERR_TICKET_NOT_FOUND,
+  EVENT_ID,
+  ROUTE_PARAMS,
+  TICKET_ID,
+  makeTicketRequest,
+  nextSelect,
+  nextSql,
+  resetTicketRouteMocks,
+  sqlStatement,
+  itReturns401WhenAuthFails,
+  itReturns403WhenNotOrganizer,
+  isEventOrganizerMock,
+  logMock,
+  sqlMock,
+} from './support/ticket-route-support';
 import { POST } from '../../app/api/events/[id]/tickets/[ticketId]/mark-refund-sent/route';
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
+const REFUND_PENDING = 'refund_pending';
+const BASE_EVENT = { id: EVENT_ID, title: 'Test Event' };
 
-const ROUTE_PARAMS = { params: Promise.resolve({ id: 'evt_1', ticketId: 'tkt_1' }) };
-
-function makeRequest(): Request {
-  return new Request('https://events.test/api/events/evt_1/tickets/tkt_1/mark-refund-sent', {
-    method: 'POST',
-    headers: { cookie: 'session=abc' },
-  });
-}
-
-function nextDrizzleSelect(rows: unknown[]): void {
-  const p = Promise.resolve(rows) as any;
-  p.limit = vi.fn().mockResolvedValue(rows);
-  mocks.whereMock.mockImplementationOnce(() => p);
-}
-
-function nextSql(rows: unknown[]): void {
-  mocks.sqlMock.mockResolvedValueOnce(rows);
-}
-
-const BASE_EVENT = { id: 'evt_1', title: 'Test Event' };
-
-// ─── Tests ──────────────────────────────────────────────────────────────────
+const callMarkSent = () => POST(makeTicketRequest('mark-refund-sent'), ROUTE_PARAMS);
 
 describe('POST /api/events/[id]/tickets/[ticketId]/mark-refund-sent', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mocks.whereMock.mockReset();
-    mocks.sqlMock.mockReset();
-    mocks.sqlMock.mockResolvedValue([]);
+  beforeEach(resetTicketRouteMocks);
 
-    mocks.requireAuthMock.mockResolvedValue({
-      identity: { id: 'did:imajin:organizer', actingAs: null },
-    });
-    mocks.isEventOrganizerMock.mockResolvedValue({ authorized: true });
-  });
+  itReturns401WhenAuthFails(callMarkSent);
 
-  it('returns 401 when auth fails', async () => {
-    mocks.requireAuthMock.mockResolvedValue({ error: 'Unauthorized', status: 401 });
-    const res = await POST(makeRequest() as any, ROUTE_PARAMS);
-    expect(res.status).toBe(401);
-  });
+  itReturns403WhenNotOrganizer(callMarkSent, () => nextSelect([BASE_EVENT]));
 
   it('returns 404 when event is not found', async () => {
-    nextDrizzleSelect([]);
-    const res = await POST(makeRequest() as any, ROUTE_PARAMS);
-    expect(res.status).toBe(404);
-    expect(await res.json()).toMatchObject({ error: 'Event not found' });
-  });
+    nextSelect([]);
 
-  it('returns 403 when caller is not an organizer', async () => {
-    nextDrizzleSelect([BASE_EVENT]);
-    mocks.isEventOrganizerMock.mockResolvedValue({ authorized: false });
-    const res = await POST(makeRequest() as any, ROUTE_PARAMS);
-    expect(res.status).toBe(403);
-    expect(mocks.sqlMock).not.toHaveBeenCalled();
+    const res = await callMarkSent();
+
+    expect(res.status).toBe(404);
+    expect(await res.json()).toMatchObject({ error: ERR_EVENT_NOT_FOUND });
+    expect(isEventOrganizerMock).not.toHaveBeenCalled();
   });
 
   it('returns 404 when ticket is not found', async () => {
-    nextDrizzleSelect([BASE_EVENT]);
-    nextSql([]);  // ticket SELECT → empty
-    const res = await POST(makeRequest() as any, ROUTE_PARAMS);
+    nextSelect([BASE_EVENT]);
+    nextSql([]); // ticket SELECT → empty
+
+    const res = await callMarkSent();
+
     expect(res.status).toBe(404);
-    expect(await res.json()).toMatchObject({ error: 'Ticket not found' });
+    expect(await res.json()).toMatchObject({ error: ERR_TICKET_NOT_FOUND });
   });
 
   it('returns 400 when ticket is not in refund_pending status', async () => {
-    nextDrizzleSelect([BASE_EVENT]);
-    nextSql([{ id: 'tkt_1', status: 'refunded' }]);  // already refunded
-    const res = await POST(makeRequest() as any, ROUTE_PARAMS);
+    nextSelect([BASE_EVENT]);
+    nextSql([{ id: TICKET_ID, status: 'refunded' }]); // already refunded
+
+    const res = await callMarkSent();
+
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ error: 'Ticket is not in refund_pending status' });
     // Only one SQL call (the SELECT) — no UPDATE
-    expect(mocks.sqlMock).toHaveBeenCalledOnce();
+    expect(sqlMock).toHaveBeenCalledOnce();
   });
 
   it('flips refund_pending to refunded and returns the ticket', async () => {
-    nextDrizzleSelect([BASE_EVENT]);
-    nextSql([{ id: 'tkt_1', status: 'refund_pending' }]);          // SELECT ticket
-    nextSql([{ id: 'tkt_1', status: 'refunded' }]);                // UPDATE RETURNING
+    nextSelect([BASE_EVENT]);
+    nextSql([{ id: TICKET_ID, status: REFUND_PENDING }]); // SELECT ticket
+    nextSql([{ id: TICKET_ID, status: 'refunded' }]); // UPDATE RETURNING
 
-    const res = await POST(makeRequest() as any, ROUTE_PARAMS);
+    const res = await callMarkSent();
+
     expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.ticket.id).toBe('tkt_1');
-    expect(body.ticket.status).toBe('refunded');
+    expect(await res.json()).toEqual({ ticket: { id: TICKET_ID, status: 'refunded' } });
+    expect(isEventOrganizerMock).toHaveBeenCalledWith(EVENT_ID, 'did:imajin:organizer', expect.any(Request));
+    expect(sqlMock).toHaveBeenCalledTimes(2);
+    expect(sqlStatement(0)).toContain('SELECT id, status FROM events.tickets');
+    expect(sqlStatement(1)).toContain("UPDATE events.tickets SET status = 'refunded'");
+  });
+
+  it('returns 500 when an unexpected error is thrown', async () => {
+    nextSelect([BASE_EVENT]);
+    sqlMock.mockRejectedValueOnce(new Error('db down'));
+
+    const res = await callMarkSent();
+
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: 'Failed to mark refund as sent' });
+    expect(logMock.error).toHaveBeenCalled();
   });
 });

@@ -1,5 +1,5 @@
 /**
- * Tests for apps/events/app/api/events/[id]/tickets/[ticketId]/check-in/route.ts
+ * Tests for app/api/events/[id]/tickets/[ticketId]/check-in/route.ts
  *
  * Cases:
  *  - Success: valid ticket stamped used_at, checkin.create + event.attendance published
@@ -9,180 +9,214 @@
  *  - Non-organizer → 403
  *  - Unauthenticated → 401
  *
- * Hard-eligibility (tier upgrade) is no longer re-derived in this app — the
- * route just calls the kernel's evaluateEligibility() (#1999), which owns the
- * rule, the CAS upgrade, and the attestation emission. The optional
- * CHECKIN_WEBHOOK_URL side effect is fire-and-forget and exercised by the
- * success test but not asserted on; its SQL calls use the default sqlMock
- * return ([]) which causes it to exit early harmlessly.
+ * Hard-eligibility (tier upgrade) is not re-derived in this app — the route
+ * just calls the kernel client's evaluateEligibility(), which owns the rule,
+ * the CAS upgrade and the attestation emission. The optional
+ * CHECKIN_WEBHOOK_URL side effect is fire-and-forget and covered separately.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-
-// ─── Mocks ─────────────────────────────────────────────────────────────────────────
-
-const mocks = vi.hoisted(() => {
-  // Raw postgres client. The check-in route uses only getClient() — no Drizzle.
-  const sqlMock = vi.fn().mockResolvedValue([]);
-
-  const requireAuthMock = vi.fn();
-  const isEventOrganizerMock = vi.fn();
-  const publishMock = vi.fn().mockResolvedValue(undefined);
-  const evaluateEligibilityMock = vi.fn().mockResolvedValue(null);
-
-  return { sqlMock, requireAuthMock, isEventOrganizerMock, publishMock, evaluateEligibilityMock };
-});
-
-vi.mock('@ima-jin/logger', () => ({
-  createLogger: vi.fn(() => ({ error: vi.fn(), info: vi.fn(), warn: vi.fn() })),
-}));
-
-vi.mock('@imajin/db', () => ({
-  getClient: () => mocks.sqlMock,
-}));
-
-vi.mock('@imajin/auth', () => ({
-  requireAuth: mocks.requireAuthMock,
-  resolveActingDid: (identity: { actingFor?: string; actingAs?: string | null; id: string }) =>
-    identity.actingFor ?? identity.actingAs ?? identity.id,
-  evaluateEligibility: mocks.evaluateEligibilityMock,
-}));
-
-vi.mock('@/lib/organizer', () => ({
-  isEventOrganizer: mocks.isEventOrganizerMock,
-}));
-
-vi.mock('@imajin/bus', () => ({
-  publish: mocks.publishMock,
-}));
-
-// ─── Subject ────────────────────────────────────────────────────────────────
-
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import {
+  ERR_TICKET_NOT_FOUND,
+  EVENT_ID,
+  ORGANIZER_DID,
+  ROUTE_PARAMS,
+  TICKET_ID,
+  evaluateEligibilityMock,
+  fetchMock,
+  logMock,
+  makeTicketRequest,
+  nextSql,
+  publishMock,
+  resetTicketRouteMocks,
+  sqlMock,
+  sqlStatement,
+  itReturns401WhenAuthFails,
+  itReturns403WhenNotOrganizer,
+} from './support/ticket-route-support';
 import { POST } from '../../app/api/events/[id]/tickets/[ticketId]/check-in/route';
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
-
-function makeRequest(): Request {
-  return new Request('https://events.test/api/events/evt_1/tickets/tkt_1/check-in', {
-    method: 'POST',
-    headers: { cookie: 'session=abc' },
-  });
-}
-
-const ROUTE_PARAMS = { params: Promise.resolve({ id: 'evt_1', ticketId: 'tkt_1' }) };
-
-/** Queue a raw SQL result for the next sqlMock call. */
-function nextSql(rows: unknown[]): void {
-  mocks.sqlMock.mockResolvedValueOnce(rows);
-}
-
-const VALID_TICKET = {
-  id: 'tkt_1',
-  status: 'valid',
-  used_at: null,
-  owner_did: 'did:imajin:attendee',
-};
-
+const ATTENDEE_DID = 'did:imajin:attendee';
 const USED_AT = '2026-07-14T14:00:00.000Z';
+const CHECKIN_CREATE = 'checkin.create';
+const WEBHOOK_URL = 'https://hooks.test/checkin';
 
-// ─── Tests ──────────────────────────────────────────────────────────────────
+const VALID_TICKET = { id: TICKET_ID, status: 'valid', used_at: null, owner_did: ATTENDEE_DID };
+const USED_ROW = { id: TICKET_ID, used_at: USED_AT, status: 'used' };
+
+const callCheckIn = () => POST(makeTicketRequest('check-in'), ROUTE_PARAMS);
+
+/** Queue a successful check-in (ticket SELECT, then UPDATE ... RETURNING). */
+function queueCheckIn(ticket: Record<string, unknown> = VALID_TICKET): void {
+  nextSql([ticket]);
+  nextSql([USED_ROW]);
+}
 
 describe('POST /api/events/[id]/tickets/[ticketId]/check-in', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mocks.sqlMock.mockReset();
-    mocks.sqlMock.mockResolvedValue([]);   // default: all extra SQL calls return []
-    mocks.publishMock.mockResolvedValue(undefined);
-    mocks.evaluateEligibilityMock.mockReset();
-    mocks.evaluateEligibilityMock.mockResolvedValue(null);
-    delete process.env.CHECKIN_WEBHOOK_URL;
+  beforeEach(resetTicketRouteMocks);
 
-    mocks.requireAuthMock.mockResolvedValue({
-      identity: { id: 'did:imajin:organizer', actingAs: null },
-    });
-    mocks.isEventOrganizerMock.mockResolvedValue({ authorized: true });
-  });
+  itReturns401WhenAuthFails(callCheckIn);
 
-  it('returns 401 when auth fails', async () => {
-    mocks.requireAuthMock.mockResolvedValue({ error: 'Unauthorized', status: 401 });
-    const res = await POST(makeRequest() as any, ROUTE_PARAMS);
-    expect(res.status).toBe(401);
-  });
-
-  it('returns 403 when caller is not an organizer', async () => {
-    mocks.isEventOrganizerMock.mockResolvedValue({ authorized: false });
-    const res = await POST(makeRequest() as any, ROUTE_PARAMS);
-    expect(res.status).toBe(403);
-    expect(mocks.sqlMock).not.toHaveBeenCalled();
-  });
+  itReturns403WhenNotOrganizer(callCheckIn);
 
   it('returns 404 when ticket is not found', async () => {
-    nextSql([]);   // ticket SELECT → empty
-    const res = await POST(makeRequest() as any, ROUTE_PARAMS);
+    nextSql([]); // ticket SELECT → empty
+
+    const res = await callCheckIn();
+
     expect(res.status).toBe(404);
-    expect(await res.json()).toMatchObject({ error: 'Ticket not found' });
+    expect(await res.json()).toMatchObject({ error: ERR_TICKET_NOT_FOUND });
   });
 
   it('returns 400 when ticket status is not valid', async () => {
     nextSql([{ ...VALID_TICKET, status: 'held' }]);
-    const res = await POST(makeRequest() as any, ROUTE_PARAMS);
+
+    const res = await callCheckIn();
+
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ error: 'Ticket is not valid' });
-    // No UPDATE should have been issued
-    expect(mocks.sqlMock).toHaveBeenCalledOnce();
+    expect(sqlMock).toHaveBeenCalledOnce(); // no UPDATE issued
   });
 
   it('returns 400 when ticket is already checked in', async () => {
     nextSql([{ ...VALID_TICKET, used_at: USED_AT }]);
-    const res = await POST(makeRequest() as any, ROUTE_PARAMS);
+
+    const res = await callCheckIn();
+
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ error: 'Ticket already checked in' });
-    expect(mocks.sqlMock).toHaveBeenCalledOnce();
+    expect(sqlMock).toHaveBeenCalledOnce();
+    expect(publishMock).not.toHaveBeenCalled();
   });
 
   it('stamps used_at, publishes checkin.create and event.attendance on success', async () => {
-    nextSql([VALID_TICKET]);                                    // (1) SELECT ticket
-    nextSql([{ id: 'tkt_1', used_at: USED_AT, status: 'used' }]); // (2) UPDATE RETURNING
+    queueCheckIn();
 
-    const res = await POST(makeRequest() as any, ROUTE_PARAMS);
+    const res = await callCheckIn();
+
     expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.ticket.id).toBe('tkt_1');
-    expect(body.ticket.usedAt).toBe(USED_AT);
+    expect(await res.json()).toEqual({ ticket: { id: TICKET_ID, usedAt: USED_AT } });
+    expect(sqlStatement(1)).toContain("UPDATE events.tickets SET used_at = NOW(), status = 'used'");
 
-    // Both bus events published
-    const publishedTypes = mocks.publishMock.mock.calls.map((c: any[]) => c[0]);
-    expect(publishedTypes).toContain('checkin.create');
-    expect(publishedTypes).toContain('event.attendance');
+    const publishedTypes = publishMock.mock.calls.map(([type]) => type);
+    expect(publishedTypes).toEqual([CHECKIN_CREATE, 'event.attendance']);
 
-    // event.attendance carries the attendee DID
-    const attendanceCall = mocks.publishMock.mock.calls.find((c: any[]) => c[0] === 'event.attendance');
-    expect(attendanceCall![1]).toMatchObject({
-      subject: 'did:imajin:attendee',
-      payload: expect.objectContaining({ ticketId: 'tkt_1' }),
-    });
+    expect(publishMock).toHaveBeenCalledWith(
+      CHECKIN_CREATE,
+      expect.objectContaining({
+        issuer: ORGANIZER_DID,
+        scope: 'events',
+        payload: { eventId: EVENT_ID, ticketId: TICKET_ID, attendeeDid: ATTENDEE_DID },
+      })
+    );
+    // event.attendance carries the attendee DID as subject
+    expect(publishMock).toHaveBeenCalledWith(
+      'event.attendance',
+      expect.objectContaining({
+        issuer: ORGANIZER_DID,
+        subject: ATTENDEE_DID,
+        payload: expect.objectContaining({ ticketId: TICKET_ID, usedAt: USED_AT, checkedInBy: ORGANIZER_DID }),
+      })
+    );
 
-    // Hard-eligibility is delegated to the kernel (#1999) — no local SQL,
-    // no local bus emission. The route just calls evaluateEligibility() for
-    // the attendee and does not block the response on it.
-    expect(mocks.evaluateEligibilityMock).toHaveBeenCalledWith('did:imajin:attendee');
+    // Hard-eligibility is delegated to the kernel — no local SQL, no local publish.
+    expect(evaluateEligibilityMock).toHaveBeenCalledWith(ATTENDEE_DID);
   });
 
-  it('does not call evaluateEligibility when the ticket has no owner_did', async () => {
-    nextSql([{ ...VALID_TICKET, owner_did: null }]);
-    nextSql([{ id: 'tkt_1', used_at: USED_AT, status: 'used' }]);
+  it('does not call evaluateEligibility or publish event.attendance when the ticket has no owner_did', async () => {
+    queueCheckIn({ ...VALID_TICKET, owner_did: null });
 
-    const res = await POST(makeRequest() as any, ROUTE_PARAMS);
+    const res = await callCheckIn();
+
     expect(res.status).toBe(200);
-    expect(mocks.evaluateEligibilityMock).not.toHaveBeenCalled();
+    expect(evaluateEligibilityMock).not.toHaveBeenCalled();
+    expect(publishMock.mock.calls.map(([type]) => type)).toEqual([CHECKIN_CREATE]);
   });
 
   it('does not fail check-in when evaluateEligibility rejects', async () => {
-    nextSql([VALID_TICKET]);
-    nextSql([{ id: 'tkt_1', used_at: USED_AT, status: 'used' }]);
-    mocks.evaluateEligibilityMock.mockRejectedValue(new Error('kernel unreachable'));
+    queueCheckIn();
+    evaluateEligibilityMock.mockRejectedValue(new Error('kernel unreachable'));
 
-    const res = await POST(makeRequest() as any, ROUTE_PARAMS);
+    const res = await callCheckIn();
+
     expect(res.status).toBe(200);
-    await vi.waitFor(() => expect(mocks.evaluateEligibilityMock).toHaveBeenCalled());
+    await expectLogged();
+  });
+
+  it('does not fail check-in when publishing a domain event rejects', async () => {
+    queueCheckIn();
+    publishMock.mockRejectedValue(new Error('bus down'));
+
+    const res = await callCheckIn();
+
+    expect(res.status).toBe(200);
+    await expectLogged();
+  });
+
+  it('returns 500 when an unexpected error is thrown', async () => {
+    sqlMock.mockRejectedValueOnce(new Error('db down'));
+
+    const res = await callCheckIn();
+
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: 'Failed to check in ticket' });
+  });
+
+  describe('CHECKIN_WEBHOOK_URL (fire-and-forget)', () => {
+    it('does not call a webhook when unset', async () => {
+      queueCheckIn();
+
+      await callCheckIn();
+
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('posts the check-in with the attendee count and event title', async () => {
+      process.env.CHECKIN_WEBHOOK_URL = WEBHOOK_URL;
+      queueCheckIn();
+      nextSql([{ count: '7' }]); // attendee count
+      nextSql([{ title: 'Test Event' }]); // event title
+
+      try {
+        const res = await callCheckIn();
+        expect(res.status).toBe(200);
+
+        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+        const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+        expect(url).toBe(WEBHOOK_URL);
+        expect(init.method).toBe('POST');
+        expect(JSON.parse(init.body as string)).toEqual({
+          event: 'checkin',
+          eventId: EVENT_ID,
+          eventTitle: 'Test Event',
+          ticketId: TICKET_ID,
+          ownerDid: ATTENDEE_DID,
+          checkedInAt: USED_AT,
+          attendeeCount: 7,
+        });
+      } finally {
+        delete process.env.CHECKIN_WEBHOOK_URL;
+      }
+    });
+
+    it('does not fail check-in when the webhook call fails', async () => {
+      process.env.CHECKIN_WEBHOOK_URL = WEBHOOK_URL;
+      queueCheckIn();
+      fetchMock.mockRejectedValue(new Error('webhook down'));
+
+      try {
+        const res = await callCheckIn();
+        expect(res.status).toBe(200);
+        await vi.waitFor(() =>
+          expect(logMock.error).toHaveBeenCalledWith(expect.anything(), 'Check-in webhook error')
+        );
+      } finally {
+        delete process.env.CHECKIN_WEBHOOK_URL;
+      }
+    });
   });
 });
+
+/** The fire-and-forget failure paths all end in a `log.error` call. */
+async function expectLogged(): Promise<void> {
+  await vi.waitFor(() => expect(logMock.error).toHaveBeenCalled());
+}

@@ -1,267 +1,255 @@
 /**
- * Tests for apps/events/app/api/orders/[id]/refund/route.ts
+ * Tests for app/api/orders/[id]/refund/route.ts
  *
- * Covers the new order-level refund endpoint introduced in #949:
+ * Covers the order-level refund endpoint introduced in #949:
  *  - Successful full-order Stripe refund → tickets marked 'refunded', order updated
  *  - Already-refunded order → 400
  *  - Pay service failure → 502, ticket statuses unchanged
  *  - No refundable tickets → 400
  *  - Non-organizer caller → 403
  *  - Free/e-transfer orders skip the Stripe call
+ *
+ * NOTE: the pay-service call still authenticates with PAY_SERVICE_API_KEY
+ * (explicitly out of scope — imajin-ai#2739), and is tested as-is.
  */
-
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-
-// ─── Mocks ──────────────────────────────────────────────────────────────────
-
-const mocks = vi.hoisted(() => {
-  // Drizzle select chain
-  const whereMock = vi.fn();
-  const fromMock = vi.fn(() => ({ where: whereMock }));
-  const selectMock = vi.fn(() => ({ from: fromMock }));
-
-  // Drizzle update chain
-  const updateWhereMock = vi.fn().mockResolvedValue(undefined);
-  const setMock = vi.fn(() => ({ where: updateWhereMock }));
-  const updateMock = vi.fn(() => ({ set: setMock }));
-
-  // Drizzle insert — not used by this route but present in db mock
-  const insertValuesMock = vi.fn().mockResolvedValue(undefined);
-  const insertMock = vi.fn(() => ({ values: insertValuesMock }));
-
-  const requireAuthMock = vi.fn();
-  const isEventOrganizerMock = vi.fn();
-  const publishMock = vi.fn().mockResolvedValue(undefined);
-  const fetchMock = vi.fn();
-
-  return {
-    whereMock,
-    fromMock,
-    selectMock,
-    updateWhereMock,
-    setMock,
-    updateMock,
-    insertValuesMock,
-    insertMock,
-    requireAuthMock,
-    isEventOrganizerMock,
-    publishMock,
-    fetchMock,
-  };
-});
-
-vi.mock('@ima-jin/logger', () => ({
-  createLogger: vi.fn(() => ({ error: vi.fn(), info: vi.fn(), warn: vi.fn() })),
-}));
-
-vi.mock('@/db', () => ({
-  db: {
-    select: mocks.selectMock,
-    update: mocks.updateMock,
-    insert: mocks.insertMock,
-  },
-  orders: { id: 'col_id', status: 'col_status', eventId: 'col_eventId', buyerDid: 'col_buyerDid' },
-  tickets: { id: 'col_tid', orderId: 'col_orderId', status: 'col_status', ticketTypeId: 'col_ttId' },
-  ticketTypes: { id: 'col_ttId', sold: 'col_sold' },
-}));
-
-vi.mock('@imajin/auth', () => ({
-  requireAuth: mocks.requireAuthMock,
-  resolveActingDid: (identity: { actingFor?: string; actingAs?: string | null; id: string }) =>
-    identity.actingFor ?? identity.actingAs ?? identity.id,
-}));
-
-vi.mock('@/lib/organizer', () => ({
-  isEventOrganizer: mocks.isEventOrganizerMock,
-}));
-
-vi.mock('@imajin/bus', () => ({
-  publish: mocks.publishMock,
-}));
-
-// ─── Subject ────────────────────────────────────────────────────────────────
-
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import {
+  BUYER_DID,
+  EVENT_ID,
+  ORGANIZER_DID,
+  expectPayRefundCall,
+  fakeResponse,
+  fetchMock,
+  isEventOrganizerMock,
+  logMock,
+  makeRequest,
+  nextSelect,
+  nextUpdateRejection,
+  publishMock,
+  resetTicketRouteMocks,
+  setMock,
+  updatedTables,
+  updateMock,
+  itReturns401WhenAuthFails,
+  itReturns403WhenNotOrganizer,
+} from './support/ticket-route-support';
+import { orders, ticketTypes, tickets } from '@/db';
 import { POST } from '../../app/api/orders/[id]/refund/route';
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
-
-function makeRequest(): Request {
-  return new Request('https://events.test/api/orders/ord_test_1/refund', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', cookie: 'session=abc' },
-  });
-}
-
-function nextSelect(rows: unknown[]): void {
-  const p = Promise.resolve(rows) as any;
-  p.limit = vi.fn().mockResolvedValue(rows);
-  mocks.whereMock.mockImplementationOnce(() => p);
-}
+const ORDER_ID = 'ord_test_1';
+const ORDER_REFUNDED = 'order.refunded';
+const PAYMENT_INTENT = 'pi_test_intent';
 
 const BASE_ORDER = {
-  id: 'ord_test_1',
-  eventId: 'evt_test_1',
-  buyerDid: 'did:imajin:buyer',
-  amountTotal: 55000,  // $550 in cents
+  id: ORDER_ID,
+  eventId: EVENT_ID,
+  buyerDid: BUYER_DID,
+  amountTotal: 55000, // $550 in cents
   currency: 'CAD',
   paymentMethod: 'stripe',
-  paymentId: 'pi_test_intent',
+  paymentId: PAYMENT_INTENT,
   stripeSessionId: 'cs_test_session',
   status: 'completed',
-  purchasedAt: new Date().toISOString(),
   metadata: {},
 };
 
-const BASE_TICKETS = [
-  {
-    id: 'tkt_1',
-    orderId: 'ord_test_1',
-    eventId: 'evt_test_1',
-    ticketTypeId: 'tkt_type_1',
+function makeTicket(id: string, ticketTypeId = 'tkt_type_1') {
+  return {
+    id,
+    orderId: ORDER_ID,
+    eventId: EVENT_ID,
+    ticketTypeId,
     status: 'valid',
     pricePaid: 27500,
     currency: 'CAD',
-    ownerDid: 'did:imajin:buyer',
+    ownerDid: BUYER_DID,
     paymentMethod: 'stripe',
-    paymentId: 'pi_test_intent',
-  },
-  {
-    id: 'tkt_2',
-    orderId: 'ord_test_1',
-    eventId: 'evt_test_1',
-    ticketTypeId: 'tkt_type_1',
-    status: 'valid',
-    pricePaid: 27500,
-    currency: 'CAD',
-    ownerDid: 'did:imajin:buyer',
-    paymentMethod: 'stripe',
-    paymentId: 'pi_test_intent',
-  },
-];
+    paymentId: PAYMENT_INTENT,
+  };
+}
 
-// ─── Tests ──────────────────────────────────────────────────────────────────
+const BASE_TICKETS = [makeTicket('tkt_1'), makeTicket('tkt_2')];
+
+const orderParams = (id = ORDER_ID) => ({ params: Promise.resolve({ id }) });
+const callRefund = (id = ORDER_ID) => POST(makeRequest(`/api/orders/${id}/refund`), orderParams(id));
 
 describe('POST /api/orders/[id]/refund (#949)', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    // Reset whereMock to clear leftover one-time implementations from failed tests.
-    mocks.whereMock.mockReset();
-    mocks.updateWhereMock.mockResolvedValue(undefined);
-    process.env.PAY_SERVICE_URL = 'http://kernel-test';
-    process.env.PAY_SERVICE_API_KEY = 'service-key';
+  beforeEach(resetTicketRouteMocks);
 
-    mocks.requireAuthMock.mockResolvedValue({
-      identity: { id: 'did:imajin:organizer', actingAs: null },
-    });
-    mocks.isEventOrganizerMock.mockResolvedValue({ authorized: true });
-    vi.stubGlobal('fetch', mocks.fetchMock);
-    mocks.fetchMock.mockResolvedValue({ ok: true, text: async () => '' });
-    mocks.publishMock.mockResolvedValue(undefined);
-  });
+  itReturns401WhenAuthFails(callRefund);
 
-  it('returns 401 when auth fails', async () => {
-    mocks.requireAuthMock.mockResolvedValue({ error: 'Unauthorized', status: 401 });
-
-    const res = await POST(makeRequest() as any, { params: Promise.resolve({ id: 'ord_test_1' }) });
-    expect(res.status).toBe(401);
-  });
+  itReturns403WhenNotOrganizer(callRefund, () => nextSelect([BASE_ORDER]));
 
   it('returns 404 when order is not found', async () => {
-    nextSelect([]);  // no order
+    nextSelect([]); // no order
 
-    const res = await POST(makeRequest() as any, { params: Promise.resolve({ id: 'ord_missing' }) });
+    const res = await callRefund('ord_missing');
+
     expect(res.status).toBe(404);
-    const body = await res.json();
-    expect(body.error).toMatch(/not found/i);
+    expect((await res.json()).error).toMatch(/not found/i);
+    expect(isEventOrganizerMock).not.toHaveBeenCalled();
   });
 
   it('returns 400 when order is already refunded', async () => {
     nextSelect([{ ...BASE_ORDER, status: 'refunded' }]);
 
-    const res = await POST(makeRequest() as any, { params: Promise.resolve({ id: 'ord_test_1' }) });
+    const res = await callRefund();
+
     expect(res.status).toBe(400);
-    const body = await res.json();
-    expect(body.error).toBe('Order already refunded');
-    expect(mocks.fetchMock).not.toHaveBeenCalled();
+    expect((await res.json()).error).toBe('Order already refunded');
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('returns 403 when caller is not an organizer', async () => {
-    nextSelect([BASE_ORDER]);
-    mocks.isEventOrganizerMock.mockResolvedValue({ authorized: false });
+  it('checks organizer rights against the order\'s event', async () => {
+    nextSelect([{ ...BASE_ORDER, eventId: 'evt_other' }]);
+    isEventOrganizerMock.mockResolvedValue({ authorized: false });
 
-    const res = await POST(makeRequest() as any, { params: Promise.resolve({ id: 'ord_test_1' }) });
+    const res = await callRefund();
+
     expect(res.status).toBe(403);
-    expect(mocks.fetchMock).not.toHaveBeenCalled();
+    expect((await res.json()).error).toBe('Only event organizers can issue refunds');
+    expect(isEventOrganizerMock).toHaveBeenCalledWith('evt_other', ORGANIZER_DID, expect.any(Request));
   });
 
   it('returns 400 when the order has no refundable tickets', async () => {
-    nextSelect([BASE_ORDER]);   // order found
-    nextSelect([]);             // no valid/used tickets
+    nextSelect([BASE_ORDER]); // order found
+    nextSelect([]); // no valid/used tickets
 
-    const res = await POST(makeRequest() as any, { params: Promise.resolve({ id: 'ord_test_1' }) });
+    const res = await callRefund();
+
     expect(res.status).toBe(400);
-    const body = await res.json();
-    expect(body.error).toMatch(/no refundable/i);
-    expect(mocks.fetchMock).not.toHaveBeenCalled();
+    expect((await res.json()).error).toMatch(/no refundable/i);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('returns 502 and leaves tickets unchanged when pay service fails', async () => {
     nextSelect([BASE_ORDER]);
     nextSelect(BASE_TICKETS);
-    mocks.fetchMock.mockResolvedValue({
-      ok: false,
-      text: async () => 'Stripe error',
-    });
+    fetchMock.mockResolvedValue(fakeResponse(500, 'Stripe error'));
 
-    const res = await POST(makeRequest() as any, { params: Promise.resolve({ id: 'ord_test_1' }) });
+    const res = await callRefund();
+
     expect(res.status).toBe(502);
-    const body = await res.json();
-    expect(body.error).toMatch(/payment refund failed/i);
+    expect((await res.json()).error).toMatch(/payment refund failed/i);
+    expect(logMock.error).toHaveBeenCalledWith(
+      { status: 500, text: 'Stripe error' },
+      '[order-refund] pay /api/refund returned error'
+    );
 
-    // Ticket status must NOT have been updated
-    expect(mocks.setMock).not.toHaveBeenCalledWith({ status: 'refunded' });
+    // Nothing was updated or published
+    expect(updateMock).not.toHaveBeenCalled();
+    expect(setMock).not.toHaveBeenCalled();
+    expect(publishMock).not.toHaveBeenCalled();
   });
 
   it('refunds all tickets and updates order status on success', async () => {
     nextSelect([BASE_ORDER]);
     nextSelect(BASE_TICKETS);
 
-    const res = await POST(makeRequest() as any, { params: Promise.resolve({ id: 'ord_test_1' }) });
+    const res = await callRefund();
+
     expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.orderId).toBe('ord_test_1');
-    expect(body.refundedTickets).toBe(2);
-    expect(body.status).toBe('refunded');
+    expect(await res.json()).toEqual({ orderId: ORDER_ID, refundedTickets: 2, status: 'refunded' });
 
-    // Pay service was called with the order's paymentId
-    expect(mocks.fetchMock).toHaveBeenCalledOnce();
-    const [url, init] = mocks.fetchMock.mock.calls[0];
-    expect(url).toContain('/api/refund');
-    const reqBody = JSON.parse(init.body);
-    expect(reqBody.paymentId).toBe('pi_test_intent');
+    // Pay service called with the order's paymentId, no amount (= full refund)
+    expect(expectPayRefundCall()).toEqual({ paymentId: PAYMENT_INTENT, reason: 'order refund' });
 
-    // Tickets and order both updated to 'refunded'
-    const statusUpdates = mocks.setMock.mock.calls.map((c: any[]) => c[0].status);
-    expect(statusUpdates.filter((s: string) => s === 'refunded').length).toBeGreaterThanOrEqual(2);
+    // Tickets, their type's sold counter and the order are all updated
+    expect(updatedTables()).toEqual([tickets, ticketTypes, orders]);
+    expect(setMock).toHaveBeenNthCalledWith(1, { status: 'refunded' });
+    expect(setMock).toHaveBeenNthCalledWith(3, { status: 'refunded' });
 
-    // Bus event published
-    expect(mocks.publishMock).toHaveBeenCalledOnce();
-    const [eventType] = mocks.publishMock.mock.calls[0];
-    expect(eventType).toBe('order.refunded');
+    // Domain event published
+    expect(publishMock).toHaveBeenCalledOnce();
+    expect(publishMock).toHaveBeenCalledWith(ORDER_REFUNDED, {
+      issuer: ORGANIZER_DID,
+      subject: BUYER_DID,
+      scope: 'events',
+      payload: {
+        orderId: ORDER_ID,
+        eventId: EVENT_ID,
+        ticketIds: ['tkt_1', 'tkt_2'],
+        amountTotal: 55000,
+        currency: 'CAD',
+        isStripe: true,
+      },
+    });
+  });
+
+  it('decrements the sold counter once per distinct ticket type', async () => {
+    nextSelect([BASE_ORDER]);
+    nextSelect([makeTicket('tkt_1', 'type_a'), makeTicket('tkt_2', 'type_b'), makeTicket('tkt_3', 'type_a')]);
+
+    const res = await callRefund();
+
+    expect((await res.json()).refundedTickets).toBe(3);
+    expect(updatedTables()).toEqual([tickets, ticketTypes, ticketTypes, orders]);
+  });
+
+  it('still refunds when decrementing a sold counter fails (non-fatal)', async () => {
+    nextSelect([BASE_ORDER]);
+    nextSelect(BASE_TICKETS);
+    nextUpdateRejection(new Error('counter fail'), 1); // tickets update succeeds, ticket_types update rejects
+
+    const res = await callRefund();
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).status).toBe('refunded');
+    expect(logMock.error).toHaveBeenCalledWith(
+      { err: 'Error: counter fail' },
+      '[order-refund] Failed to decrement ticket_types.sold (non-fatal)'
+    );
+    expect(updatedTables()).toEqual([tickets, ticketTypes, orders]); // order still marked refunded
   });
 
   it('skips Stripe call for free/e-transfer orders and still marks tickets', async () => {
-    const freeOrder = { ...BASE_ORDER, paymentMethod: 'etransfer', paymentId: null };
-    nextSelect([freeOrder]);
+    nextSelect([{ ...BASE_ORDER, paymentMethod: 'etransfer', paymentId: null }]);
     nextSelect(BASE_TICKETS);
 
-    const res = await POST(makeRequest() as any, { params: Promise.resolve({ id: 'ord_test_1' }) });
+    const res = await callRefund();
+
     expect(res.status).toBe(200);
+    expect(fetchMock).not.toHaveBeenCalled(); // no pay-service call for non-Stripe orders
+    expect((await res.json()).refundedTickets).toBe(2);
+    expect(publishMock).toHaveBeenCalledWith(
+      ORDER_REFUNDED,
+      expect.objectContaining({ payload: expect.objectContaining({ isStripe: false }) })
+    );
+  });
 
-    // No fetch call for non-Stripe orders
-    expect(mocks.fetchMock).not.toHaveBeenCalled();
+  it('falls back to an "unknown" subject when the order has no buyer DID', async () => {
+    nextSelect([{ ...BASE_ORDER, buyerDid: null }]);
+    nextSelect(BASE_TICKETS);
 
-    const body = await res.json();
-    expect(body.refundedTickets).toBe(2);
+    await callRefund();
+
+    expect(publishMock).toHaveBeenCalledWith(ORDER_REFUNDED, expect.objectContaining({ subject: 'unknown' }));
+  });
+
+  it('does not fail the refund when publishing rejects', async () => {
+    nextSelect([BASE_ORDER]);
+    nextSelect(BASE_TICKETS);
+    publishMock.mockRejectedValue(new Error('bus down'));
+
+    const res = await callRefund();
+
+    expect(res.status).toBe(200);
+    await vi.waitFor(() =>
+      expect(logMock.error).toHaveBeenCalledWith(
+        { err: 'Error: bus down' },
+        '[order-refund] Failed to publish order.refunded'
+      )
+    );
+  });
+
+  it('returns 500 when an unexpected error is thrown', async () => {
+    nextSelect([BASE_ORDER]);
+    nextSelect(BASE_TICKETS);
+    fetchMock.mockRejectedValue(new Error('network down'));
+
+    const res = await callRefund();
+
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toBe('Failed to refund order');
   });
 });
