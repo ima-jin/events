@@ -17,4 +17,5 @@ around the boundary, and the gap is recorded here. Each is a `gap(kernel)` marke
 | Act-as / delegation (forest scope) | `src/lib/auth.ts` `resolveActingDid` | Always the caller's own DID. | Delegation overlay in the app-token contract. |
 | Chat sync (member add/migrate, name policy) | `src/lib/event-update-helpers.ts`, webhook, cohosts, event routes | Calls the chat service with this app's `X-App-DID` / `X-App-Authorization`; no kernel-internal shared key. May be refused. | App-auth chat endpoints for registered apps. |
 
+Settlement (`/pay/api/settle`) uses events' **own app-service token** and is not a gap — see `src/lib/pay-settle.ts`.
 Refunds and campaign charge-pledges still use the shared `PAY_SERVICE_API_KEY` (out of scope, imajin-ai#2735).

@@ -7,7 +7,7 @@ import { serviceUrl } from '@/lib/kernel';
  */
 
 import { NextResponse } from 'next/server';
-import { withLogger } from '@ima-jin/logger';
+import { withLogger, type Logger } from '@ima-jin/logger';
 import { publish } from '@/lib/domain-events';
 import { eventInvites, db } from '@/db';
 import { eq } from 'drizzle-orm';
@@ -17,9 +17,11 @@ import {
   resolveCheckoutIdentity,
   resolveInviteAccessForEvent,
   loadPublishedEvent,
+  createSoftDidFromEmail,
   CheckoutValidationError,
   type EventMetadata,
 } from '@/lib/checkout-common';
+import { prepareAppCheckout } from '@/lib/pay-settle';
 import {
   normalizeCheckoutCart,
   validateCheckoutCartLimits,
@@ -41,15 +43,46 @@ interface CheckoutRequest {
   invite?: string;
 }
 
-export const POST = withLogger('events', async (request, { log, correlationId }) => {
-  const ip = getClientIP(request);
-  const rl = rateLimit(ip, 10, 60_000);
-  if (rl.limited) {
+/** 429 response when the caller's IP exceeded the checkout rate limit, otherwise null. */
+function rateLimitedResponse(request: Request): NextResponse | null {
+  const rl = rateLimit(getClientIP(request), 10, 60_000);
+  if (!rl.limited) return null;
+  return NextResponse.json(
+    { error: 'Too many requests', retryAfter: rl.retryAfter },
+    { status: 429, headers: { 'Retry-After': String(rl.retryAfter) } }
+  );
+}
+
+/** Response for a pay-service failure, carrying the machine-readable `code` (e.g. SELLER_NO_CARD_RAIL) when present. */
+function payFailureResponse(failure: { error: string; status: number; code?: string }): NextResponse {
+  const body = failure.code ? { error: failure.error, code: failure.code } : { error: failure.error };
+  return NextResponse.json(body, { status: failure.status });
+}
+
+/** Count one use of the invite that gated this checkout, if any. */
+async function consumeInvite(invite: { id: string; usedCount: number } | null | undefined): Promise<void> {
+  if (!invite) return;
+  await db
+    .update(eventInvites)
+    .set({ usedCount: invite.usedCount + 1 })
+    .where(eq(eventInvites.id, invite.id));
+}
+
+/** Map a thrown checkout failure to its response: validation errors keep their status, anything else is a logged 500. */
+function checkoutErrorResponse(error: unknown, log: Logger): NextResponse {
+  if (error instanceof CheckoutValidationError) {
     return NextResponse.json(
-      { error: 'Too many requests', retryAfter: rl.retryAfter },
-      { status: 429, headers: { 'Retry-After': String(rl.retryAfter) } }
+      { error: error.message, ...(error.field ? { field: error.field } : {}) },
+      { status: error.statusCode },
     );
   }
+  log.error({ err: String(error) }, 'Checkout error');
+  return NextResponse.json({ error: 'Checkout failed' }, { status: 500 });
+}
+
+export const POST = withLogger('events', async (request, { log, correlationId }) => {
+  const limited = rateLimitedResponse(request);
+  if (limited) return limited;
 
   try {
     const body: CheckoutRequest = await request.json();
@@ -98,6 +131,20 @@ export const POST = withLogger('events', async (request, { log, correlationId })
     const fairManifest = eventMeta.fair || null;
     const stripeItems = buildStripeCheckoutItems(cart, typesById, event.title);
 
+    // Authenticate this checkout as the events app and declare the payee manifest, so the payment
+    // is bound to events and events can settle it itself on order completion (imajin-ai#2739).
+    const appCheckout = await prepareAppCheckout({
+      fairManifest,
+      amountCents: stripeItems.reduce((sum, item) => sum + item.amount * item.quantity, 0),
+      buyerDid,
+      email: customerEmail,
+      resolveSoftDid: createSoftDidFromEmail,
+      log,
+    });
+    if ('error' in appCheckout) {
+      return NextResponse.json({ error: appCheckout.error }, { status: appCheckout.status });
+    }
+
     const payResult = await requestPayCheckoutSession({
       payServiceUrl: PAY_SERVICE_URL,
       items: stripeItems,
@@ -107,6 +154,7 @@ export const POST = withLogger('events', async (request, { log, correlationId })
       cancelUrl: eventUrl(EVENTS_URL, event.id),
       fairManifest,
       sellerDid: event.creatorDid,
+      appAuth: appCheckout.appAuth,
       metadata: {
         service: 'events',
         eventId: event.id,
@@ -118,12 +166,7 @@ export const POST = withLogger('events', async (request, { log, correlationId })
       log,
     });
 
-    if ('error' in payResult) {
-      return NextResponse.json(
-        { error: payResult.error, ...(payResult.code && { code: payResult.code }) },
-        { status: payResult.status },
-      );
-    }
+    if ('error' in payResult) return payFailureResponse(payResult);
     const { checkout } = payResult;
 
     publish('ticket.purchase', {
@@ -139,12 +182,7 @@ export const POST = withLogger('events', async (request, { log, correlationId })
       correlationId,
     }).catch((err) => log.error({ err: String(err) }, 'Publish error'));
 
-    if (inviteRecord) {
-      await db
-        .update(eventInvites)
-        .set({ usedCount: inviteRecord.usedCount + 1 })
-        .where(eq(eventInvites.id, inviteRecord.id));
-    }
+    await consumeInvite(inviteRecord);
 
     return NextResponse.json({
       url: checkout.url,
@@ -152,16 +190,6 @@ export const POST = withLogger('events', async (request, { log, correlationId })
     });
 
   } catch (error) {
-    if (error instanceof CheckoutValidationError) {
-      return NextResponse.json(
-        { error: error.message, ...(error.field ? { field: error.field } : {}) },
-        { status: error.statusCode },
-      );
-    }
-    log.error({ err: String(error) }, 'Checkout error');
-    return NextResponse.json(
-      { error: 'Checkout failed' },
-      { status: 500 }
-    );
+    return checkoutErrorResponse(error, log);
   }
 });

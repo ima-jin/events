@@ -50,6 +50,22 @@ The kernel verifies both and returns `{ appDid, userDid, scopes }` — that trip
    `/api/health` and `/api/spec` should respond immediately; `/api/me` returns your DID once
    you sign in through the header's "Sign in with Imajin" link.
 
+## Settlement (registered-app contract)
+
+Events settles a paid ticket order itself. At checkout it authenticates to the pay service with its
+**own app-service token** (minted from its signing key) and declares the payee manifest (the resolved `.fair`
+chain). When the pay webhook reports the payment, events calls `POST /pay/api/settle` with the same token, the
+checkout's `transaction_id` and the `fair_manifest`; `alreadySettled: true` is success. The shared
+`PAY_SERVICE_API_KEY` is not used for settlement (refunds and campaign charge-pledges still use it, imajin-ai#2735).
+
+Operator prerequisites before ticket checkout works: (1) register events and provision its signing key
+(`IMAJIN_KERNEL_URL`, `IMAJIN_APP_DID`, one-time `IMAJIN_APP_CLAIM_CODE`); (2) approve `pay:settle` via the
+`apps:service-scopes` card; (3) deploy the kernel contract (imajin-ai#2695) and the kernel build that adds `transactionId` to the pay
+`checkout.completed` webhook (imajin-ai#2741; it looks the `pay.transactions` row up by the Stripe session and sends
+its id — the key `/pay/api/settle` needs). If a webhook arrives without it, events logs
+`Pay webhook carried no transactionId — order NOT settled` and skips settlement. Without 1–2, checkout for an event
+with a `.fair` chain fails closed (503). See also [`docs/KERNEL-GAPS.md`](./docs/KERNEL-GAPS.md).
+
 ## Consuming `@ima-jin/*`
 
 Published `@ima-jin/*` packages (e.g. `@ima-jin/auth-client`, `@ima-jin/config`, `@ima-jin/ui`) are served from
