@@ -91,3 +91,21 @@ export const dbChain = createDbChain();
 export async function mockDbModule(importOriginal: () => Promise<Record<string, unknown>>) {
   return { ...(await importOriginal()), db: dbChain.db };
 }
+
+// ─── Route-level doubles (tiers + tiers/unlock route tests) ─────────────────
+
+/** `@/services/ticket-types-service` with every entry point a mock. */
+export const tiersServiceMock = {
+  listPublicTiers: vi.fn(),
+  unlockTiers: vi.fn(),
+  createTier: vi.fn(),
+  updateTier: vi.fn(),
+};
+
+/** `next/cache`, so route tests can assert page revalidation. */
+export const nextCacheMock = { revalidatePath: vi.fn() };
+
+export function resetTiersServiceMocks(): void {
+  for (const fn of Object.values(tiersServiceMock)) fn.mockReset();
+  nextCacheMock.revalidatePath.mockReset();
+}
