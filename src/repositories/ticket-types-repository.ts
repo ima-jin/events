@@ -1,5 +1,5 @@
-import { and, asc, eq, isNull, sql } from 'drizzle-orm';
-import { db, ticketTypes } from '@/db';
+import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { db, ticketTypes, type TicketType } from '@/db';
 
 export type TicketTypeRow = typeof ticketTypes.$inferSelect;
 export type NewTicketType = typeof ticketTypes.$inferInsert;
@@ -49,4 +49,30 @@ export async function insertTicketType(values: NewTicketType): Promise<TicketTyp
 export async function updateTicketType(tierId: string, updates: Record<string, unknown>): Promise<TicketTypeRow> {
   const [row] = await db.update(ticketTypes).set(updates).where(eq(ticketTypes.id, tierId)).returning();
   return row;
+}
+
+/** All ticket types of an event. */
+export function findTicketTypesByEvent(eventId: string): Promise<TicketType[]> {
+  return db.select().from(ticketTypes).where(eq(ticketTypes.eventId, eventId));
+}
+
+/** Ticket types by id. */
+export function findTicketTypesByIds(ticketTypeIds: string[]): Promise<TicketType[]> {
+  return db.select().from(ticketTypes).where(inArray(ticketTypes.id, ticketTypeIds));
+}
+
+/** Add `count` to a ticket type's sold counter. */
+export async function incrementSold(ticketTypeId: string, count: number): Promise<void> {
+  await db
+    .update(ticketTypes)
+    .set({ sold: sql`${ticketTypes.sold} + ${count}` })
+    .where(eq(ticketTypes.id, ticketTypeId));
+}
+
+/** Subtract `count` from a ticket type's sold counter, never below zero. */
+export async function decrementSold(ticketTypeId: string, count: number): Promise<void> {
+  await db
+    .update(ticketTypes)
+    .set({ sold: sql`GREATEST(${ticketTypes.sold} - ${count}, 0)` })
+    .where(eq(ticketTypes.id, ticketTypeId));
 }
