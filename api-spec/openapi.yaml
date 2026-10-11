@@ -127,8 +127,30 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
+    Conflict:
+      description: Conflicts with current state
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    RateLimited:
+      description: Too many requests
+      headers:
+        Retry-After:
+          schema: { type: string }
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error: { type: string }
+              retryAfter: { type: integer }
     ServerError:
       description: Unexpected failure
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    BadGateway:
+      description: Upstream kernel/pay service failed or is unreachable
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
@@ -229,6 +251,41 @@ components:
         maxPerOrder: { type: integer, nullable: true }
         accessCode: { type: string, nullable: true }
         createdAt: { type: string, format: date-time }
+    CartItem:
+      type: object
+      required: [ticketTypeId, quantity]
+      properties:
+        ticketTypeId: { type: string }
+        quantity: { type: integer, minimum: 1 }
+    CheckoutRequest:
+      type: object
+      required: [eventId]
+      description: >
+        Single-tier form (`ticketTypeId` + `quantity`) or multi-tier form (`items`). An invite token may be
+        given as `invite` or as the `?invite=` query parameter.
+      properties:
+        eventId: { type: string }
+        ticketTypeId: { type: string }
+        quantity: { type: integer, minimum: 1 }
+        items: { type: array, items: { $ref: "#/components/schemas/CartItem" } }
+        email: { type: string, format: email, description: Guest checkout email (soft DID is resolved from it) }
+        name: { type: string }
+        invite: { type: string }
+    EtransferOrder:
+      type: object
+      properties:
+        orderId: { type: string }
+        ticketIds: { type: array, items: { type: string } }
+        instructions:
+          type: object
+          properties:
+            email: { type: string, description: Event's e-Transfer recipient (`emtEmail`) }
+            amount: { type: number, description: Major units }
+            currency: { type: string }
+            memo: { type: string, description: "`ORD-<orderId>`" }
+            deadline: { type: string, format: date-time }
+            quantity: { type: integer }
+            message: { type: string }
 
 paths:
   /api/health:
@@ -729,3 +786,175 @@ paths:
         "500": { $ref: "#/components/responses/ServerError" }
 
   # ───────────────────────── tickets ─────────────────────────
+  /api/checkout:
+    post:
+      tags: [checkout]
+      operationId: createCheckoutSession
+      summary: Create a Stripe checkout session via the pay service
+      description: >
+        Public (rate limited). If the caller is authenticated their DID is the buyer; otherwise an email is
+        required and a soft DID is resolved. Increments the invite's `usedCount` when an invite token is used.
+      x-public: true
+      security: []
+      parameters:
+        - { name: invite, in: query, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CheckoutRequest" }
+      responses:
+        "200":
+          description: Checkout session
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url: { type: string }
+                  sessionId: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/ServerError" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+
+  /api/checkout/balance:
+    post:
+      tags: [checkout]
+      operationId: checkoutWithBalance
+      summary: Buy tickets with the caller's MJNx balance
+      description: Requires authentication (rate limited). Not for $0 carts — use the free checkout.
+      security:
+        - appToken: [events:write]
+        - cookieAuth: []
+      parameters:
+        - { name: invite, in: query, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CheckoutRequest" }
+      responses:
+        "200":
+          description: Order created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  orderId: { type: string }
+                  ticketIds: { type: array, items: { type: string } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /api/checkout/etransfer:
+    post:
+      tags: [checkout]
+      operationId: checkoutWithEtransfer
+      summary: Reserve tickets with an Interac e-Transfer hold (72h)
+      description: >
+        Public. Requires the event to have `emtEmail`. Re-posting an identical open request returns the
+        existing order instead of creating a new one.
+      x-public: true
+      security: []
+      parameters:
+        - { name: invite, in: query, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CheckoutRequest" }
+      responses:
+        "200":
+          description: Existing open order for the same cart (idempotent replay)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EtransferOrder" }
+        "201":
+          description: Order created with e-Transfer instructions
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EtransferOrder" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /api/checkout/free:
+    post:
+      tags: [checkout]
+      operationId: checkoutFree
+      summary: RSVP to a free ticket tier
+      description: Public (rate limited). Authenticated callers RSVP as themselves; guests supply an email.
+      x-public: true
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [eventId, ticketTypeId]
+              properties:
+                eventId: { type: string }
+                ticketTypeId: { type: string }
+                email: { type: string, format: email }
+                name: { type: string }
+                invite: { type: string }
+      responses:
+        "200":
+          description: RSVP confirmed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  ticketId: { type: string }
+                  message: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /api/balance:
+    get:
+      tags: [proxy]
+      operationId: getBalance
+      summary: The caller's MJNx balance (proxied from the pay service)
+      security:
+        - appToken: [events:read]
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Balance
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  balance: { type: number }
+                  currency: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "502":
+          description: Pay service unavailable (body is a zero balance flagged `unavailable`)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  balance: { type: number }
+                  currency: { type: string }
+                  unavailable: { type: boolean }
