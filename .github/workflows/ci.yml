@@ -95,6 +95,12 @@ jobs:
   test-build:
     name: Test + build
     runs-on: ubuntu-latest
+    env:
+      # `next build` imports every route module to collect page data; src/db/schema.ts
+      # and src/lib/auth.ts read these at import time. Non-secret placeholders only.
+      APP_DB_SCHEMA: events
+      DATABASE_URL: postgres://build:build@localhost:5432/events_build
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
     steps:
       - uses: actions/checkout@v4
 
