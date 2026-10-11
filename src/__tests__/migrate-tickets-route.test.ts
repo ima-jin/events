@@ -2,7 +2,7 @@
  * POST /api/migrate-tickets — moves tickets bought with a soft DID onto the
  * buyer's hard DID. Auth is a scoped app token (`events:write`), failing closed.
  */
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   OWNER_DID,
   accessRequest,
@@ -31,6 +31,52 @@ function tierLookup(tiers: Record<string, string | null>): void {
 beforeEach(() => {
   resetTicketAccessMocks();
   requireAppAuthMock.mockResolvedValue(appAuthSuccess(OWNER_DID, ['events:write']));
+  vi.stubEnv('ENABLE_TICKET_MIGRATION', 'true');
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
+describe('POST /api/migrate-tickets — ENABLE_TICKET_MIGRATION gate', () => {
+  it.each([
+    ['unset', undefined],
+    ['false', 'false'],
+    ['empty', ''],
+    ['TRUE (case-sensitive)', 'TRUE'],
+    ['1', '1'],
+  ])('answers 404 before auth or DB work when the flag is %s', async (_label, value) => {
+    vi.stubEnv('ENABLE_TICKET_MIGRATION', value);
+    nextSelect([{ id: 't1', ownerDid: SOFT_A }]);
+
+    const res = await migrate();
+
+    expect(res.status).toBe(404);
+    expect(requireAppAuthMock).not.toHaveBeenCalled();
+    expect(selectMock).not.toHaveBeenCalled();
+    expect(updateMock).not.toHaveBeenCalled();
+    expect(getIdentityTierMock).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("reaches the auth and migration path only when the flag is 'true'", async () => {
+    nextSelect([{ id: 't1', ownerDid: SOFT_A }]);
+
+    const res = await migrate();
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ migrated: 1 });
+    expect(requireAppAuthMock).toHaveBeenCalledWith(expect.any(Request), { scope: 'events:write' });
+  });
+
+  it('reads the flag per request, not at module load', async () => {
+    vi.stubEnv('ENABLE_TICKET_MIGRATION', 'false');
+    expect((await migrate()).status).toBe(404);
+
+    vi.stubEnv('ENABLE_TICKET_MIGRATION', 'true');
+    nextSelect([]);
+    expect((await migrate()).status).toBe(200);
+  });
 });
 
 describe('POST /api/migrate-tickets', () => {

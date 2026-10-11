@@ -26,6 +26,12 @@ async function filterSoftDids(ownerDids: string[], hardDid: string): Promise<str
 }
 
 export async function POST(request: NextRequest) {
+  // Soak gate (ima-jin/events#21): off unless explicitly 'true'. Read per request, and
+  // checked before any auth or DB work, so the route is inert when disabled.
+  if (process.env.ENABLE_TICKET_MIGRATION !== 'true') {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  }
+
   const appResult = await requireAppAuth(request, { scope: 'events:write' });
   if ('error' in appResult) {
     return NextResponse.json({ error: appResult.error }, { status: appResult.status });
