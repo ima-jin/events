@@ -6,7 +6,9 @@
  *   - `@ima-jin/logger`  → one stable `mockLog` (`createLogger` + `withLogger`)
  *   - `@/lib/auth`       → `requireAuth` / `requireHardDID` / `resolveActingDid`
  *   - `@ima-jin/auth`    → `requireAppAuth` (the `x-app-did` header path)
- *   - `@ima-jin/config`  → `corsHeaders`, `getNodeSelf`, `getForestScopeConfig`
+ *   - `@ima-jin/config`  → `corsHeaders`, `getNodeSelf`, `getForestScopeConfig`,
+ *                          `rateLimit`, `getClientIP` (mocks) and the pure URL
+ *                          helpers `eventUrl` / `buildPublicUrlAbsolute`
  *
  * Vitest hoists `vi.mock`/`vi.hoisted` to the top of this module, and ES
  * imports run in order, so importing this module before the route under test
@@ -24,6 +26,8 @@ const hoisted = vi.hoisted(() => ({
   corsHeadersMock: vi.fn(),
   getNodeSelfMock: vi.fn(),
   getForestScopeConfigMock: vi.fn(),
+  rateLimitMock: vi.fn(),
+  getClientIPMock: vi.fn(),
 }));
 
 export const mockLog = hoisted.log;
@@ -34,6 +38,8 @@ export const {
   corsHeadersMock,
   getNodeSelfMock,
   getForestScopeConfigMock,
+  rateLimitMock,
+  getClientIPMock,
 } = hoisted;
 
 vi.mock('@ima-jin/logger', () => ({
@@ -60,6 +66,11 @@ vi.mock('@ima-jin/config', () => ({
   corsHeaders: hoisted.corsHeadersMock,
   getNodeSelf: hoisted.getNodeSelfMock,
   getForestScopeConfig: hoisted.getForestScopeConfigMock,
+  rateLimit: hoisted.rateLimitMock,
+  getClientIP: hoisted.getClientIPMock,
+  // Pure helpers: plain functions (not mocks) so `resetRouteTestMocks` cannot strip them.
+  eventUrl: (baseUrl: string, eventId: string) => `${baseUrl}/e/${eventId}`,
+  buildPublicUrlAbsolute: () => 'https://events.test',
 }));
 
 /** The identity shape `@/lib/auth` resolves to on success. */
@@ -86,4 +97,6 @@ export function resetRouteTestMocks(): void {
   corsHeadersMock.mockReset().mockReturnValue({});
   getNodeSelfMock.mockReset().mockResolvedValue(null);
   getForestScopeConfigMock.mockReset().mockResolvedValue(null);
+  rateLimitMock.mockReset().mockReturnValue({ limited: false, retryAfter: 0 });
+  getClientIPMock.mockReset().mockReturnValue('203.0.113.7');
 }
