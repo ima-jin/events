@@ -2,6 +2,8 @@ import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
+  // tsconfig keeps `jsx: preserve` for Next; vitest needs the automatic runtime for .tsx tests.
+  esbuild: { jsx: 'automatic' },
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
@@ -17,7 +19,8 @@ export default defineConfig({
   test: {
     environment: 'node',
     setupFiles: ['./test/setup-env.ts'],
-    include: ['**/__tests__/**/*.test.ts'],
+    // Component tests opt into jsdom per file with `// @vitest-environment jsdom`.
+    include: ['**/__tests__/**/*.test.ts', '**/__tests__/**/*.test.tsx'],
     exclude: ['node_modules/**', '.next/**'],
     server: {
       // Otherwise vitest hands @ima-jin/auth-client's ESM import of
@@ -34,6 +37,7 @@ export default defineConfig({
       exclude: [
         '**/__tests__/**',
         '**/*.test.ts',
+        '**/*.test.tsx',
         '**/*.d.ts',
         '**/.next/**',
         '**/node_modules/**',

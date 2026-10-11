@@ -1,32 +1,19 @@
-import { withBasePath } from '@/lib/base-path';
+import { EventList } from '@/components/event/event-list';
+import { toPublicEventView } from '@/lib/public-event';
+import { listEvents } from '@/services/events-service';
 
-export default function HomePage() {
+export const dynamic = 'force-dynamic';
+
+const LIST_LIMIT = 20;
+
+export default async function HomePage() {
+  const rows = await listEvents({ audience: 'public', limit: LIST_LIMIT, upcoming: true });
+  const events = rows.map(toPublicEventView).filter((event) => event.accessMode !== 'invite_only');
+
   return (
     <div className="mx-auto max-w-2xl px-4 py-12">
-      <h1 className="text-2xl font-semibold text-white">Imajin App Template</h1>
-      <p className="mt-4 text-gray-400">
-        A working, forkable Next.js app that composes the Imajin platform through its public
-        app surface only. See <code>AGENTS.md</code> and <code>docs/</code> before building on
-        this template.
-      </p>
-      <ul className="mt-6 space-y-2 text-sm">
-        <li>
-          <a className="text-amber-400 hover:underline" href={withBasePath('/api/health')}>
-            /api/health
-          </a>
-        </li>
-        <li>
-          <a className="text-amber-400 hover:underline" href={withBasePath('/api/spec')}>
-            /api/spec
-          </a>
-        </li>
-        <li>
-          <a className="text-amber-400 hover:underline" href={withBasePath('/api/me')}>
-            /api/me
-          </a>{' '}
-          — returns your DID once signed in
-        </li>
-      </ul>
+      <h1 className="mb-6 text-2xl font-semibold text-white">Upcoming events</h1>
+      <EventList events={events} />
     </div>
   );
 }
