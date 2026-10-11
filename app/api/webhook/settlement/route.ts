@@ -9,9 +9,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@ima-jin/logger';
 import { db, orders } from '@/db';
 import { eq } from 'drizzle-orm';
+import { secretsMatch } from '@/lib/webhook-auth';
 
 const log = createLogger('events');
-const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
 
 interface SettlementPayload {
   orderId: string;
@@ -24,6 +24,8 @@ interface SettlementPayload {
   fees: Array<{ role: string; name: string; rateBps: number; fixedCents: number; amount: number; estimated: boolean }>;
   chain: Array<{ did: string; amount: number; role: string }>;
   metadata?: Record<string, unknown>;
+  /** `stripe-byo` for a payment collected on the seller's own Stripe account (nothing distributed on-platform). */
+  rail?: string;
 }
 interface BusWebhookEnvelope<TPayload> {
   payload?: TPayload;
@@ -32,7 +34,8 @@ interface BusWebhookEnvelope<TPayload> {
 export async function POST(request: NextRequest) {
   try {
     const secret = request.headers.get('x-webhook-secret');
-    if (!WEBHOOK_SECRET || secret !== WEBHOOK_SECRET) {
+    const expected = process.env.WEBHOOK_SECRET;
+    if (!expected || !secretsMatch(secret, expected)) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
@@ -51,6 +54,7 @@ export async function POST(request: NextRequest) {
       currency: payload.currency,
       fees: payload.fees,
       chain: payload.chain,
+      ...(payload.rail && { rail: payload.rail }),
     };
 
     await db

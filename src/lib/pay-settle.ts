@@ -37,6 +37,13 @@ import { getPayAppToken, invalidatePayAppToken } from './pay-app-token';
 
 const BUYER_PLACEHOLDER = 'BUYER_PLACEHOLDER';
 
+/**
+ * `rail` the kernel reports for a card payment collected on the seller's OWN Stripe account
+ * (BYO connector, no Connect: imajin-ai#2757/#2766). The kernel has already completed such a
+ * payment, so its notification IS the settlement and `/pay/api/settle` refuses it (409).
+ */
+export const STRIPE_BYO_RAIL = 'stripe-byo';
+
 /** Zero-rate processor fee: resolve the chain against the GROSS payment total (see module docs). */
 const NO_PROCESSOR_FEE = [{ role: 'processor', rateBps: 0, fixedCents: 0 }];
 
@@ -299,6 +306,23 @@ export async function settleOrderViaPay(params: SettleOrderParams): Promise<Sett
 // Receipt
 // ---------------------------------------------------------------------------
 
+/** The fields of a pay `checkout.completed` notification that say how the payment was collected. */
+export interface PaymentNotificationRail {
+  rail?: string;
+  sellerDid?: string;
+  metadata?: { sellerDid?: string };
+}
+
+/**
+ * True when the payment was collected on the seller's own Stripe account and the kernel has
+ * already settled it, so events must record the receipt and NOT call `/pay/api/settle`.
+ * Every events card checkout is BYO-railed (sellerDid always set, platform fee 0); the kernel
+ * does not forward `rail` yet (imajin-ai#2776), so a present `sellerDid` is the interim indicator.
+ */
+export function isByoPayment(notification: PaymentNotificationRail): boolean {
+  return notification.rail === STRIPE_BYO_RAIL || Boolean(notification.sellerDid ?? notification.metadata?.sellerDid);
+}
+
 export interface SettlementReceiptParams {
   orderId: string;
   eventId: string;
@@ -310,6 +334,8 @@ export interface SettlementReceiptParams {
   fairManifest: unknown;
   metadata: Record<string, unknown>;
   manifest: PayeeManifest;
+  /** Set when the payment never touched the platform (BYO rail): net equals gross and no chain is carried. */
+  rail?: string;
 }
 
 export interface SettleCompletedOrderParams extends Omit<SettlementReceiptParams, 'manifest'> {
@@ -370,13 +396,29 @@ export async function publishSettlementReceipt(params: SettlementReceiptParams, 
         amount: params.amountCents,
         currency: params.currency,
         totalAmount: params.amountCents / 100,
-        netAmount: settledTotal,
+        netAmount: params.rail ? params.amountCents / 100 : settledTotal,
         fees,
         chain: params.manifest.chain,
         metadata: params.metadata,
+        ...(params.rail && { rail: params.rail }),
       },
     });
   } catch (err) {
     log.error({ err: String(err), orderId: params.orderId }, '[settle] Failed to publish settlement.completed (non-fatal)');
   }
+}
+
+export interface RecordByoSettlementParams extends Omit<SettlementReceiptParams, 'manifest' | 'fairManifest' | 'rail'> {
+  log: Logger;
+}
+
+/**
+ * Record the receipt of a payment collected on the seller's own Stripe account (BYO rail). The
+ * kernel already settled it, so there is nothing to settle on-platform: announce
+ * `settlement.completed` with an empty chain and no fees so the order's receipt snapshot still
+ * lands, and never call `/pay/api/settle`. Non-fatal, like {@link publishSettlementReceipt}.
+ */
+export async function recordByoSettlement(params: RecordByoSettlementParams): Promise<void> {
+  const { log, ...receipt } = params;
+  await publishSettlementReceipt({ ...receipt, fairManifest: null, manifest: { chain: [] }, rail: STRIPE_BYO_RAIL }, log);
 }

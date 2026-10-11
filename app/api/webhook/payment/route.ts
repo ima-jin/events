@@ -19,7 +19,8 @@ import { backfillContactEmail } from '@/lib/contact-email';
 import { createOrderWithTickets } from '@/lib/checkout-common';
 import { eventRegisterUrl, eventMyTicketsUrl, buildPublicUrlAbsolute } from '@ima-jin/config';
 import * as bus from '@/lib/domain-events';
-import { settleCompletedOrder } from '@/lib/pay-settle';
+import { isByoPayment, recordByoSettlement, settleCompletedOrder } from '@/lib/pay-settle';
+import { isBearerAuthorized } from '@/lib/webhook-auth';
 import {
   parseCartFromMetadata,
   syncBuyerToEventChat,
@@ -27,9 +28,6 @@ import {
   type CartEntry,
 } from '@/lib/webhook-payment-helpers';
 
-// Shared secret between pay service and events service.
-// In production, use proper service-to-service auth.
-const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET!;
 const AUTH_URL = (serviceUrl('auth') ?? '');
 
 /**
@@ -217,6 +215,8 @@ interface WebhookSettlementParams {
   sessionId: string;
   /** Kernel `transactionId` of the app-authenticated checkout, when the pay webhook carries it. */
   transactionId?: string;
+  /** Paid on the seller's own Stripe account (BYO rail): the kernel already settled it. */
+  byo: boolean;
 }
 
 /**
@@ -227,29 +227,34 @@ interface WebhookSettlementParams {
  * Non-fatal — settlement failures are logged, not thrown.
  */
 async function triggerWebhookSettlement(params: WebhookSettlementParams): Promise<void> {
-  const { ownerDid, event, orderId, amountTotal, currency, createdTickets, firstTypeId, sessionId, transactionId } = params;
+  const { ownerDid, event, orderId, amountTotal, currency, createdTickets, firstTypeId, sessionId, transactionId, byo } = params;
   const eventMetadata = (event.metadata || {}) as { fair?: unknown };
 
-  try {
-    await settleCompletedOrder({
-      sessionId,
-      transactionId,
+  const receipt = {
+    orderId,
+    eventId: event.id,
+    buyerDid: ownerDid,
+    creatorDid: event.creatorDid,
+    amountCents: amountTotal,
+    currency,
+    metadata: {
       orderId,
+      ticketIds: createdTickets.map((t) => t.id),
+      ticketTypeId: firstTypeId,
+      stripeSessionId: sessionId,
       eventId: event.id,
-      buyerDid: ownerDid,
-      creatorDid: event.creatorDid,
-      amountCents: amountTotal,
-      currency,
-      fairManifest: eventMetadata.fair || null,
-      metadata: {
-        orderId,
-        ticketIds: createdTickets.map((t) => t.id),
-        ticketTypeId: firstTypeId,
-        stripeSessionId: sessionId,
-        eventId: event.id,
-      },
-      log,
-    });
+    },
+    log,
+  };
+
+  try {
+    if (byo) {
+      // Paid on the seller's own Stripe account: the kernel already settled it and told us, so this
+      // notification IS the settlement. Record the receipt; `/pay/api/settle` would refuse it (409).
+      await recordByoSettlement(receipt);
+      return;
+    }
+    await settleCompletedOrder({ ...receipt, sessionId, transactionId, fairManifest: eventMetadata.fair || null });
   } catch (settleError) {
     log.error({ err: String(settleError) }, '[settle] Unexpected settlement error (non-fatal)');
   }
@@ -289,6 +294,10 @@ interface PaymentWebhookPayload {
   paymentId?: string;
   /** Kernel `transactionId` of the app-authenticated checkout — the key `/pay/api/settle` needs (imajin-ai#2739). */
   transactionId?: string;
+  /** `stripe-byo` when collected on the seller's own Stripe account (the kernel does not forward it yet, imajin-ai#2776). */
+  rail?: string;
+  /** Present when the payment was made to a seller's own account — the interim BYO indicator. */
+  sellerDid?: string;
   customerEmail: string;
   customerName?: string | null;
   amountTotal: number;
@@ -303,13 +312,14 @@ interface PaymentWebhookPayload {
     cart?: string;
     totalQuantity?: string;
     buyerDid?: string;
+    sellerDid?: string;
   };
 }
 
 export const POST = withLogger('events', async (request, { log }) => {
   try {
-    const authHeader = request.headers.get('authorization');
-    if (authHeader !== `Bearer ${WEBHOOK_SECRET}`) {
+    // Constant-time compare; fails closed (401) when WEBHOOK_SECRET is not configured.
+    if (!isBearerAuthorized(request.headers.get('authorization'), process.env.WEBHOOK_SECRET)) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
@@ -414,6 +424,7 @@ async function handleCheckoutCompleted(payload: PaymentWebhookPayload) {
     firstTypeId: firstType.id,
     sessionId,
     transactionId,
+    byo: isByoPayment(payload),
   });
 
   // Build onboard token for magic-link auth in confirmation email

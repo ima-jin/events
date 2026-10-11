@@ -31,6 +31,9 @@ import {
   buildPayeeManifest,
   chainNeedsBuyerDid,
   hasSettleableChain,
+  isByoPayment,
+  recordByoSettlement,
+  STRIPE_BYO_RAIL,
   prepareAppCheckout,
   publishSettlementReceipt,
   settleCompletedOrder,
@@ -490,6 +493,64 @@ describe('publishSettlementReceipt', () => {
     mocks.publishMock.mockRejectedValue(new Error('bus down'));
 
     await expect(publishSettlementReceipt(receipt, log)).resolves.toBeUndefined();
+    expect(logError).toHaveBeenCalled();
+  });
+});
+
+describe('isByoPayment', () => {
+  it('is true for the stripe-byo rail', () => {
+    expect(isByoPayment({ rail: STRIPE_BYO_RAIL })).toBe(true);
+  });
+
+  it('treats a present sellerDid as the BYO indicator until the kernel forwards rail (imajin-ai#2776)', () => {
+    expect(isByoPayment({ sellerDid: ORGANIZER })).toBe(true);
+    expect(isByoPayment({ metadata: { sellerDid: ORGANIZER } })).toBe(true);
+  });
+
+  it('is false for a platform-collected payment', () => {
+    expect(isByoPayment({})).toBe(false);
+    expect(isByoPayment({ rail: 'platform', sellerDid: '', metadata: {} })).toBe(false);
+  });
+});
+
+describe('recordByoSettlement', () => {
+  const receiptParams = {
+    orderId: ORDER.orderId,
+    eventId: ORDER.eventId,
+    buyerDid: ORDER.buyerDid,
+    creatorDid: ORDER.creatorDid,
+    amountCents: ORDER.amountCents,
+    currency: ORDER.currency,
+    metadata: ORDER.metadata,
+    log,
+  };
+
+  it('announces a gross receipt with no chain and no fees, and never calls pay', async () => {
+    const fetchMock = vi.fn();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await recordByoSettlement(receiptParams);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mocks.getPayAppTokenMock).not.toHaveBeenCalled();
+    expect(mocks.publishMock).toHaveBeenCalledTimes(1);
+    const [type, event] = mocks.publishMock.mock.calls[0]!;
+    expect(type).toBe('settlement.completed');
+    expect(event.payload).toMatchObject({
+      orderId: 'ord_1',
+      amount: 10_000,
+      totalAmount: 100,
+      netAmount: 100,
+      chain: [],
+      fees: [],
+      rail: STRIPE_BYO_RAIL,
+    });
+  });
+
+  it('is non-fatal when the bus publish fails', async () => {
+    mocks.publishMock.mockRejectedValue(new Error('bus down'));
+
+    await expect(recordByoSettlement(receiptParams)).resolves.toBeUndefined();
     expect(logError).toHaveBeenCalled();
   });
 });
