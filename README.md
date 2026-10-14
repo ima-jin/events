@@ -1,5 +1,7 @@
 # imajin-events
 
+Claim-page-only rollout is tracked in #40.
+
 > Forked from [`ima-jin/imajin-app-template`](https://github.com/ima-jin/imajin-app-template). **Read
 > [`AGENTS.md`](./AGENTS.md) first** — it defines the boundary this app must not cross.
 
