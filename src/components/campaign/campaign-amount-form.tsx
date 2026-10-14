@@ -27,14 +27,14 @@ export function CampaignAmountForm({ busy, onPledge }: Readonly<{
       <p>You will not be charged until the campaign reaches its goal.</p>
       <div className="flex flex-wrap gap-2">
         {PRESETS.map((preset) => (
-          <button className="rounded-lg border px-4 py-2" type="button" key={preset}
+          <button className={amount === String(preset) ? 'rounded-lg border border-orange-500 bg-orange-600 px-4 py-2 text-white' : 'rounded-lg border px-4 py-2'} type="button" key={preset}
             disabled={busy} aria-pressed={amount === String(preset)} onClick={() => setAmount(String(preset))}>
             ${preset}
           </button>
         ))}
       </div>
       <label className="block">
-        Pledge amount (CAD)
+        <span>Pledge amount (CAD)</span>
         <input className="ml-2 rounded border p-2 text-black" inputMode="decimal" value={amount}
           disabled={busy} onChange={(event) => setAmount(event.target.value)} />
       </label>

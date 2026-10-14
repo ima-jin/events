@@ -1,5 +1,5 @@
 import { useEffect, type ReactNode } from 'react';
-import { render } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { vi } from 'vitest';
 import type { CampaignSection, CampaignSectionProps } from '@/components/campaign/campaign-section';
@@ -67,4 +67,10 @@ export function givenReturn(binding: Record<string, unknown> = {}) {
   }));
   globalThis.history.replaceState(null, '',
     '/evt_1?setup_intent=seti_1&setup_intent_client_secret=seti_1_secret_example&redirect_status=succeeded&keep=yes');
+}
+
+export async function startSetup(user: ReturnType<typeof renderCampaign>['user']) {
+  await user.click(await screen.findByRole('button', { name: '$25' }));
+  await user.click(screen.getByRole('button', { name: 'Continue to card setup' }));
+  await screen.findByLabelText('Secure card form');
 }

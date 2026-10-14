@@ -28,11 +28,10 @@ export function confirmationFor(pledgeId: string, intent: SetupIntent): Campaign
   return { pledgeId, setupIntentId: intent.id, paymentMethodId };
 }
 
-export function rememberCampaignSetup(eventId: string, setup: CampaignSetup) {
-  const setupIntentId = setup.clientSecret.split('_secret_')[0];
+export function rememberCampaignSetup(eventId: string, pledgeId: string, setupIntentId: string) {
   // Only non-secret binding information is persisted for a possible Stripe redirect.
   globalThis.sessionStorage.setItem(CAMPAIGN_RETURN_KEY, JSON.stringify({
-    eventId, pledgeId: setup.pledgeId, setupIntentId, createdAt: Date.now(),
+    eventId, pledgeId, setupIntentId, createdAt: Date.now(),
   }));
 }
 
@@ -50,8 +49,8 @@ export function readCampaignReturn() {
 
 function validateReturnBinding(eventId: string, pledge: CampaignPledge | null, setupIntentId: string | null) {
   const binding = JSON.parse(globalThis.sessionStorage.getItem(CAMPAIGN_RETURN_KEY) ?? 'null');
-  if (!pledge || pledge.status !== 'pending') throw new Error('No pending pledge');
-  if (!binding || binding.eventId !== eventId || binding.pledgeId !== pledge.id) throw new Error('Unmatched pledge');
+  if (pledge?.status !== 'pending') throw new Error('No pending pledge');
+  if (binding?.eventId !== eventId || binding.pledgeId !== pledge.id) throw new Error('Unmatched pledge');
   if (!setupIntentId || binding.setupIntentId !== setupIntentId) throw new Error('Unmatched setup');
   const age = Date.now() - binding.createdAt;
   if (!Number.isFinite(binding.createdAt) || age < 0 || age > 3_600_000) throw new Error('Expired binding');
@@ -66,7 +65,7 @@ export async function reconcileCampaignReturn(
   const stripe = await campaignStripe();
   if (!stripe) throw new Error('Unavailable Stripe');
   const result = await stripe.retrieveSetupIntent(returned.secret);
-  if (result.error || !result.setupIntent || result.setupIntent.id !== returned.setupIntentId) {
+  if (result.error || result.setupIntent?.id !== returned.setupIntentId) {
     throw new Error('Invalid setup');
   }
   return confirmationFor(pledgeId, result.setupIntent);

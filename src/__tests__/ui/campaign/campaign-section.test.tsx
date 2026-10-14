@@ -4,7 +4,7 @@ import { screen, waitFor } from '@testing-library/react';
 import { CampaignSection, type CampaignSectionProps } from '@/components/campaign/campaign-section';
 import {
   campaignRoutes, elementsDouble, givenReturn, jsonResponse, loadStripeDouble,
-  renderCampaign as renderCampaignComponent, requestBody, resetCampaign, stripeDouble, successIntent,
+  renderCampaign as renderCampaignComponent, requestBody, resetCampaign, stripeDouble, successIntent, startSetup,
 } from '../../support/campaign-ui-support';
 
 vi.mock('@stripe/stripe-js', async () => ({
@@ -18,11 +18,6 @@ function renderCampaign(props: Partial<CampaignSectionProps> = {}) {
   return renderCampaignComponent(CampaignSection, props);
 }
 
-async function startSetup(user: ReturnType<typeof renderCampaign>['user']) {
-  await user.click(await screen.findByRole('button', { name: '$25' }));
-  await user.click(screen.getByRole('button', { name: 'Continue to card setup' }));
-  await screen.findByLabelText('Secure card form');
-}
 
 describe('campaign display and availability', () => {
   it('prefixes API requests when mounted below a base path', async () => {
@@ -78,7 +73,7 @@ describe('campaign display and availability', () => {
     expect(await screen.findByRole('alert')).toBeTruthy();
     expect(screen.queryByRole('button', { name: '$25' })).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Retry campaign' }));
-    await waitFor(() => expect(fetch.mock.calls.filter(([url]) => String(url).includes(path)).length).toBe(2));
+    await waitFor(() => expect(fetch.mock.calls.filter(([url]) => String(url).includes(path))).toHaveLength(2));
   });
 });
 
@@ -143,6 +138,21 @@ describe('pledge and card setup', () => {
     await user.click(await screen.findByRole('button', { name: '$25' }));
     await user.click(screen.getByRole('button', { name: 'Continue to card setup' }));
     expect(await screen.findByRole('alert')).toBeTruthy();
+    expect(screen.queryByText(/private-secret/)).toBeNull();
+  });
+
+  it('shows the selected preset and fails closed when Stripe cannot retrieve the created intent', async () => {
+    stripeDouble.retrieveSetupIntent.mockResolvedValue({ error: { message: 'private-secret' } });
+    campaignRoutes();
+    const { user } = renderCampaign();
+    const preset = await screen.findByRole('button', { name: '$25' });
+    await user.click(preset);
+    expect(preset.getAttribute('aria-pressed')).toBe('true');
+    expect(preset.className).toContain('bg-orange-600');
+    await user.click(screen.getByRole('button', { name: 'Continue to card setup' }));
+    expect(await screen.findByRole('alert')).toBeTruthy();
+    expect(screen.queryByLabelText('Secure card form')).toBeNull();
+    expect(globalThis.sessionStorage.getItem('events.campaign.setup')).toBeNull();
     expect(screen.queryByText(/private-secret/)).toBeNull();
   });
 
