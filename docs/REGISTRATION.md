@@ -60,6 +60,32 @@ that proxy: bind to loopback/private networking and firewall direct access.
 Requests without a usable proxy address share a separately capped fallback bucket.
 Claim codes, SDK errors and keystore contents are never logged or returned to the browser.
 
+## Vault-only boot credentials
+
+Root `imajin.app.json` declares the session and ticket QR recipes (names and kinds only).
+The kernel issues and seals missing declarations during provision/claim. For an already
+registered app, select **Sync manifest secrets** on `/jin` and countersign the proposal.
+Never generate, see, paste or copy the resulting credentials.
+
+After establishing the bootstrap keystore, events awaits the published
+`@ima-jin/auth-client@0.8.18` app-keystore `loadFromVault` for each required declaration.
+Only after both load successfully does it activate the signing identity. Session and
+ticket QR signing/verification read these values lazily from shared server memory;
+imports and builds need no credentials. No value is persisted, logged or assigned to env,
+and stale env entries are ignored with a names-only deletion warning. Without a keystore the existing browser claim gate remains;
+the claim exchange also waits for the vault before activating.
+
+A refused, missing or unreachable secret aborts boot with a value-free line naming the
+declaration, exit status 1, and instructions to use **Sync manifest secrets** on `/jin`,
+countersign, and restart. No partial credentials or env fallback are accepted.
+If claim succeeds but loading fails, the bootstrap keystore remains bound: resolve the
+vault problem through `/jin` and restart rather than redeeming the spent code again.
+
+To rotate, select **Rotate** on `/jin`, countersign, then restart events through the
+operator's deployment tool. The next boot fetches the current generation with no file edit.
+Session rotation signs users out; QR rotation invalidates previous tokens after restart
+(reissue through the holder/email paths). Ticket-v1 semantics are otherwise unchanged.
+
 ## Scoped authority
 
 Events' user-token audience is the **registry slug `events`**, not the shared kernel

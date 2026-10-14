@@ -9,6 +9,12 @@ import { NextRequest } from 'next/server';
 import { middleware } from '../../../../middleware';
 import { GET as health } from '../../health/route';
 import { POST } from '../route';
+import { loadFromVault } from '@ima-jin/auth-client';
+import { resetSelfSecretsForTests } from '@/lib/self-secrets';
+vi.mock('@ima-jin/auth-client', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@ima-jin/auth-client')>(),
+  loadFromVault: vi.fn(),
+}));
 
 const KERNEL_URL = 'https://dev-jin.imajin.test';
 const RATE_LIMIT = 5;
@@ -39,10 +45,17 @@ describe('POST /api/claim', () => {
     vi.stubEnv('IMAJIN_KERNEL_URL', KERNEL_URL);
     vi.stubEnv('IMAJIN_APP_KEYSTORE', join(workDir, 'keystore.json'));
     vi.stubEnv('IMAJIN_APP_DID', '');
+    vi.mocked(loadFromVault).mockResolvedValue({
+      values: {
+        SESSION_SECRET: 'FAKE_SESSION_TEST_ONLY_'.repeat(4),
+        TICKET_QR_SECRET: 'FAKE_QR_TEST_ONLY_'.repeat(4),
+      }, degraded: [],
+    });
   });
 
   afterEach(async () => {
     resetSigningIdentityForTests();
+    resetSelfSecretsForTests();
     resetClaimRateLimitForTests();
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();

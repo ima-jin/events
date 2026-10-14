@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { generateQRCode } from '@/lib/email';
 import { verifyTicketQrToken } from '@/lib/ticket-qr-token';
+import { prepareTestVault } from './support/vault-fixture';
+import { resetSelfSecretsForTests } from '@/lib/self-secrets';
+vi.mock('@ima-jin/auth-client', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@ima-jin/auth-client')>(),
+  loadFromVault: vi.fn(),
+}));
 
 const { toDataURL } = vi.hoisted(() => ({
   toDataURL: vi.fn<(token: string) => Promise<string>>(),
@@ -8,11 +14,11 @@ const { toDataURL } = vi.hoisted(() => ({
 vi.mock('qrcode', () => ({ default: { toDataURL } }));
 vi.mock('@ima-jin/logger', () => ({ createLogger: () => ({ error: vi.fn() }) }));
 
-beforeEach(() => {
-  vi.stubEnv('TICKET_QR_SECRET', 'email-qr-test-fixture-'.repeat(4));
+beforeEach(async () => {
+  await prepareTestVault();
   toDataURL.mockReset();
 });
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => resetSelfSecretsForTests());
 
 describe('shared ticket QR generation', () => {
   it('encodes signed tokens for both the API and every email issuance path', async () => {
@@ -29,7 +35,7 @@ describe('shared ticket QR generation', () => {
   });
 
   it('never falls back to a raw ID when signing is unavailable', async () => {
-    vi.stubEnv('TICKET_QR_SECRET', '');
+    resetSelfSecretsForTests();
     expect(await generateQRCode('tkt_email')).toBe('');
     expect(toDataURL).not.toHaveBeenCalled();
   });

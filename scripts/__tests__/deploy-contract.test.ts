@@ -30,8 +30,6 @@ function validEnv(target = 'dev'): Record<string, string> {
     IMAJIN_ENV: target === 'dev' ? 'dev' : '',
     IMAJIN_APP_DID: 'did:imajin:fixture',
     IMAJIN_APP_KEYSTORE: `/fixture/events.${target}.keystore.json`,
-    SESSION_SECRET: 's'.repeat(64),
-    TICKET_QR_SECRET: 'q'.repeat(64),
     WEBHOOK_SECRET: 'w'.repeat(64),
   };
 }
@@ -217,7 +215,7 @@ describe('deploy environment guard', () => {
       expect(result.stderr).toContain('claim at /events/claim after boot');
       expect(result.stderr).not.toMatch(/^error:/m);
       expect(result.stdout).toContain('Environment validated');
-      for (const secret of [env.SESSION_SECRET, env.WEBHOOK_SECRET, env.DATABASE_URL]) {
+      for (const secret of [env.WEBHOOK_SECRET, env.DATABASE_URL]) {
         expect(result.stdout + result.stderr).not.toContain(secret);
       }
     } finally {
@@ -230,10 +228,19 @@ describe('deploy environment guard', () => {
     expect(validateEnvironment({}, 'dev', () => false).join('\n')).toContain('DATABASE_URL: required');
   });
 
-  it('requires the app-held ticket QR secret without exposing values', () => {
+  it('accepts vault-only self-secrets and ignores stale env placeholders', () => {
     const env = validEnv();
-    delete env.TICKET_QR_SECRET;
-    expect(validateEnvironment(env, 'dev', () => true)).toContain('TICKET_QR_SECRET: required');
+    expect(validateEnvironment(env, 'dev', () => true)).toEqual([]);
+    expect(validateEnvironment({
+      ...env, SESSION_SECRET: 'FAKE_IGNORED', TICKET_QR_SECRET: 'FAKE_IGNORED',
+    }, 'dev', () => true)).toEqual([]);
+    for (const name of ['SESSION_SECRET', 'TICKET_QR_SECRET']) {
+      expect(ENV_NAMES).not.toContain(name);
+      for (const path of ['.env.example', '.env.dev.example', '.env.prod.example',
+        'scripts/check-env.mjs', 'docs/ENVIRONMENTS.md', 'docs/DEPLOY.md', 'README.md']) {
+        expect(read(path)).not.toContain(name);
+      }
+    }
   });
 
   it.each(['IMAJIN_APP_PRIVATE_KEY', 'AUTH_INTERNAL_API_KEY', 'PROFILE_INTERNAL_API_KEY',
@@ -256,8 +263,8 @@ describe('deploy environment guard', () => {
     ['APP_DB_SCHEMA', 'other'], ['NEXT_PUBLIC_BASE_PATH', ''],
     ['NEXT_PUBLIC_DOMAIN', 'other'], ['NEXT_PUBLIC_SERVICE_PREFIX', ''],
     ['IMAJIN_ENV', ''], ['IMAJIN_APP_DID', 'invalid'],
-    ['IMAJIN_APP_AUD', 'jin.imajin.ai'], ['SESSION_SECRET', 'short'],
-    ['TICKET_QR_SECRET', 'short'], ['WEBHOOK_SECRET', 'short'], ['ENABLE_TICKET_MIGRATION', 'true'],
+    ['IMAJIN_APP_AUD', 'jin.imajin.ai'],
+    ['WEBHOOK_SECRET', 'short'], ['ENABLE_TICKET_MIGRATION', 'true'],
     ['IMAJIN_APP_KEYSTORE', './relative.json'],
   ])('refuses %s drift', (name, value) => {
     expect(validateEnvironment({ ...validEnv(), [name]: value }, 'dev', () => true).join('\n')).toContain(name);
@@ -280,7 +287,7 @@ describe('deploy environment guard', () => {
       expect(checkFile('dev', file)).toHaveLength(2);
       const rejected = cli('dev', file);
       expect(rejected.status).toBe(1);
-      expect(rejected.stdout + rejected.stderr).not.toContain(env.SESSION_SECRET);
+      expect(rejected.stdout + rejected.stderr).not.toContain(env.WEBHOOK_SECRET);
       expect(cli('dev', file, 'extra').status).toBe(2);
       expect(cli('dev', join(dir, 'missing')).status).toBe(2);
     } finally {

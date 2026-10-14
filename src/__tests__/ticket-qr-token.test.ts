@@ -1,18 +1,25 @@
 import { createHmac } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createTicketQrToken, verifyTicketQrToken } from '@/lib/ticket-qr-token';
+import { FAKE_QR, prepareTestVault } from './support/vault-fixture';
+import { resetSelfSecretsForTests } from '@/lib/self-secrets';
+vi.mock('@ima-jin/auth-client', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@ima-jin/auth-client')>(),
+  loadFromVault: vi.fn(),
+}));
 
 const TICKET_ID = 'tkt_security';
-const SECRET = 'test-qr-secret-'.repeat(5);
+const SECRET = FAKE_QR;
 const NOW = 2_000_000_000;
 
-beforeEach(() => {
-  vi.stubEnv('TICKET_QR_SECRET', SECRET);
+beforeEach(async () => {
+  await prepareTestVault();
   vi.spyOn(Date, 'now').mockReturnValue(NOW * 1000);
 });
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
+  resetSelfSecretsForTests();
 });
 
 describe('ticket QR tokens', () => {
@@ -26,9 +33,9 @@ describe('ticket QR tokens', () => {
     expect(verifyTicketQrToken(createTicketQrToken(TICKET_ID), 'tkt_other')).toBe(false);
   });
 
-  it('rejects tokens forged using another secret', () => {
+  it('rejects tokens forged using another secret', async () => {
     const token = createTicketQrToken(TICKET_ID);
-    vi.stubEnv('TICKET_QR_SECRET', 'different-test-secret-'.repeat(4));
+    await prepareTestVault('FAKE_ROTATED_QR_TEST_ONLY_'.repeat(4));
     expect(verifyTicketQrToken(token, TICKET_ID)).toBe(false);
   });
 
@@ -54,9 +61,9 @@ describe('ticket QR tokens', () => {
     expect(verifyTicketQrToken(`ticket-v1.${payload}.${signed}`, TICKET_ID)).toBe(false);
   });
 
-  it.each(['', 'short'])('fails closed when the app secret is absent or weak', (value) => {
+  it('fails closed when the vault credentials are not loaded', () => {
     const token = createTicketQrToken(TICKET_ID);
-    vi.stubEnv('TICKET_QR_SECRET', value);
+    resetSelfSecretsForTests();
     expect(() => createTicketQrToken(TICKET_ID)).toThrow('TICKET_QR_SECRET');
     expect(() => verifyTicketQrToken(token, TICKET_ID)).toThrow('TICKET_QR_SECRET');
   });

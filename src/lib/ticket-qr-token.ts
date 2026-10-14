@@ -1,17 +1,11 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
+import { getSelfSecret } from './self-secrets';
 
 const VERSION = 'ticket-v1';
 
-function secret(): string {
-  const value = process.env.TICKET_QR_SECRET;
-  if (!value || value.length < 64) {
-    throw new Error('TICKET_QR_SECRET requires at least 64 characters');
-  }
-  return value;
-}
 
 function signature(payload: string): Buffer {
-  return createHmac('sha256', secret()).update(`${VERSION}.${payload}`).digest();
+  return createHmac('sha256', getSelfSecret('TICKET_QR_SECRET')).update(`${VERSION}.${payload}`).digest();
 }
 
 /** Optional expiry is a Unix timestamp in seconds; omitted for long-lived emailed tickets. */

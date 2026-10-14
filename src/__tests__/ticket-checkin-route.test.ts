@@ -36,6 +36,11 @@ import {
 } from './support/ticket-route-support';
 import { POST } from '../../app/api/events/[id]/tickets/[ticketId]/check-in/route';
 import { createTicketQrToken } from '@/lib/ticket-qr-token';
+import { prepareTestVault } from './support/vault-fixture';
+vi.mock('@ima-jin/auth-client', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@ima-jin/auth-client')>(),
+  loadFromVault: vi.fn(),
+}));
 
 const ATTENDEE_DID = 'did:imajin:attendee';
 const USED_AT = '2026-07-14T14:00:00.000Z';
@@ -57,9 +62,9 @@ function queueCheckIn(ticket: Record<string, unknown> = VALID_TICKET): void {
 }
 
 describe('POST /api/events/[id]/tickets/[ticketId]/check-in', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     resetTicketRouteMocks();
-    vi.stubEnv('TICKET_QR_SECRET', 'qr-test-fixture-'.repeat(5));
+    await prepareTestVault();
   });
 
   itReturns401WhenAuthFails(callCheckIn);
