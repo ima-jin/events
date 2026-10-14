@@ -20,6 +20,19 @@ const HEADERS = [
   'Surveys Completed Count',
 ];
 
+/** Safe overview shared by the platform-admin page; authorization is required by its caller. */
+export async function listAdminEvents() {
+  const rows = await listAdminEventRows();
+  return rows.map((row) => ({
+    id: row.id,
+    title: row.title,
+    status: row.status,
+    startsAt: isoOrBlank(row.starts_at),
+    city: row.city,
+    creatorDid: row.creator_did,
+  }));
+}
+
 interface LookupBody {
   handle?: string | null;
   identity?: { handle?: string | null };
