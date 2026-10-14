@@ -5,9 +5,9 @@
  * and charge-pledges calls as ITSELF with an app-service token minted from the
  * kernel by proving possession of its own signing key — never a shared key.
  *
- * The signing key is read through the standard `loadAppSigningKey` claim-code
- * path (`IMAJIN_APP_CLAIM_CODE` on first boot, the local bootstrap keystore on
- * every later boot) and kept in memory only. This module does not mint or
+ * The signing key is read through `loadAppSigningKey` using the local
+ * bootstrap keystore created by the browser claim page, and kept in memory
+ * only. Environment claiming is disabled. This module does not mint or
  * invent an app DID or key: when events is not registered/provisioned yet,
  * `loadAppSigningKey` throws and the callers fail closed.
  *
@@ -20,8 +20,7 @@ import { loadAppSigningKey } from '@ima-jin/auth-client';
 import { createAppServiceTokenProvider, type AppServiceTokenProvider } from './app-service-token';
 
 // Held on `globalThis` (not a module-level `let`): Next can bundle this module into more than one
-// route chunk of the same server process, and a one-time claim code can only be redeemed once — a
-// second copy that tried to load the key again would fail on a spent code.
+// route chunk of the same server process; all copies should share one token provider.
 const PROVIDER_KEY = Symbol.for('@ima-jin/events:pay-app-token-provider');
 type ProviderHolder = { [PROVIDER_KEY]?: Promise<AppServiceTokenProvider> | null };
 
@@ -34,7 +33,7 @@ async function createProvider(): Promise<AppServiceTokenProvider> {
   if (!kernelUrl) {
     throw new Error('events pay app token: IMAJIN_KERNEL_URL is not set');
   }
-  const signingKey = await loadAppSigningKey({ kernelUrl, hostHint: 'events' });
+  const signingKey = await loadAppSigningKey({ kernelUrl, hostHint: 'events', claimCode: '' });
   return createAppServiceTokenProvider({ kernelUrl, appDid: signingKey.appDid, privateKey: signingKey.privateKey });
 }
 

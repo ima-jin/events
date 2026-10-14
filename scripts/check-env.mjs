@@ -93,8 +93,8 @@ export function validateEnvironment(env, target, keystoreExists = existsSync, wa
   checkUrls(env, target === 'dev' ? 'dev-jin.imajin.ai' : 'jin.imajin.ai', problems);
   checkTargetSettings(env, target, problems);
   checkIdentityAndSecrets(env, target, problems);
-  if (!keystoreExists(env.IMAJIN_APP_KEYSTORE || '') && !env.IMAJIN_APP_CLAIM_CODE) {
-    warnings.push("No keystore found and IMAJIN_APP_CLAIM_CODE is not set — claim at /events/claim after boot with the one-time code from the operator's /jin approval card (docs/REGISTRATION.md).");
+  if (!keystoreExists(env.IMAJIN_APP_KEYSTORE || '')) {
+    warnings.push("No keystore found — claim at /events/claim after boot with the one-time code from the operator's /jin approval card (docs/REGISTRATION.md).");
   }
   return problems;
 }

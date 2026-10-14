@@ -8,11 +8,11 @@ import { bootstrapSigningIdentity } from '@/lib/signing-identity';
  * This app is registered with the Imajin kernel (see docs/REGISTRATION.md)
  * and is identified by its own DID. It never reads a raw private key out of
  * an env file — its signing key comes from `@ima-jin/auth-client`'s
- * `loadAppSigningKey()` boot path (one-time claim code on first boot, local
- * bootstrap keystore on every later boot; see #7 and docs/REGISTRATION.md).
+ * `loadAppSigningKey()` boot path (local bootstrap keystore on later boots;
+ * first claim happens in the browser; see #7 and docs/REGISTRATION.md).
  * Refusing to boot on a misconfigured env catches the problem immediately
  * instead of serving requests no kernel call could ever authenticate.
- * Without a keystore or optional env claim code, bootstrap returns unclaimed;
+ * Without a keystore, bootstrap returns unclaimed;
  * middleware gates ordinary routes until the operator claims at /events/claim.
  */
 export function validateSigningKeyBootEnv(): void {

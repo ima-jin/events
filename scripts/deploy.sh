@@ -44,7 +44,7 @@ main() {
     });
   ' "$name" "$root")" || fail "Invalid/stale pm2 definition; operator must verify, then pm2 delete $name && pm2 save at approved cutover"
 
-  # File is authoritative; never inherit a DATABASE_URL, claim code or kernel URL.
+  # File is authoritative; never inherit a DATABASE_URL or kernel URL.
   local variable
   while IFS= read -r variable; do unset "$variable"; done < <(
     node --input-type=module -e 'import { ENV_NAMES } from "./scripts/check-env.mjs"; console.log(ENV_NAMES.join("\n"));'
@@ -57,7 +57,7 @@ main() {
   node --env-file=.env.local scripts/migrate-baseline.mjs
   node --env-file=.env.local node_modules/drizzle-kit/bin.cjs migrate
 
-  # Only after validation/build/baseline succeed. First boot claims through instrumentation.
+  # Only after validation/build/baseline succeed. First claim happens in the browser.
   if [[ "$existing" == "present" ]]; then
     pm2 restart ecosystem.config.cjs --only "$name" --update-env
   else
@@ -68,7 +68,7 @@ main() {
   for ((attempt=1; attempt<=30; attempt++)); do
     if curl -fsS --max-time 5 "http://127.0.0.1:$port/events/api/health" | \
       node -e 'let s=""; process.stdin.on("data", c=>{s+=c;}); process.stdin.on("end",()=>{try{const r=JSON.parse(s);process.exit(r.status==="ok"&&r.service==="imajin-events"?0:1);}catch{process.exit(1);}})'; then
-      printf 'Healthy: %s. First boot: remove spent IMAJIN_APP_CLAIM_CODE from .env.local.\n' "$name"
+      printf 'Healthy: %s. If unclaimed, open /events/claim and use the operator approval code.\n' "$name"
       return 0
     fi
     sleep 2

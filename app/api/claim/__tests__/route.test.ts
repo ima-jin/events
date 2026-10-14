@@ -3,8 +3,11 @@ import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { resetSigningIdentityForTests } from '@/lib/signing-identity';
+import { bootstrapSigningIdentity, resetSigningIdentityForTests } from '@/lib/signing-identity';
 import { resetClaimRateLimitForTests } from '@/lib/claim-rate-limit';
+import { NextRequest } from 'next/server';
+import { middleware } from '../../../../middleware';
+import { GET as health } from '../../health/route';
 import { POST } from '../route';
 
 const KERNEL_URL = 'https://dev-jin.imajin.test';
@@ -35,7 +38,6 @@ describe('POST /api/claim', () => {
     workDir = await mkdtemp(join(tmpdir(), 'imajin-claim-route-'));
     vi.stubEnv('IMAJIN_KERNEL_URL', KERNEL_URL);
     vi.stubEnv('IMAJIN_APP_KEYSTORE', join(workDir, 'keystore.json'));
-    vi.stubEnv('IMAJIN_APP_CLAIM_CODE', '');
     vi.stubEnv('IMAJIN_APP_DID', '');
   });
 
@@ -64,6 +66,31 @@ describe('POST /api/claim', () => {
 
     const keystoreStat = await stat(join(workDir, 'keystore.json'));
     expect(keystoreStat.mode & 0o777).toBe(0o600);
+  });
+
+  it('boots unclaimed, ignores IMAJIN_APP_CLAIM_CODE, and becomes live after browser claim without restarting', async () => {
+    vi.stubEnv('IMAJIN_APP_CLAIM_CODE', 'FAKE_IGNORED_ENV_CODE');
+    vi.stubEnv('NEXT_PUBLIC_BASE_PATH', '/events');
+    const fetchMock = mockKernelClaim({
+      appDid: 'did:imajin:app-under-test',
+      privateKey: 'FAKE_SIGNING_KEY_NOT_A_SECRET',
+      publicKey: 'FAKE_PUBLIC_KEY',
+    });
+    const request = () => new NextRequest('http://localhost:3000/api/spec');
+    await bootstrapSigningIdentity();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(await health().json()).toMatchObject({ status: 'ok', claimed: false });
+    expect(await middleware(request()).text()).toContain('href="/events/claim"');
+
+    const response = await POST(postRequest({ claimCode: 'FAKE_BROWSER_CODE_NOT_A_SECRET' }) as never);
+
+    expect(response.status).toBe(200);
+    expect(await health().json()).toMatchObject({ status: 'ok', claimed: true });
+    expect(middleware(request()).headers.get('x-middleware-next')).toBe('1');
+    expect(middleware(new NextRequest('http://localhost:3000/claim')).status).toBe(404);
+    expect(JSON.stringify(fetchMock.mock.calls)).toContain('FAKE_BROWSER_CODE_NOT_A_SECRET');
+    expect(JSON.stringify(fetchMock.mock.calls)).not.toContain('FAKE_IGNORED_ENV_CODE');
+    expect(JSON.stringify(await health().json())).not.toContain('FAKE_');
   });
 
   it('rejects a missing claim code without calling the kernel', async () => {
