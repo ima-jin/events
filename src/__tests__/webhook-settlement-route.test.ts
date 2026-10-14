@@ -62,6 +62,12 @@ describe('POST /api/webhook/settlement', () => {
   it('answers 400 without an orderId', async () => {
     expect((await call({ ...PAYLOAD, orderId: undefined })).status).toBe(400);
   });
+  it.each(['audience', 'kid', 'timestamp', 'nonce', 'signature'])('rejects a missing x-kernel-%s header', async (header) => {
+    const request = signedRequest('/api/webhook/settlement', PAYLOAD);
+    request.headers.delete(`x-kernel-${header}`);
+    expect((await POST(request as never)).status).toBe(401);
+    expect(mocks.update).not.toHaveBeenCalled();
+  });
 
   it.each([
     ['stale', { timestampOffsetSeconds: -301 }],

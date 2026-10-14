@@ -178,6 +178,19 @@ describe('POST /api/webhook/payment — settle via events’ app token (imajin-a
 });
 
 describe('POST /api/webhook/payment — kernel signatures', () => {
+  it.each(['audience', 'kid', 'timestamp', 'nonce', 'signature'])('rejects a missing x-kernel-%s header', async (header) => {
+    const request = signedRequest('/api/webhook/payment', PAYLOAD);
+    request.headers.delete(`x-kernel-${header}`);
+    expect((await POST(request as never)).status).toBe(401);
+    expect(mocks.createOrderWithTickets).not.toHaveBeenCalled();
+  });
+
+  it('accepts a valid signature independently of bridge headers', async () => {
+    expect((await callRoute(PAYLOAD, {
+      headers: { authorization: 'Bearer fake-legacy-placeholder', 'x-webhook-secret': 'fake-legacy-placeholder' },
+    })).status).toBe(200);
+    expect(mocks.createOrderWithTickets).toHaveBeenCalledTimes(1);
+  });
   it.each([
     ['stale', { timestampOffsetSeconds: -301 }],
     ['future', { timestampOffsetSeconds: 301 }],
