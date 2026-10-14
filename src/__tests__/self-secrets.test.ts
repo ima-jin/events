@@ -15,6 +15,12 @@ import {
 import { createTicketQrToken, verifyTicketQrToken } from '@/lib/ticket-qr-token';
 import { POST } from '../../app/api/claim/route';
 import { NextRequest } from 'next/server';
+import { GET as session } from '../../app/api/auth/session/route';
+
+const { cookieGet } = vi.hoisted(() => ({ cookieGet: vi.fn() }));
+vi.mock('next/headers', () => ({
+  cookies: async () => ({ get: cookieGet }),
+}));
 
 vi.mock('@ima-jin/auth-client', async (importOriginal) => ({
   ...await importOriginal<typeof import('@ima-jin/auth-client')>(),
@@ -41,8 +47,8 @@ beforeEach(() => {
   vi.stubEnv('IMAJIN_APP_DID', APP_DID);
   vi.stubEnv('IMAJIN_KERNEL_URL', 'https://kernel.test');
   vi.stubEnv('IMAJIN_APP_KEYSTORE', '/fixture/events.dev.keystore.json');
-  vi.stubEnv('SESSION_SECRET', '');
-  vi.stubEnv('TICKET_QR_SECRET', '');
+  vi.stubEnv('SESSION_SECRET', undefined);
+  vi.stubEnv('TICKET_QR_SECRET', undefined);
   vi.mocked(readKeystore).mockReturnValue({ privateKey: 'FAKE_BOOTSTRAP_ONLY', publicKey: 'FAKE_PUBLIC_ONLY' });
   vi.mocked(loadAppSigningKey).mockResolvedValue(identity);
   vi.mocked(loadFromVault).mockResolvedValue(credentials());
@@ -70,7 +76,7 @@ describe('declared app-keystore self-secrets', () => {
         keystorePath: '/fixture/events.dev.keystore.json',
         keys: [{ key: name, onMissing: 'fail' }],
       });
-      expect(process.env[name]).toBe('');
+      expect(process.env[name]).toBeUndefined();
     }
     expect(await verifySessionToken(await createSessionToken(user, authConfig), authConfig)).toMatchObject(user);
     const payload = Buffer.from(JSON.stringify({ ticketId: 'tkt_fixture' })).toString('base64url');
@@ -78,6 +84,15 @@ describe('declared app-keystore self-secrets', () => {
     const token = createTicketQrToken('tkt_fixture');
     expect(token).toBe(`ticket-v1.${payload}.${mac}`);
     expect(verifyTicketQrToken(token, 'tkt_fixture')).toBe(true);
+  });
+
+  it('serves the signed-in session endpoint using a vault-signed cookie', async () => {
+    await register();
+    cookieGet.mockReturnValue({ value: await createSessionToken(user, authConfig) });
+    const response = await session();
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject(user);
+    expect(cookieGet).toHaveBeenCalledWith('imajin_session');
   });
 
   it('ignores conflicting env credentials on success and never writes vault values into env', async () => {

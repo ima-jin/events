@@ -15,6 +15,23 @@ export function warnIgnoredSelfSecretEnv(): void {
   }
 }
 
+/** Called only after the SDK establishes this app's bound bootstrap keystore. */
+export async function loadSelfSecrets(appDid: string): Promise<void> {
+  const store = globalThis as SecretStore;
+  delete store[SELF_SECRETS];
+  const values = await manifest.secrets.reduce<Promise<Record<SecretName, string>>>(
+    async (pending, declaration) => {
+      const loaded = await pending;
+      const name = declaration.name as SecretName;
+      loaded[name] = await loadRequiredSecret(name, appDid);
+      return loaded;
+    },
+    Promise.resolve({} as Record<SecretName, string>),
+  );
+  // Publish only once every required secret has loaded and validated.
+  store[SELF_SECRETS] = Object.freeze(values);
+}
+
 /** Safe to log; never includes SDK errors, response bodies or credential values. */
 export class VaultSecretError extends Error {
   constructor(name: SecretName) {
@@ -23,31 +40,22 @@ export class VaultSecretError extends Error {
   }
 }
 
-/** Called only after the SDK establishes this app's bound bootstrap keystore. */
-export async function loadSelfSecrets(appDid: string): Promise<void> {
-  const store = globalThis as SecretStore;
-  delete store[SELF_SECRETS];
-  const values = {} as Record<SecretName, string>;
-  for (const declaration of manifest.secrets) {
-    const name = declaration.name as SecretName;
-    try {
-      // One required name per call lets errors identify the failed declaration,
-      // without inspecting (or logging) provider-controlled error messages.
-      const credentials = await loadFromVault({
-        appDid,
-        kernelUrl: process.env.IMAJIN_KERNEL_URL,
-        keystorePath: process.env.IMAJIN_APP_KEYSTORE,
-        keys: [{ key: name, onMissing: 'fail' }],
-      });
-      const value = credentials.values[name];
-      if (typeof value !== 'string' || value.length < 64) throw new VaultSecretError(name);
-      values[name] = value;
-    } catch {
-      throw new VaultSecretError(name);
-    }
+async function loadRequiredSecret(name: SecretName, appDid: string): Promise<string> {
+  try {
+    // One required name per call lets errors identify the failed declaration,
+    // without inspecting (or logging) provider-controlled error messages.
+    const credentials = await loadFromVault({
+      appDid,
+      kernelUrl: process.env.IMAJIN_KERNEL_URL,
+      keystorePath: process.env.IMAJIN_APP_KEYSTORE,
+      keys: [{ key: name, onMissing: 'fail' }],
+    });
+    const value = credentials.values[name];
+    if (typeof value !== 'string' || value.length < 64) throw new VaultSecretError(name);
+    return value;
+  } catch {
+    throw new VaultSecretError(name);
   }
-  // Publish only once every required secret has loaded and validated.
-  store[SELF_SECRETS] = Object.freeze(values);
 }
 
 export function getSelfSecret(name: SecretName): string {
