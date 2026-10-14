@@ -18,5 +18,8 @@ around the boundary, and the gap is recorded here. Each is a `gap(kernel)` marke
 | Chat sync (member add/migrate, name policy) | `src/lib/event-update-helpers.ts`, webhook, cohosts, event routes | Calls the chat service with this app's `X-App-DID` / `X-App-Authorization`; no kernel-internal shared key. May be refused. | App-auth chat endpoints for registered apps. |
 | Attendee event chat UI | `src/components/chat/event-chat.tsx` | Explicit unavailable accordion and disabled composer; no private messages fetched. | [imajin-ai#2785](https://github.com/ima-jin/imajin-ai/issues/2785): registered-app user-authorized access/read/send, name policy, and realtime/media capabilities (refs #1988). Current chat messages use legacy auth; access requires a kernel session cookie. |
 
-Settlement (`/pay/api/settle`) uses events' **own app-service token** and is not a gap — see `src/lib/pay-settle.ts`.
-Refunds and campaign charge-pledges still use the shared `PAY_SERVICE_API_KEY` (out of scope, imajin-ai#2735).
+Settlement, refunds and campaign charge-pledges use events' **own app-service token** and are
+not shared-key gaps — see `src/lib/pay-settle.ts` and `src/lib/pay-app-request.ts`.
+The operator must approve `pay:settle`, `pay:refund` and `pay:charge-pledges` for events'
+app DID on `apps:service-scopes`. Deploy kernel PR imajin-ai#2786 first; its refund and
+charge routes enforce app ownership as well as scope. Setup/confirm migration is events#27.

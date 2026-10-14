@@ -1,4 +1,3 @@
-import { serviceUrl } from '@/lib/kernel';
 /**
  * POST /api/campaign/{eventId}/settle
  *
@@ -22,9 +21,7 @@ import { eq, and } from 'drizzle-orm';
 import { corsHeaders } from '@ima-jin/config';
 import { authenticateDid, findEvent, jsonError, pathEventId, createPreflight, rateLimitResponse } from '@/lib/campaign-route';
 import { withLogger } from '@ima-jin/logger';
-
-const PAY_SERVICE_URL = (serviceUrl('pay') ?? '');
-const PAY_SERVICE_API_KEY = process.env.PAY_SERVICE_API_KEY!;
+import { payForbiddenMessage, postPayAsApp } from '@/lib/pay-app-request';
 
 export const OPTIONS = createPreflight();
 
@@ -77,30 +74,23 @@ export const POST = withLogger('events', async (request: NextRequest, { log }) =
     }
 
     // Call pay service to charge pledges
-    const payRes = await fetch(`${PAY_SERVICE_URL}/api/charge-pledges`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${PAY_SERVICE_API_KEY}`,
-      },
-      body: JSON.stringify({
-        eventId,
-        pledges: confirmedPledges.map((p) => ({
-          pledgeId: p.id,
-          amount: p.amount,
-          currency: p.currency,
-          stripeCustomerId: p.stripeCustomerId,
-          stripePaymentMethodId: p.stripePaymentMethodId,
-        })),
-      }),
+    const payRes = await postPayAsApp('/api/charge-pledges', {
+      eventId,
+      pledges: confirmedPledges.map((p) => ({
+        pledgeId: p.id,
+        setupIntentId: p.stripeSetupIntentId,
+      })),
     });
 
     if (!payRes.ok) {
       const err = await payRes.json().catch(() => ({}));
       log.error({ err: err.error || payRes.statusText }, 'Pay service charge-pledges failed');
+      const error = payRes.status === 403
+        ? `${payForbiddenMessage('pay:charge-pledges')}. ${err.error || 'Forbidden'}`
+        : err.error || 'Failed to charge pledges';
       return NextResponse.json(
-        { error: err.error || 'Failed to charge pledges' },
-        { status: 500, headers: cors }
+        { error },
+        { status: payRes.status === 403 ? 403 : 500, headers: cors }
       );
     }
 

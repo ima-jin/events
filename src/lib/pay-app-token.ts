@@ -1,10 +1,9 @@
 /**
  * Events' own app-service token for the pay service (imajin-ai#2739).
  *
- * Events is a registered app. It authenticates its pay `/api/checkout` and
- * `/api/settle` calls as ITSELF with an app-service token minted from the
- * kernel by proving possession of its own signing key — never with the shared
- * `PAY_SERVICE_API_KEY`.
+ * Events is a registered app. It authenticates checkout, settlement, refund
+ * and charge-pledges calls as ITSELF with an app-service token minted from the
+ * kernel by proving possession of its own signing key — never a shared key.
  *
  * The signing key is read through the standard `loadAppSigningKey` claim-code
  * path (`IMAJIN_APP_CLAIM_CODE` on first boot, the local bootstrap keystore on
@@ -14,7 +13,8 @@
  *
  * Operator prerequisites (see README.md and docs/REGISTRATION.md):
  *   - events registered as an app, signing key provisioned (`apps.provision`);
- *   - `pay:settle` approved for events via the `apps:service-scopes` card.
+ *   - `pay:settle`, `pay:refund` and `pay:charge-pledges` approved for events'
+ *     app DID via the operator's `apps:service-scopes` card.
  */
 import { loadAppSigningKey } from '@ima-jin/auth-client';
 import { createAppServiceTokenProvider, type AppServiceTokenProvider } from './app-service-token';

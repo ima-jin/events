@@ -72,8 +72,9 @@ hostname. Read operations require `events:read`; writes require `events:write`.
 `requireSessionOrAppToken` comes from the published auth SDK. The session-cookie fallback
 is the existing transition path and cannot enforce token scopes.
 
-Paid checkout and settlement use events' **own app-service token**. Ryan must approve
-`pay:settle` via the `apps:service-scopes` card; an unapproved or unclaimed app fails closed.
-No shared key is used for settlement. The legacy refund/charge-pledges dependency is
-tracked separately in imajin-ai#2735; other public-contract limitations are documented in
+Paid checkout, settlement, refunds and campaign charging use events' **own app-service token**.
+The operator must approve `pay:settle`, `pay:refund` and `pay:charge-pledges` for events'
+app DID via the `apps:service-scopes` card; an unapproved or unclaimed app fails closed.
+The kernel also checks that the original payment/setup belongs to that app DID. Deploy
+kernel PR imajin-ai#2786 before this events release. Other public-contract limitations are documented in
 [KERNEL-GAPS.md](./KERNEL-GAPS.md).

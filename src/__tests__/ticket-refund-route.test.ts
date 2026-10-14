@@ -5,8 +5,7 @@
  * The route branches between Stripe, e-transfer, and free tickets, and calls
  * the kernel pay service for Stripe payments.
  *
- * NOTE: the pay-service call still authenticates with PAY_SERVICE_API_KEY
- * (explicitly out of scope — imajin-ai#2739), and is tested as-is.
+ * The pay-service call authenticates as events with its app-service token.
  *
  * Cases:
  *  - Stripe ticket: pay service succeeds → 200, status 'refunded'
@@ -152,6 +151,19 @@ describe('POST /api/events/[id]/tickets/[ticketId]/refund', () => {
 
     // Ticket status must NOT have been updated, no counter change, no notification
     expect(sqlMock).toHaveBeenCalledOnce(); // only the SELECT, no UPDATE
+    expect(updateMock).not.toHaveBeenCalled();
+    expect(publishMock).not.toHaveBeenCalled();
+  });
+
+  it('reports missing refund scope and leaves the ticket unchanged', async () => {
+    nextSelect([BASE_EVENT]);
+    nextSql([STRIPE_TICKET]);
+    fetchMock.mockResolvedValue(fakeResponse(403, "scope 'pay:refund' was not granted"));
+    const res = await callRefund();
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: expect.stringContaining('apps:service-scopes') });
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(sqlMock).toHaveBeenCalledOnce();
     expect(updateMock).not.toHaveBeenCalled();
     expect(publishMock).not.toHaveBeenCalled();
   });
