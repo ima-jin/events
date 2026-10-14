@@ -5,8 +5,13 @@ import { parseEnv } from 'node:util';
 import { fileURLToPath } from 'node:url';
 
 const example = fileURLToPath(new URL('../.env.example', import.meta.url));
-export const ENV_NAMES = [...readFileSync(example, 'utf8').matchAll(/^\s*#?\s*([A-Z][A-Z0-9_]*)=/gm)]
-  .map((match) => match[1]);
+export const ENV_NAMES = readFileSync(example, 'utf8').split('\n').flatMap((line) => {
+  const trimmed = line.trim();
+  const assignment = trimmed.startsWith('#') ? trimmed.slice(1).trim() : trimmed;
+  const separator = assignment.indexOf('=');
+  const name = assignment.slice(0, separator);
+  return separator > 0 && /^[A-Z][A-Z0-9_]*$/.test(name) ? [name] : [];
+});
 
 const REQUIRED = [
   'DATABASE_URL', 'APP_DB_SCHEMA', 'IMAJIN_KERNEL_URL', 'IMAJIN_AUTH_URL',
@@ -28,17 +33,16 @@ const URL_PATHS = {
   REGISTRY_SERVICE_URL: '/registry', REGISTRY_URL: '/registry', DYKIL_URL: '/dykil',
 };
 
-/** Reports names only: no env value or key material is included in diagnostics. */
-export function validateEnvironment(env, target, keystoreExists = existsSync) {
-  if (!['dev', 'prod'].includes(target)) return ['target must be dev or prod'];
-  const problems = [];
-  const host = target === 'dev' ? 'dev-jin.imajin.ai' : 'jin.imajin.ai';
+function checkRequiredAndForbidden(env, problems) {
   for (const name of REQUIRED) {
     if (!env[name] || env[name].includes('REPLACE_ME')) problems.push(`${name}: required`);
   }
   for (const name of FORBIDDEN) {
     if (env[name]) problems.push(`${name}: must be unset`);
   }
+}
+
+function checkUrls(env, host, problems) {
   for (const [name, pathname] of Object.entries(URL_PATHS)) {
     if (!env[name]) continue;
     try {
@@ -51,13 +55,22 @@ export function validateEnvironment(env, target, keystoreExists = existsSync) {
       problems.push(`${name}: invalid URL`);
     }
   }
-  if (env.APP_DB_SCHEMA !== 'events') problems.push('APP_DB_SCHEMA: must be events');
-  if (env.NEXT_PUBLIC_BASE_PATH !== '/events') problems.push('NEXT_PUBLIC_BASE_PATH: must be /events');
+}
+
+function checkTargetSettings(env, target, problems) {
+  const settings = {
+    APP_DB_SCHEMA: 'events',
+    NEXT_PUBLIC_BASE_PATH: '/events',
+    NEXT_PUBLIC_SERVICE_PREFIX: target === 'dev' ? 'dev-' : '',
+    IMAJIN_ENV: target === 'dev' ? 'dev' : '',
+  };
+  for (const [name, value] of Object.entries(settings)) {
+    if ((env[name] || '') !== value) problems.push(`${name}: wrong target setting`);
+  }
   if ((env.NEXT_PUBLIC_DOMAIN || 'imajin.ai') !== 'imajin.ai') problems.push('NEXT_PUBLIC_DOMAIN: must be imajin.ai');
-  const prefix = target === 'dev' ? 'dev-' : '';
-  const environment = target === 'dev' ? 'dev' : '';
-  if ((env.NEXT_PUBLIC_SERVICE_PREFIX || '') !== prefix) problems.push('NEXT_PUBLIC_SERVICE_PREFIX: wrong environment');
-  if ((env.IMAJIN_ENV || '') !== environment) problems.push('IMAJIN_ENV: wrong environment');
+}
+
+function checkIdentityAndSecrets(env, target, keystoreExists, problems) {
   if (!/^did:imajin:[a-zA-Z0-9_-]+$/.test(env.IMAJIN_APP_DID || '')) problems.push('IMAJIN_APP_DID: invalid DID');
   if (env.IMAJIN_APP_AUD && env.IMAJIN_APP_AUD !== 'events') problems.push('IMAJIN_APP_AUD: must be events (registry slug)');
   for (const name of ['SESSION_SECRET', 'WEBHOOK_SECRET']) {
@@ -73,6 +86,16 @@ export function validateEnvironment(env, target, keystoreExists = existsSync) {
   if (!keystoreExists(keystore) && !env.IMAJIN_APP_CLAIM_CODE) {
     problems.push('IMAJIN_APP_CLAIM_CODE: required on first boot (no keystore)');
   }
+}
+
+/** Reports names only: no env value or key material is included in diagnostics. */
+export function validateEnvironment(env, target, keystoreExists = existsSync) {
+  if (!['dev', 'prod'].includes(target)) return ['target must be dev or prod'];
+  const problems = [];
+  checkRequiredAndForbidden(env, problems);
+  checkUrls(env, target === 'dev' ? 'dev-jin.imajin.ai' : 'jin.imajin.ai', problems);
+  checkTargetSettings(env, target, problems);
+  checkIdentityAndSecrets(env, target, keystoreExists, problems);
   return problems;
 }
 

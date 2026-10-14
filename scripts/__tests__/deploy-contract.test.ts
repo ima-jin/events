@@ -1,6 +1,6 @@
 import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -75,6 +75,92 @@ describe('blank-valued env contract', () => {
       expect(Object.keys(parseEnv(read(file))).sort()).toEqual([...deployedNames].sort());
     }
   });
+});
+
+describe('deploy workflow with sandboxed command fixtures', () => {
+  function deploymentFixture() {
+    const home = mkdtempSync(join(tmpdir(), 'events-deploy-'));
+    const checkout = join(home, 'dev/events');
+    const bin = join(home, 'bin');
+    const calls = join(home, 'calls');
+    for (const dir of [bin, join(checkout, 'scripts'), join(checkout, 'node_modules/next/dist/bin'),
+      join(checkout, 'node_modules/drizzle-kit')]) mkdirSync(dir, { recursive: true });
+    for (const file of ['scripts/deploy.sh', 'scripts/check-env.mjs', '.env.example']) {
+      writeFileSync(join(checkout, file), read(file));
+    }
+    const env = validEnv();
+    writeFileSync(join(checkout, '.env.local'), Object.entries(env).map(([key, value]) =>
+      `${key}=${value}`).join('\n'), { mode: 0o600 });
+    const recordNode = (name: string) => `
+      const fs = process.getBuiltinModule("node:fs");
+      if (process.env.IMAJIN_KERNEL_URL !== "https://dev-jin.imajin.ai") process.exit(3);
+      fs.appendFileSync(process.env.FIXTURE_CALLS, "${name}\\n");
+      if (process.env.FIXTURE_FAIL === "${name}") process.exit(4);
+    `;
+    writeFileSync(join(checkout, 'node_modules/next/dist/bin/next'), recordNode('build'));
+    writeFileSync(join(checkout, 'scripts/migrate-baseline.mjs'), recordNode('baseline'));
+    writeFileSync(join(checkout, 'node_modules/drizzle-kit/bin.cjs'), recordNode('migrate'));
+    const tool = (name: string, body: string) => writeFileSync(join(bin, name),
+      `#!/usr/bin/env bash\n${body}\n`, { mode: 0o755 });
+    tool('git', '[[ "$1" == status ]] || printf "git %s\\n" "$1" >> "$FIXTURE_CALLS"');
+    tool('pnpm', 'printf "install\\n" >> "$FIXTURE_CALLS"');
+    tool('pm2', `if [[ "$1" == jlist ]]; then
+      printf '%s' "\${FIXTURE_PM2:-[]}"
+    else
+      [[ -z "\${IMAJIN_APP_CLAIM_CODE:-}" && -z "\${DATABASE_URL:-}" ]] || exit 5
+      printf "pm2 %s\\n" "$1" >> "$FIXTURE_CALLS"
+    fi`);
+    tool('curl', `printf '%s' '{"status":"ok","service":"imajin-events"}'`);
+    return {
+      home, calls,
+      run: (overrides: Record<string, string> = {}) => spawnSync('bash',
+        [join(checkout, 'scripts/deploy.sh'), 'dev'], {
+          encoding: 'utf8',
+          env: { ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}`,
+            FIXTURE_CALLS: calls, DATABASE_URL: 'inherited-fixture-must-not-win',
+            IMAJIN_KERNEL_URL: 'inherited-fixture-must-not-win', IMAJIN_APP_CLAIM_CODE: 'inherited-fixture',
+            ...overrides },
+        }),
+    };
+  }
+
+  it('runs install/build/baseline/migrate before pm2 start/save with file-authoritative env', () => {
+    const fixture = deploymentFixture();
+    try {
+      const result = fixture.run();
+      expect(result.stderr).toBe('');
+      expect(result.status).toBe(0);
+      expect(readFileSync(fixture.calls, 'utf8').trim().split('\n')).toEqual([
+        'git fetch', 'git checkout', 'install', 'build', 'baseline', 'migrate', 'pm2 start', 'pm2 save',
+      ]);
+      expect(result.stdout).not.toContain('inherited-fixture');
+      expect(result.stdout).not.toContain('fixture-code');
+    } finally {
+      rmSync(fixture.home, { recursive: true, force: true });
+    }
+  });
+
+  it.each(['build', 'baseline', 'migrate'])('does not touch pm2 if %s fails', (step) => {
+    const fixture = deploymentFixture();
+    try {
+      expect(fixture.run({ FIXTURE_FAIL: step }).status).toBe(4);
+      expect(readFileSync(fixture.calls, 'utf8')).not.toContain('pm2');
+    } finally {
+      rmSync(fixture.home, { recursive: true, force: true });
+    }
+  });
+
+  it.each(['invalid-json', '[{"name":"dev-events","pm2_env":{"pm_cwd":"/old/kernel"}}]'])(
+    'refuses invalid/stale pm2 before fetch or install', (processes) => {
+      const fixture = deploymentFixture();
+      try {
+        expect(fixture.run({ FIXTURE_PM2: processes }).status).toBe(1);
+        expect(() => readFileSync(fixture.calls)).toThrow();
+      } finally {
+        rmSync(fixture.home, { recursive: true, force: true });
+      }
+    },
+  );
 });
 
 describe('deploy environment guard', () => {
