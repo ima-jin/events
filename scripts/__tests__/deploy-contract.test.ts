@@ -172,7 +172,44 @@ describe('deploy environment guard', () => {
     const env = validEnv();
     delete env.IMAJIN_APP_CLAIM_CODE;
     expect(validateEnvironment(env, 'dev', () => true)).toEqual([]);
-    expect(validateEnvironment(env, 'dev', () => false)).toContain('IMAJIN_APP_CLAIM_CODE: required on first boot (no keystore)');
+  });
+
+  it.each(['dev', 'prod'])('only warns on %s first boot with no keystore or claim code', (target) => {
+    const env = validEnv(target);
+    delete env.IMAJIN_APP_CLAIM_CODE;
+    const warnings: string[] = [];
+    expect(validateEnvironment(env, target, () => false, warnings)).toEqual([]);
+    expect(warnings.join('\n')).toContain('No keystore found and IMAJIN_APP_CLAIM_CODE is not set');
+    expect(warnings.join('\n')).toContain('claim at /events/claim after boot');
+
+    const withCode: string[] = [];
+    expect(validateEnvironment(validEnv(target), target, () => false, withCode)).toEqual([]);
+    expect(withCode).toEqual([]);
+    const withKeystore: string[] = [];
+    expect(validateEnvironment(env, target, () => true, withKeystore)).toEqual([]);
+    expect(withKeystore).toEqual([]);
+  });
+
+  it('exits 0 and warns on an unclaimed first boot without echoing values', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'events-unclaimed-env-'));
+    const file = join(dir, '.env.local');
+    const env = validEnv();
+    delete env.IMAJIN_APP_CLAIM_CODE;
+    env.IMAJIN_APP_KEYSTORE = join(dir, 'events.dev.keystore.json');
+    try {
+      writeFileSync(file, Object.entries(env).map(([key, value]) => `${key}=${value}`).join('\n'), { mode: 0o600 });
+      const result = spawnSync(process.execPath, [join(root, 'scripts/check-env.mjs'), 'dev', file], { encoding: 'utf8' });
+      expect(result.status).toBe(0);
+      expect(result.stderr).toMatch(/^warning: No keystore found and IMAJIN_APP_CLAIM_CODE is not set/m);
+      expect(result.stderr).toContain('claim at /events/claim after boot');
+      expect(result.stderr).not.toMatch(/^error:/m);
+      expect(result.stdout).toContain('Environment validated');
+      for (const secret of [env.SESSION_SECRET, env.WEBHOOK_SECRET, env.DATABASE_URL]) {
+        expect(result.stdout + result.stderr).not.toContain(secret);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('reports missing fields and invalid target', () => {

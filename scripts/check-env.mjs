@@ -70,7 +70,7 @@ function checkTargetSettings(env, target, problems) {
   if ((env.NEXT_PUBLIC_DOMAIN || 'imajin.ai') !== 'imajin.ai') problems.push('NEXT_PUBLIC_DOMAIN: must be imajin.ai');
 }
 
-function checkIdentityAndSecrets(env, target, keystoreExists, problems) {
+function checkIdentityAndSecrets(env, target, problems) {
   if (!/^did:imajin:[a-zA-Z0-9_-]+$/.test(env.IMAJIN_APP_DID || '')) problems.push('IMAJIN_APP_DID: invalid DID');
   if (env.IMAJIN_APP_AUD && env.IMAJIN_APP_AUD !== 'events') problems.push('IMAJIN_APP_AUD: must be events (registry slug)');
   for (const name of ['SESSION_SECRET', 'WEBHOOK_SECRET']) {
@@ -83,25 +83,25 @@ function checkIdentityAndSecrets(env, target, keystoreExists, problems) {
   if (!isAbsolute(keystore) || !keystore.endsWith(`events.${target}.keystore.json`)) {
     problems.push('IMAJIN_APP_KEYSTORE: requires an absolute per-environment events keystore path');
   }
-  if (!keystoreExists(keystore) && !env.IMAJIN_APP_CLAIM_CODE) {
-    problems.push('IMAJIN_APP_CLAIM_CODE: required on first boot (no keystore)');
-  }
 }
 
-/** Reports names only: no env value or key material is included in diagnostics. */
-export function validateEnvironment(env, target, keystoreExists = existsSync) {
+/** Reports names only; optional warnings never affect the returned blocking errors. */
+export function validateEnvironment(env, target, keystoreExists = existsSync, warnings = []) {
   if (!['dev', 'prod'].includes(target)) return ['target must be dev or prod'];
   const problems = [];
   checkRequiredAndForbidden(env, problems);
   checkUrls(env, target === 'dev' ? 'dev-jin.imajin.ai' : 'jin.imajin.ai', problems);
   checkTargetSettings(env, target, problems);
-  checkIdentityAndSecrets(env, target, keystoreExists, problems);
+  checkIdentityAndSecrets(env, target, problems);
+  if (!keystoreExists(env.IMAJIN_APP_KEYSTORE || '') && !env.IMAJIN_APP_CLAIM_CODE) {
+    warnings.push("No keystore found and IMAJIN_APP_CLAIM_CODE is not set — claim at /events/claim after boot with the one-time code from the operator's /jin approval card (docs/REGISTRATION.md).");
+  }
   return problems;
 }
 
-export function checkFile(target, file) {
+export function checkFile(target, file, warnings = []) {
   const env = parseEnv(readFileSync(file, 'utf8'));
-  const problems = validateEnvironment(env, target);
+  const problems = validateEnvironment(env, target, existsSync, warnings);
   if ((statSync(file).mode & 0o777) !== 0o600) problems.push('.env.local: chmod 600 required');
   if (existsSync(env.IMAJIN_APP_KEYSTORE || '')) {
     const keystore = statSync(env.IMAJIN_APP_KEYSTORE);
@@ -116,7 +116,9 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try {
     const [target, file = '.env.local', extra] = process.argv.slice(2);
     if (extra) throw new Error('usage');
-    const problems = checkFile(target, file);
+    const warnings = [];
+    const problems = checkFile(target, file, warnings);
+    for (const warning of warnings) console.warn(`warning: ${warning}`);
     for (const problem of problems) console.error(problem);
     process.exitCode = problems.length > 0 ? 1 : 0;
     if (problems.length === 0) console.log('Environment validated (values withheld).');
