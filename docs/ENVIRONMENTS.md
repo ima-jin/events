@@ -47,9 +47,12 @@ contract variables before loading `.env.local` for build/migration/pm2.
 
 ## Identity and conditional integrations
 
+The claim code is **optional**. With neither a keystore nor a claim code, `check-env`
+only warns and the app boots unclaimed — claim at `/events/claim` after boot.
+
 | Variable | When | Contract |
 |---|---|---|
-| `IMAJIN_APP_CLAIM_CODE` | first boot only | Operator's one-time kernel approval code; required without keystore, delete after successful boot. Never print. |
+| `IMAJIN_APP_CLAIM_CODE` | optional, first boot only | Operator's one-time kernel approval code for automated boot; otherwise claim at `/events/claim` after boot. Delete after successful use. Never print. |
 | `NEXT_PUBLIC_IMAJIN_APP_ID` | build | Kernel registry `app_…` id used by header sign-in; provision for interactive sign-in. |
 | `IMAJIN_APP_ATTESTATION_ID` | runtime | Service-level attestation for app-auth public kernel calls; provision for those integrations. Not an internal key. |
 | `NEXT_PUBLIC_SERVICE_PREFIX` | build | **`dev-` on dev**, unset on prod; SDK URL construction. |
@@ -60,6 +63,7 @@ contract variables before loading `.env.local` for build/migration/pm2.
 | `DYKIL_URL` | runtime | Target kernel base plus `/dykil` for public survey API reads; unset yields no survey response. |
 | `IMAJIN_EVENTS_PUBLISH_PATH` | runtime | Optional approved public kernel app-auth publish route path; unset is a logged no-op. See KERNEL-GAPS.md. |
 | `PAY_SERVICE_API_KEY` | runtime | Legacy refund/charge-pledges only, tracked in imajin-ai#2735. Not settlement; leave unset unless separately authorized. No workaround minting. |
+| `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | build | Public key for campaign Payment Element card setup, matching the pay service's Stripe account/environment. Unset disables card setup with a clear error before a pledge is created. Never use a Stripe secret key. |
 | `ENABLE_TICKET_MIGRATION` | runtime | Unset or `false` until #2529 soak sign-off; only literal `true` enables the live-ticket rewrite. Prepared deploy refuses enabled gate. |
 
 ## Optional overrides and attribution
