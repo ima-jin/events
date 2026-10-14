@@ -13,6 +13,7 @@ export default async function EventAdminPage({ params }: Readonly<{ params: Prom
       title={String(event.title)}
       status={String(event.status || 'draft')}
       creatorDid={String(event.creatorDid)}
+      startsAt={new Date(event.startsAt as string | Date).toISOString()}
       isCreator={isCreator}
       tiers={ticketTypes.map((tier) => ({
         id: tier.id,
