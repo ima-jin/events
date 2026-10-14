@@ -54,12 +54,61 @@ monorepo's drizzle file had drifted from the real database, all fixed here to ma
 - `pledges.created_at` is `NOT NULL` in the database (drizzle said nullable).
 
 Tables dropped by the kernel before this baseline (e.g. `ticket_registrations`, dropped in kernel `0027`) are not
-recreated. The baseline targets an **empty** database; it is not idempotent against a database that already holds
-the kernel-created `events` tables — cutting existing prod/dev data over is a later step of #1988.
+recreated. Migration SQL targets an **empty** database. For existing kernel-created tables, adopt the baseline
+with the guarded script below before running `pnpm db:migrate` (ima-jin/imajin-ai#2518). Neither SQL nor snapshots
+are rewritten by adoption.
+
+### Adopting an existing events schema
+
+Use this app's own database credential, scoped to `events`, and review a dry run first:
+
+```bash
+node --env-file=.env.local scripts/migrate-baseline.mjs --dry-run
+node --env-file=.env.local scripts/migrate-baseline.mjs
+pnpm db:migrate
+```
+
+`APP_DB_SCHEMA` must be `events` (the script defaults to it when unset). The script reads only the app namespace's
+Postgres catalog metadata and migration history. It never reads event/ticket/order data, accesses kernel tables,
+or drops, alters, truncates or recreates app tables. An absent schema is a successful no-op: **only `db:migrate`
+creates a fresh app schema**. An existing but empty or partial schema is a mismatch, not permission to rebuild.
+
+Adoption validates all eight tables against the pinned `0000_snapshot.json`: column names, types, defaults,
+nullability, identity/generated properties, table kind/persistence/RLS/inheritance, PK/unique columns and their
+backing indexes, and FK target columns/schema, delete/update actions, match type, validation and deferral.
+Constraint names and column order may differ. Required named indexes must match column order, access method,
+uniqueness, validity/readiness/liveness, key/include counts, sort/null order, operator classes and collations,
+and must have no predicate or expression. Additional ordinary indexes are not required.
+
+The only writes are creation of `events.__drizzle_migrations` if absent and insertion of **one** row:
+
+- `hash`: SHA-256 of the exact unchanged `migrations/0000_events_schema.sql` bytes,
+  `23b6c7eaaea9ee3a3296735728bc3b75ee88e22fa0ca80b4ab8e8e66dd2a187e`.
+- `created_at`: first journal entry's exact `when`, `1791305811029`.
+
+Both are pinned and compared with Drizzle's own migration reader in tests. Transactions and an advisory lock
+serialize concurrent baselines. `--dry-run` uses a PostgreSQL **read-only transaction** and issues no DDL/DML.
+Repeated runs validate the live schema **again**, validate the tracking table's shape and hash **and** timestamp,
+and then do nothing. Unknown hashes, wrong/null timestamps, duplicate rows, or additional history are refused.
+This guard deliberately supports only adoption of 0000: if later migrations/history are added, review and update
+the guard's expected schema/history contract before using it in that deployment; do not force it or delete history.
+
+Exit status is `0` for successful adoption/no-op/dry-run, `1` for a schema/history mismatch, and `2` for usage,
+configuration or database errors. Diagnostics never print the connection URL, raw driver error, or live default
+expressions; resolve a mismatch manually rather than bypassing validation.
+
+### Baseline safety tests
+
+`pnpm exec vitest run scripts/__tests__/baseline` runs unit tests without connecting to a database. Real Postgres
+tests run **only** when `EVENTS_BASELINE_TEST_DATABASE_URL` is explicitly set to a dedicated disposable database;
+they do not use `DATABASE_URL` or the dummy URL in `test/setup-env.ts`. The integration fixture resets only the
+`events` schema in that disposable database. Never point the test variable at a deployed or shared app database.
 
 CI (`.github/workflows/ci.yml`, job `Migrations (Postgres)`) runs `pnpm db:migrate` against an empty Postgres,
 asserts via `scripts/verify-migrations.sh` that the schema and all tables exist and nothing was created outside the
 schema, re-runs the migration to prove it is a no-op, and fails if `src/db/schema.ts` and `migrations/` have drifted.
+The same job runs baseline safety tests in a separate disposable Postgres database, proving existing-data
+preservation, fresh/idempotent/concurrent runs and refusal of semantic schema drift or ambiguous history.
 
 ## What this app does not do
 
