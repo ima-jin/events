@@ -14,16 +14,16 @@ export type ChatTranscriptState =
 export function ChatTranscript({ state }: Readonly<{ state: ChatTranscriptState }>) {
   if (state.status === 'unavailable') {
     return (
-      <p role="status" className="text-sm text-gray-400">
+      <output className="block text-sm text-gray-400">
         Event chat is not available in this app yet. Attendee access through the public chat API is pending.
-      </p>
+      </output>
     );
   }
   if (state.status === 'error') {
     return <p role="alert" className="text-sm text-red-400">Chat could not be loaded. Please try again later.</p>;
   }
   if (state.messages.length === 0) {
-    return <p role="status" className="text-sm text-gray-400">No messages yet.</p>;
+    return <output className="block text-sm text-gray-400">No messages yet.</output>;
   }
   return (
     <ol aria-label="Event messages" className="space-y-4">
