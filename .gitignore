@@ -9,6 +9,9 @@ build/
 .env.local
 .env.*.local
 !.env.example
+!.env.dev.example
+!.env.prod.example
+.imajin/
 
 *.log
 npm-debug.log*
