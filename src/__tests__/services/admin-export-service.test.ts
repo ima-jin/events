@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/lib/kernel', () => ({ serviceUrl: mocks.serviceUrl }));
 vi.mock('@/repositories/sales-repository', () => ({ listAdminEventRows: mocks.listAdminEventRows }));
 
-import { buildAdminEventsCsv } from '@/services/admin-export-service';
+import { buildAdminEventsCsv, listAdminEvents } from '@/services/admin-export-service';
 
 function lookupResponse(body: unknown, ok = true) {
   return { ok, json: () => Promise.resolve(body) };
@@ -26,6 +26,18 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('buildAdminEventsCsv', () => {
+  it('projects a safe admin overview through the existing repository', async () => {
+    mocks.listAdminEventRows.mockResolvedValue([adminEventRow()]);
+    expect(await listAdminEvents()).toEqual([{
+      id: 'evt_1',
+      title: 'Gala',
+      status: 'published',
+      startsAt: '2026-06-01T20:00:00.000Z',
+      city: 'Toronto',
+      creatorDid: 'did:imajin:creator',
+    }]);
+    expect(mocks.fetch).not.toHaveBeenCalled();
+  });
   it('lists every event with ISO dates, flags, counts and the resolved creator handle', async () => {
     mocks.listAdminEventRows.mockResolvedValue([adminEventRow()]);
     mocks.fetch.mockResolvedValue(lookupResponse({ identity: { handle: 'creator-handle' } }));
