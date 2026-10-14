@@ -31,7 +31,7 @@ export function verifyTicketQrToken(token: unknown, ticketId: string): boolean {
   if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) return false;
   try {
     const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
-    if (!claims || claims.ticketId !== ticketId) return false;
+    if (claims?.ticketId !== ticketId) return false;
     return claims.expiresAt === undefined ||
       (Number.isSafeInteger(claims.expiresAt) && claims.expiresAt > Math.floor(Date.now() / 1000));
   } catch {
