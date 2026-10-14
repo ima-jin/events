@@ -2,7 +2,7 @@
 import { screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { GuestActions } from '@/components/organizer/guest-actions';
-import { EVENT_ID, jsonResponse, makeGuest, mockFetch, renderPanel } from '../support/organizer-panels-support';
+import { EVENT_ID, jsonResponse, makeGuest, mockFetch, renderPanel } from '../support/organizer-ui-support';
 
 describe('organizer guest actions', () => {
   it('allows co-host check-in and resend but hides refund/cancel', async () => {

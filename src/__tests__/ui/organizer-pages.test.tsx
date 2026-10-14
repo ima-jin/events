@@ -1,28 +1,21 @@
 // @vitest-environment jsdom
 import { render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { creatorEvent, pageMocks, resetOrganizerPageMocks } from '../support/organizer-page-support';
+import { creatorEvent, pageMocks, resetOrganizerPageMocks } from '../support/organizer-ui-support';
 import { makeEventRow, makeTierRow } from '../support/ui-support';
 import { ServiceError } from '@/services/errors';
 
-vi.mock('@/lib/auth', async () => (await import('../support/organizer-page-support')).pageAuthModule);
-vi.mock('next/headers', async () => ({ headers: (await import('../support/organizer-page-support')).pageMocks.headers }));
-vi.mock('next/navigation', async () => {
-  const { pageMocks: mocks } = await import('../support/organizer-page-support');
-  return {
-    notFound: () => { throw new Error('NEXT_HTTP_ERROR_FALLBACK;404'); },
-    useRouter: () => ({ push: mocks.push, refresh: vi.fn() }),
-  };
-});
+vi.mock('@/lib/auth', async () => (await import('../support/organizer-ui-support')).pageAuthModule);
+vi.mock('next/headers', async () => ({ headers: (await import('../support/organizer-ui-support')).pageMocks.headers }));
 vi.mock('@/services/authorization', async () => ({
-  isEventOrganizer: (await import('../support/organizer-page-support')).pageMocks.isEventOrganizer,
+  isEventOrganizer: (await import('../support/organizer-ui-support')).pageMocks.isEventOrganizer,
 }));
 vi.mock('@/services/events-service', async () => {
-  const { pageMocks: mocks } = await import('../support/organizer-page-support');
+  const { pageMocks: mocks } = await import('../support/organizer-ui-support');
   return { getEventWithTicketTypes: mocks.getEventWithTicketTypes, listCreatorEvents: mocks.listCreatorEvents };
 });
 vi.mock('@/services/admin-export-service', async () => ({
-  listAdminEvents: (await import('../support/organizer-page-support')).pageMocks.listAdminEvents,
+  listAdminEvents: (await import('../support/organizer-ui-support')).pageMocks.listAdminEvents,
 }));
 
 import DashboardPage from '../../../app/dashboard/page';
@@ -132,7 +125,8 @@ describe('organizer pages', () => {
     render(await EditPage(route));
     expect(screen.getByRole('heading', { name: 'Edit Event', level: 1 })).toBeTruthy();
     expect(globalThis.document.body.innerHTML).not.toContain('super-secret-key');
-    expect(globalThis.document.body.innerHTML).not.toContain('manifest');
+    expect(globalThis.document.body.innerHTML).not.toContain('secret:');
+    expect(screen.getByText(/No editable attribution manifest/)).toBeTruthy();
   });
 });
 

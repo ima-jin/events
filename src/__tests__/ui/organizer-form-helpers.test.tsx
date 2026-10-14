@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { zonedDateTime, toInstant } from '@/components/organizer-form/dates';
 import { eventPayload, initialDetails, minorUnits, newTier, tierDraft, tierPayload, validateForm } from '@/components/organizer-form/model';
 import { saveForm, type SaveProgress } from '@/components/organizer-form/persistence';
-import { eventFixture, jsonResponse, mockFetch, tierFixture } from '../support/organizer-form-support';
+import { eventFixture, jsonResponse, mockFetch, tierFixture } from '../support/organizer-ui-support';
 
 const details = () => initialDetails({ mode: 'edit', event: eventFixture() });
 const tier = () => tierDraft(tierFixture());
@@ -29,7 +29,7 @@ describe('organizer form helpers', () => {
     expect(validateForm(details(), [{ ...tier(), quantity: '' }])).toBe('');
     expect(validateForm(details(), [{ ...tier(), quantity: '2.5' }])).toContain('whole number');
     expect(validateForm(details(), [{ ...tier(), requiresRegistration: true }])).toContain('form ID');
-    expect(validateForm({ ...details(), locationType: 'virtual', virtualUrl: 'javascript:alert(1)' }, [tier()])).toContain('HTTP');
+    expect(validateForm({ ...details(), locationType: 'virtual', virtualUrl: 'ftp://example.test' }, [tier()])).toContain('HTTP');
     expect(validateForm(details(), [tierDraft(tierFixture({ sold: 0, price: 100, perks: ['Old'] }))].map((item) => ({ ...item, price: '100', currency: 'USD', perks: '' })))).toBe('');
     expect(validateForm(details(), [])).toContain('at least one');
     expect(newTier().key).not.toBe(newTier().key);

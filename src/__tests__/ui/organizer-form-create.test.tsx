@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { body, change, fillCreate, jsonResponse, mockFetch, push, renderForm } from '../support/organizer-form-support';
+import { body, change, fillCreate, jsonResponse, mockFetch, push, renderForm } from '../support/organizer-ui-support';
 
 describe('organizer create form', () => {
   it('validates before sending, including dates and payment email', async () => {

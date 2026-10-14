@@ -81,11 +81,19 @@ function validateTier(tier: TierDraft): string {
   return validateSoldTier(tier, payload);
 }
 
+function isPaymentEmail(value: string): boolean {
+  if (value.length > 254 || /\s/.test(value)) return false;
+  const parts = value.split('@');
+  if (parts.length !== 2) return false;
+  const [local, domain] = parts;
+  return local.length > 0 && domain.includes('.') && !domain.startsWith('.') && !domain.endsWith('.');
+}
+
 function validateDetails(details: FormDetails): string {
   if (!details.title.trim()) return 'Event title is required';
   const start = toInstant(details.startsAt, details.timezone);
   if (details.endsAt && toInstant(details.endsAt, details.timezone) <= start) return 'End must be after start';
-  if (details.emtEnabled && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(details.emtEmail.trim())) return 'Enter a valid payment email';
+  if (details.emtEnabled && !isPaymentEmail(details.emtEmail.trim())) return 'Enter a valid payment email';
   if (details.locationType !== 'physical' && details.virtualUrl) {
     const url = new URL(details.virtualUrl);
     if (!['https:', 'http:'].includes(url.protocol)) return 'Virtual URL must use HTTP or HTTPS';

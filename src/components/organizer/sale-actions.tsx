@@ -26,7 +26,7 @@ export function SaleActions({ sale, onChanged }: Readonly<{ sale: OrganizerSale;
     <button type="button" disabled={busy} onClick={() => setConfirming(true)}>Confirm e-Transfer</button>
     {confirming && <div role="alertdialog" aria-label="Confirm e-Transfer">
       <p>Have you received payment for this order? This confirms all held tickets.</p>
-      <button type="button" disabled={busy} onClick={() => void confirmPayment()}>{busy ? 'Confirming…' : 'Payment received'}</button>
+      <button type="button" disabled={busy} onClick={() => confirmPayment()}>{busy ? 'Confirming…' : 'Payment received'}</button>
       <button type="button" disabled={busy} onClick={() => setConfirming(false)}>Not received</button>
     </div>}
     {error && <p role="alert">{error}</p>}

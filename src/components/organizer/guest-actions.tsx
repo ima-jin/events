@@ -14,8 +14,7 @@ interface ActionResult {
 function canResend(guest: OrganizerGuest): boolean {
   if (guest.usedAt) return false;
   if (['cancelled', 'refunded', 'refund_pending'].includes(guest.status)) return false;
-  if (guest.lastEmailSentAt && Date.now() - new Date(guest.lastEmailSentAt).getTime() < 3 * 24 * 60 * 60 * 1000) return false;
-  return true;
+  return !guest.lastEmailSentAt || Date.now() - new Date(guest.lastEmailSentAt).getTime() >= 3 * 24 * 60 * 60 * 1000;
 }
 
 function availableActions(guest: OrganizerGuest, isCreator: boolean): { action: GuestAction; label: string }[] {
@@ -68,7 +67,7 @@ export function GuestActions({ eventId, guest, isCreator, onChanged, onRefundPen
 
   function request(action: GuestAction) {
     if (action === 'check-in' || action === 'resend-email') {
-      void perform(action);
+      perform(action);
       return;
     }
     setConfirmation(action);
@@ -80,7 +79,7 @@ export function GuestActions({ eventId, guest, isCreator, onChanged, onRefundPen
       <button key={action} type="button" disabled={busy} onClick={() => request(action)}>{busy ? 'Working…' : label}</button>)}</div>}
     {confirmation && <div role="alertdialog" aria-label={`Confirm ${confirmation}`}>
       <p>Confirm {confirmation} for ticket {guest.id}? Only continue if you intend this change.</p>
-      <button type="button" disabled={busy} onClick={() => void perform(confirmation)}>Confirm action</button>
+      <button type="button" disabled={busy} onClick={() => perform(confirmation)}>Confirm action</button>
       <button type="button" disabled={busy} onClick={() => setConfirmation(null)}>Keep ticket</button>
     </div>}
     {manualRefund && <div role="status">

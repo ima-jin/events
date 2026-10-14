@@ -2,7 +2,7 @@
 import { screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { SalesTab } from '@/components/organizer/sales-tab';
-import { EVENT_ID, deferredResponse, jsonResponse, makeSale, mockFetch, renderPanel } from '../support/organizer-panels-support';
+import { EVENT_ID, deferredResponse, jsonResponse, makeSale, mockFetch, renderPanel } from '../support/organizer-ui-support';
 
 describe('organizer sales', () => {
   it('renders loading and empty states', async () => {

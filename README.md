@@ -54,6 +54,20 @@ Identity minting and cutover remain operator steps (ima-jin/imajin-ai#2518, #252
    `/api/health` and `/api/spec` should respond immediately; `/api/me` returns your DID once
    you sign in through the header's "Sign in with Imajin" link.
 
+## Organizer workflows
+
+- `/dashboard` lists your created events, ticket counts and currency-separated revenue.
+- `/create` requires a full identity. It creates a draft event and saves ticket tiers through the existing tier routes.
+- `/admin/:eventId` is restricted to the creator or an authorized co-host. Its Overview, Guests, Sales and Managers tabs provide guest search/filtering, check-in, ticket actions and CSV downloads.
+- `/e/:eventId/edit` (also `/:eventId/edit`) edits event details and tiers. Existing buyer protections apply to sold tiers; unrelated metadata stays unchanged.
+- `/admin` uses the existing `EVENTS_ADMIN_DIDS` / `NODE_DID` allowlist and provides the network event export.
+
+Only creators add/remove co-hosts or change lifecycle status. Manager selection uses the same-origin connections proxy, with a DID/handle fallback. The first manager addition creates a private event pod through the public connections API; the kernel's graph-membership gate still applies.
+
+Dates use the selected IANA timezone. A confirmed partial form save can be retried without re-creating its event or saved tiers. An ambiguous POST result disables automatic retry: check `/dashboard` before trying again.
+
+Registration form IDs remain editable on tiers; survey discovery widgets are not part of this organizer port. Supported document-shaped attribution manifests use the published `.fair` editor. Fee-only manifests are preserved unchanged pending [kernel gap #2787](https://github.com/ima-jin/imajin-ai/issues/2787).
+
 ## Settlement (registered-app contract)
 
 Events settles a paid ticket order itself. At checkout it authenticates to the pay service with its
