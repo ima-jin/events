@@ -29,7 +29,7 @@ export function createFileWebhookNonceStore(
   }
 
   return {
-    async consume(key, expiresAt) {
+    consume(key, expiresAt) {
       return locks.withLock('events-replay-journal', async () => {
         const entries = await load();
         const now = clock();

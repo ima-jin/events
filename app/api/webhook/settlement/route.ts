@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
   try {
     const payload = ((body as BusWebhookEnvelope<SettlementPayload>).payload ?? body) as SettlementPayload;
 
-    if (!payload || !payload.orderId || typeof payload.orderId !== 'string') {
+    if (!payload?.orderId || typeof payload.orderId !== 'string') {
       return NextResponse.json({ error: 'Missing orderId' }, { status: 400 });
     }
 

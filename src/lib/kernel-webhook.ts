@@ -27,7 +27,7 @@ export async function verifyEventsKernelWebhook<T>(request: Request): Promise<T>
   }
   const holder = globalThis as StoreHolder;
   const nonceStore = holder[NONCE_STORE] ??= createFileWebhookNonceStore();
-  return verifyKernelWebhook<T>(request, { audience, authServiceUrl, nonceStore });
+  return await verifyKernelWebhook<T>(request, { audience, authServiceUrl, nonceStore });
 }
 
 /** Never expose headers, paths or internal discovery/storage errors. */
