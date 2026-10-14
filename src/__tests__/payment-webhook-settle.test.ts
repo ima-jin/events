@@ -5,9 +5,12 @@
  * for the kernel-only bus `settle` reactor.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { setupKernelWebhooks, signedRequest, foreignKey, discovery, type SignedRequestOptions } from '../../test/kernel-webhook';
+import { configureEventsWebhookNonceStore } from '@/lib/kernel-webhook';
+
+setupKernelWebhooks();
 
 const mocks = vi.hoisted(() => {
-  process.env.WEBHOOK_SECRET = 'test-webhook-secret';
   const selectQueue: unknown[][] = [];
   return {
     selectQueue,
@@ -65,7 +68,6 @@ vi.mock('@/lib/webhook-payment-helpers', () => ({
 
 import { POST } from '../../app/api/webhook/payment/route';
 
-const WEBHOOK_SECRET = 'test-webhook-secret';
 const ORGANIZER = 'did:imajin:organizer';
 const FAIR = { chain: [{ did: ORGANIZER, role: 'seller', share: 1 }] };
 const EVENT = { id: 'evt_1', did: 'did:imajin:evt_1', title: 'Summer Fair', creatorDid: ORGANIZER, privateKey: 'x', metadata: { fair: FAIR } };
@@ -83,12 +85,8 @@ const PAYLOAD = {
   metadata: { eventId: 'evt_1', eventDid: 'did:imajin:evt_1', buyerDid: 'did:imajin:buyer' },
 };
 
-function request(body: unknown, authorization = `Bearer ${WEBHOOK_SECRET}`) {
-  return { headers: new Headers({ authorization }), json: async () => body };
-}
-
-const callRoute = (body: unknown = PAYLOAD, authorization?: string) =>
-  (POST as unknown as (req: unknown) => Promise<Response>)(request(body, authorization));
+const callRoute = (body: unknown = PAYLOAD, options: SignedRequestOptions = {}) =>
+  POST(signedRequest('/api/webhook/payment', body, options) as never);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -101,7 +99,6 @@ beforeEach(() => {
   });
   mocks.settleCompletedOrder.mockResolvedValue({ status: 'settled', alreadySettled: false, manifest: { chain: [] } });
   mocks.recordByoSettlement.mockResolvedValue(undefined);
-  process.env.WEBHOOK_SECRET = WEBHOOK_SECRET;
   mocks.busPublish.mockResolvedValue(undefined);
   mocks.publishConfirmationEmails.mockResolvedValue(undefined);
 });
@@ -171,8 +168,8 @@ describe('POST /api/webhook/payment — settle via events’ app token (imajin-a
     expect(mocks.publishConfirmationEmails).toHaveBeenCalledTimes(1);
   });
 
-  it('rejects a webhook without the shared secret before doing anything', async () => {
-    const res = await callRoute(PAYLOAD, 'Bearer wrong-secret');
+  it('rejects an unsigned legacy Bearer before doing anything', async () => {
+    const res = await callRoute(PAYLOAD, { unsigned: true, headers: { authorization: 'Bearer fake-retired-credential' } });
 
     expect(res.status).toBe(401);
     expect(mocks.settleCompletedOrder).not.toHaveBeenCalled();
@@ -180,44 +177,59 @@ describe('POST /api/webhook/payment — settle via events’ app token (imajin-a
   });
 });
 
-describe('POST /api/webhook/payment — webhook authentication', () => {
+describe('POST /api/webhook/payment — kernel signatures', () => {
   it.each([
-    ['a token of the same length', `Bearer ${'x'.repeat(WEBHOOK_SECRET.length)}`],
-    ['a longer token', `Bearer ${WEBHOOK_SECRET}-extra`],
-    ['the bare secret without a scheme', WEBHOOK_SECRET],
-    ['an empty header', ''],
-  ])('answers 401 for %s', async (_label, authorization) => {
-    const res = await callRoute(PAYLOAD, authorization);
-
-    expect(res.status).toBe(401);
+    ['stale', { timestampOffsetSeconds: -301 }],
+    ['future', { timestampOffsetSeconds: 301 }],
+    ['wrong audience', { audience: 'did:imajin:another-app' }],
+    ['tampered bytes', { tampered: true }],
+    ['foreign signer', { privateKey: foreignKey.privateKey }],
+    ['wrong path/query', { signedUrl: 'https://events.test/events/api/webhook/payment?changed=1' }],
+    ['wrong method', { signedMethod: 'PUT' }],
+    ['unsigned', { unsigned: true }],
+  ])('rejects %s with no business effects', async (_label, options) => {
+    expect((await callRoute(PAYLOAD, options)).status).toBe(401);
     expect(mocks.createOrderWithTickets).not.toHaveBeenCalled();
+    expect(mocks.settleCompletedOrder).not.toHaveBeenCalled();
+    expect(mocks.busPublish).not.toHaveBeenCalled();
   });
 
-  it('answers 401 when the request carries no Authorization header at all', async () => {
-    const res = await (POST as unknown as (req: unknown) => Promise<Response>)({
-      headers: new Headers(),
-      json: async () => PAYLOAD,
-    });
-
-    expect(res.status).toBe(401);
+  it('rejects replay after a successful signed checkout', async () => {
+    const request = signedRequest('/api/webhook/payment', PAYLOAD);
+    expect((await POST(request.clone() as never)).status).toBe(200);
+    expect((await POST(request as never)).status).toBe(401);
+    expect(mocks.createOrderWithTickets).toHaveBeenCalledTimes(1);
   });
 
-  it('fails closed with 401 — not a crash — when WEBHOOK_SECRET is not configured', async () => {
-    delete process.env.WEBHOOK_SECRET;
-
-    const res = await callRoute(PAYLOAD, 'Bearer undefined');
-
-    expect(res.status).toBe(401);
-    expect(await res.json()).toEqual({ error: 'Unauthorized' });
+  it('preserves order idempotency for a freshly signed redelivery', async () => {
+    mocks.selectQueue.length = 0;
+    mocks.selectQueue.push([{ id: 'existing-order' }]);
+    expect((await callRoute()).status).toBe(200);
     expect(mocks.createOrderWithTickets).not.toHaveBeenCalled();
     expect(mocks.settleCompletedOrder).not.toHaveBeenCalled();
   });
 
-  it('reads the secret when the request arrives, not at import time', async () => {
-    process.env.WEBHOOK_SECRET = 'rotated-secret';
+  it.each(['not-json', 'null', '[]'])('rejects signed invalid payload %s with 400', async (body) => {
+    expect((await callRoute(body)).status).toBe(400);
+    expect(mocks.createOrderWithTickets).not.toHaveBeenCalled();
+  });
 
-    expect((await callRoute(PAYLOAD, `Bearer ${WEBHOOK_SECRET}`)).status).toBe(401);
-    expect((await callRoute(PAYLOAD, 'Bearer rotated-secret')).status).toBe(200);
+  it('fails closed when discovery is unavailable', async () => {
+    discovery.mockRejectedValue(new Error('discovery unavailable'));
+    expect((await callRoute()).status).toBe(503);
+    expect(mocks.createOrderWithTickets).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when the replay store is unavailable', async () => {
+    configureEventsWebhookNonceStore({ consume: () => { throw new Error('store unavailable'); } });
+    expect((await callRoute()).status).toBe(503);
+    expect(mocks.createOrderWithTickets).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when the app DID is not configured', async () => {
+    vi.stubEnv('IMAJIN_APP_DID', '');
+    expect((await callRoute()).status).toBe(503);
+    expect(mocks.createOrderWithTickets).not.toHaveBeenCalled();
   });
 });
 
