@@ -4,6 +4,7 @@ import { EventDetails } from '@/components/event/event-details';
 import { EventHero, StatusBanner } from '@/components/event/event-hero';
 import { TicketsCard } from '@/components/event/tickets-card';
 import { BuyerTicketsSection } from '@/components/buyer-tickets/buyer-tickets-section';
+import { EventChat } from '@/components/chat/event-chat';
 import { withBasePath } from '@/lib/base-path';
 import { getViewer, loadPublicEvent } from '@/lib/load-public-event';
 import { isHiddenStatus, type PublicEventView } from '@/lib/public-event';
@@ -64,7 +65,7 @@ export default async function EventPage({ params, searchParams }: Readonly<PageP
   if (isHiddenStatus(event.status) && !isCreator) notFound();
 
   const isUpcoming = new Date(event.startsAt) > new Date();
-  const canBuy = event.status === 'published' && tiers.length > 0;
+  const canBuy = event.eventType !== 'campaign' && event.status === 'published' && tiers.length > 0;
   const purchase = <TicketsCard event={event} tiers={tiers} hasHiddenTiers={hasHiddenTiers} invite={invite} isAuthenticated={viewer !== null} />;
 
   return (
@@ -79,6 +80,7 @@ export default async function EventPage({ params, searchParams }: Readonly<PageP
             {purchase}
           </BuyerTicketsSection>
         ) : purchase}
+        <EventChat eventId={event.id} />
       </div>
       {canBuy && (
         <div className="fixed inset-x-0 bottom-0 z-50 border-t border-gray-800 bg-gray-900 px-4 py-3 shadow-lg md:hidden">
