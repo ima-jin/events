@@ -16,7 +16,7 @@ export function OrganizerEventList({ events }: Readonly<{ events: readonly Organ
   return (
     <ul className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
       {events.map((event) => (
-        <li key={event.id} className="space-y-3 rounded-xl border border-gray-800 bg-gray-900 p-5">
+        <li key={event.id} className="space-y-3 rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-900">
           <h2 className="text-xl font-semibold">{event.title}</h2>
           <p className="text-sm text-gray-400">{new Date(event.startsAt).toLocaleString()} · {event.city || 'Online / TBA'}</p>
           <p>{event.status || 'draft'}</p>
