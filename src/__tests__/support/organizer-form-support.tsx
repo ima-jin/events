@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, vi } from 'vitest';
-import { EventForm, type EventFormEvent, type EventFormProps, type EventFormTier } from '@/components/organizer-form';
+import { EventForm, FairAttribution, type EventFormEvent, type EventFormProps, type EventFormTier, type FairAttributionManifest, type FairAttributionProps } from '@/components/organizer-form';
 export { jsonResponse, mockFetch } from './ui-support';
 import './ui-support';
 
@@ -40,4 +40,20 @@ export function fillCreate() {
 
 export function body(init?: RequestInit): Record<string, unknown> {
   return JSON.parse(String(init?.body || '{}'));
+}
+
+export function manifestFixture(): FairAttributionManifest {
+  return {
+    fair: '1.0', id: 'fair_event', type: 'ticket', owner: 'did:imajin:creator',
+    created: '2026-10-14T15:00:00Z', access: 'public',
+    attribution: [{ did: 'did:imajin:creator', role: 'creator', share: 1 }],
+    transfer: { allowed: true, refundable: false, faceValueCap: true },
+  };
+}
+
+export function renderAttribution(props: Partial<FairAttributionProps> = {}) {
+  return {
+    user: userEvent.setup(),
+    ...render(<FairAttribution eventId="evt_edit" manifest={manifestFixture()} {...props} />),
+  };
 }
