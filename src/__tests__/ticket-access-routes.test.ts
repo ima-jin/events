@@ -208,8 +208,9 @@ describe('GET /api/tickets/[id]/qr', () => {
     expect(whereParams(0)).toEqual([TICKET_ID, OWNER_DID]);
   });
 
-  it('returns the holder QR code data URI without caching', async () => {
+  it.each(['cookie', 'token'] as const)('returns the holder QR without caching via %s', async (via) => {
     nextSelect([{ id: TICKET_ID }]);
+    requireAuthMock.mockResolvedValue({ identity: { id: OWNER_DID, scopes: [], via } });
     const res = await qr();
 
     expect(res.status).toBe(200);
