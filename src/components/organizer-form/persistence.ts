@@ -34,6 +34,18 @@ async function write(path: string, method: 'POST' | 'PUT', body: object, progres
   return response;
 }
 
+async function saveTier(path: string, tier: TierDraft, index: number, progress: SaveProgress): Promise<void> {
+  const id = tier.id || progress.tierIds.get(tier.key);
+  const body = tierPayload(tier, index);
+  if (id) {
+    await write(`${path}/tiers`, 'PUT', { ...body, tierId: id }, progress);
+  } else {
+    const response = await write(`${path}/tiers`, 'POST', body, progress);
+    progress.tierIds.set(tier.key, await createdId(response, 'tier'));
+    progress.uncertain = false;
+  }
+}
+
 export async function saveForm(details: FormDetails, tiers: readonly TierDraft[], progress: SaveProgress): Promise<string> {
   if (progress.uncertain) throw new Error(AMBIGUOUS);
   const payload = eventPayload(details);
@@ -47,16 +59,7 @@ export async function saveForm(details: FormDetails, tiers: readonly TierDraft[]
   // Create does not accept accessMode/status. Apply them using the existing update contract.
   // Omitting metadata/chat/name policy leaves out-of-scope settings untouched.
   await write(path, 'PUT', payload, progress);
-  for (const [index, tier] of tiers.entries()) {
-    const id = tier.id || progress.tierIds.get(tier.key);
-    const body = tierPayload(tier, index);
-    if (id) {
-      await write(`${path}/tiers`, 'PUT', { ...body, tierId: id }, progress);
-    } else {
-      const response = await write(`${path}/tiers`, 'POST', body, progress);
-      progress.tierIds.set(tier.key, await createdId(response, 'tier'));
-      progress.uncertain = false;
-    }
-  }
+  // Serialize writes so a refusal stops the chain and confirmed IDs remain retryable.
+  await tiers.reduce((pending, tier, index) => pending.then(() => saveTier(path, tier, index, progress)), Promise.resolve());
   return eventId;
 }
