@@ -408,6 +408,81 @@ components:
         lastEmailSentAt: { type: string, format: date-time, nullable: true }
         fairSettlement: { type: object, nullable: true }
         orderAmountTotal: { type: integer, nullable: true }
+    BuyerTicket:
+      type: object
+      additionalProperties: false
+      required: [id, status, usedAt, registrationStatus, pricePaid, currency, ticketType]
+      properties:
+        id: { type: string }
+        status: { type: string }
+        usedAt: { type: string, format: date-time, nullable: true }
+        registrationStatus: { type: string }
+        pricePaid: { type: integer, nullable: true, description: Cents }
+        currency: { type: string, nullable: true }
+        ticketType:
+          type: object
+          nullable: true
+          additionalProperties: false
+          required: [name, description, perks, registrationFormId]
+          properties:
+            name: { type: string }
+            description: { type: string, nullable: true }
+            perks: { type: array, items: { type: string } }
+            registrationFormId: { type: string, nullable: true }
+    BuyerFairSettlement:
+      type: object
+      nullable: true
+      additionalProperties: false
+      description: Validated receipt allowlist. Settlement amounts are major currency units.
+      required: [settledAt, totalAmount, currency, chain]
+      properties:
+        version: { type: string }
+        settledAt: { type: string, format: date-time }
+        totalAmount: { type: number, minimum: 0 }
+        netAmount: { type: number, minimum: 0 }
+        currency: { type: string, pattern: "^[A-Z]{3}$" }
+        chain:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [did, amount, role]
+            properties:
+              did: { type: string }
+              amount: { type: number, minimum: 0 }
+              role: { type: string }
+        fees:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [role, name, rateBps, fixedCents, amount]
+            properties:
+              role: { type: string }
+              name: { type: string }
+              rateBps: { type: number, minimum: 0 }
+              fixedCents: { type: number, minimum: 0 }
+              amount: { type: number, minimum: 0 }
+              estimated: { type: boolean }
+    BuyerOrder:
+      type: object
+      additionalProperties: false
+      required: [id, isLegacy, quantity, totalAmount, currency, purchasedAt, ticketTypeName, fairSettlement, tickets]
+      properties:
+        id: { type: string, description: Order id, or ticket id for a legacy group }
+        isLegacy: { type: boolean }
+        quantity: { type: integer, description: Currently owned tickets in this group }
+        totalAmount:
+          type: integer
+          nullable: true
+          description: >-
+            Cents. Full order total only for its purchaser owning all ordered tickets; otherwise
+            the sum of currently owned ticket prices. Null for missing prices or mixed currencies.
+        currency: { type: string, nullable: true }
+        purchasedAt: { type: string, format: date-time, nullable: true }
+        ticketTypeName: { type: string, description: Mixed-type count summary }
+        fairSettlement: { $ref: "#/components/schemas/BuyerFairSettlement" }
+        tickets: { type: array, items: { $ref: "#/components/schemas/BuyerTicket" } }
     Registration:
       type: object
       properties:
@@ -1201,8 +1276,12 @@ paths:
       operationId: getMyTicket
       summary: Does the caller hold a ticket for, or organize, this event?
       description: >
-        Never fails with an auth error: an unauthenticated caller (or any internal error) gets
-        `hasTicket: false, hasAccess: false` with status 200.
+        An unauthenticated caller gets `hasTicket: false, hasAccess: false` with status 200.
+        Authenticated success preserves the flat tickets/access fields and adds ownership-scoped orders.
+        Orders group current-owner tickets for this event by order id; legacy tickets form individual groups.
+        Original order totals and receipts are hidden from transferred recipients and partial-order holders.
+        Validated legacy ticket receipts are supported. No raw metadata, payment ids, email or QR data is returned.
+        Database and access lookup failures return 500 rather than a misleading empty success.
       security:
         - appToken: [events:read]
         - cookieAuth: []
@@ -1219,6 +1298,11 @@ paths:
                   hasAccess: { type: boolean }
                   isOrganizer: { type: boolean }
                   ticketId: { type: string, nullable: true }
+                  orders: { type: array, items: { $ref: "#/components/schemas/BuyerOrder" } }
+                  registrationEmbedBaseUrl:
+                    type: string
+                    nullable: true
+                    description: Authenticated-only public DYKIL_URL base, without credentials, query or fragment.
                   tickets:
                     type: array
                     items:
@@ -1236,6 +1320,7 @@ paths:
                             name: { type: string }
                             description: { type: string, nullable: true }
                             perks: { type: array, items: { type: string } }
+        "500": { $ref: "#/components/responses/ServerError" }
 
   /api/events/{id}/queue:
     parameters:

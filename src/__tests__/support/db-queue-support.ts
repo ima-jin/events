@@ -68,7 +68,7 @@ const hoisted = vi.hoisted(() => {
     valuesMock,
     returningMock,
     whereMock,
-    selectMock: vi.fn(() => makeChain('select')),
+    selectMock: vi.fn<(fields?: unknown) => Chain>(() => makeChain('select')),
     updateMock: vi.fn<(table: unknown) => Chain>(() => makeChain('update')),
     insertMock: vi.fn<(table: unknown) => Chain>(() => makeChain('insert')),
   };
