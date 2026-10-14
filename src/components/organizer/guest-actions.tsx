@@ -85,7 +85,7 @@ export function GuestActions({ eventId, guest, isCreator, onChanged, onRefundPen
     {confirmation && <div role="alertdialog" aria-label={`Confirm ${confirmation}`}>
       <p>Confirm {confirmation} for ticket {guest.id}? Only continue if you intend this change.</p>
       {confirmation === 'check-in' && <label className="block">
-        Signed ticket QR token
+        <span className="block">Signed ticket QR token</span>
         <input className="block w-full rounded border p-2" value={qrToken}
           onChange={(event) => setQrToken(event.target.value)} autoComplete="off"
           placeholder="Scan or paste the ticket-v1 token" />
