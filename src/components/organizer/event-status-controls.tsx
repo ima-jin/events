@@ -42,7 +42,7 @@ export function EventStatusControls({ eventId, currentStatus, isCreator }: Reado
       setConfirmation(next);
       return;
     }
-    transition(next);
+    transition(next).catch(() => setError('Unable to update event status.'));
   }
 
   return <section className={PANEL_CLASS} aria-label="Event status">
@@ -53,7 +53,7 @@ export function EventStatusControls({ eventId, currentStatus, isCreator }: Reado
     })}</div>}
     {confirmation && <div role="alertdialog" aria-label="Confirm status change" className="mt-3">
       <p>Change event status to {confirmation}? This cannot be undone.</p>
-      <button type="button" disabled={busy} onClick={() => transition(confirmation)}>Confirm</button>
+      <button type="button" disabled={busy} onClick={() => { transition(confirmation).catch(() => setError('Unable to update event status.')); }}>Confirm</button>
       <button type="button" disabled={busy} onClick={() => setConfirmation(null)}>Keep current status</button>
     </div>}
     {error && <p role="alert">{error}</p>}

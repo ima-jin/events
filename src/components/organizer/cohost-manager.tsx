@@ -61,7 +61,7 @@ export function CohostManager({ eventId, isCreator, creatorDid }: Readonly<{
       return;
     }
     const body = value.startsWith('did:') ? { did: value } : { handle: value.replaceAll(/^@/g, '') };
-    mutate('POST', body);
+    mutate('POST', body).catch(() => setError('Unable to update co-hosts.'));
   }
 
   return <section className={PANEL_CLASS} aria-label="Managers">
@@ -72,9 +72,9 @@ export function CohostManager({ eventId, isCreator, creatorDid }: Readonly<{
       {state.data.cohosts.length === 0 && <p>No co-hosts added yet.</p>}
       <ul className="my-4 space-y-3">{state.data.cohosts.map((cohost) => <li key={cohost.did} className="flex items-center justify-between gap-3">
         <div>{identityLabel(cohost.name, cohost.handle, null, cohost.did)} <span className="text-sm text-gray-500">Co-host</span></div>
-        {isCreator && <button type="button" disabled={busy} onClick={() => mutate('DELETE', { did: cohost.did })} aria-label={`Remove ${identityLabel(cohost.name, cohost.handle, null, cohost.did)}`}>Remove</button>}
+        {isCreator && <button type="button" disabled={busy} onClick={() => { mutate('DELETE', { did: cohost.did }).catch(() => setError('Unable to update co-hosts.')); }} aria-label={`Remove ${identityLabel(cohost.name, cohost.handle, null, cohost.did)}`}>Remove</button>}
       </li>)}</ul>
-      {isCreator && <ConnectionPicker excludeDids={[creatorDid, ...state.data.cohosts.map((cohost) => cohost.did)]} disabled={busy} onSelect={(did) => mutate('POST', { did })} />}
+      {isCreator && <ConnectionPicker excludeDids={[creatorDid, ...state.data.cohosts.map((cohost) => cohost.did)]} disabled={busy} onSelect={(did) => { mutate('POST', { did }).catch(() => setError('Unable to update co-hosts.')); }} />}
       {isCreator && <form onSubmit={add} className="flex flex-wrap items-end gap-3">
         <label>DID or handle <input className={INPUT_CLASS} value={target} onChange={(event) => setTarget(event.target.value)} disabled={busy} required /></label>
         <button type="submit" disabled={busy || target.trim().length === 0}>{busy ? 'Saving…' : 'Add co-host'}</button>
@@ -82,6 +82,6 @@ export function CohostManager({ eventId, isCreator, creatorDid }: Readonly<{
       {!isCreator && <p>Only the creator can manage co-hosts.</p>}
     </>}
     {error && <p role="alert">{error}</p>}
-    {success && <p role="status">{success}</p>}
+    {success && <output className="block">{success}</output>}
   </section>;
 }

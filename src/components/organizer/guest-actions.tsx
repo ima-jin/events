@@ -67,7 +67,7 @@ export function GuestActions({ eventId, guest, isCreator, onChanged, onRefundPen
 
   function request(action: GuestAction) {
     if (action === 'check-in' || action === 'resend-email') {
-      perform(action);
+      perform(action).catch(() => setError('Ticket action failed.'));
       return;
     }
     setConfirmation(action);
@@ -79,14 +79,14 @@ export function GuestActions({ eventId, guest, isCreator, onChanged, onRefundPen
       <button key={action} type="button" disabled={busy} onClick={() => request(action)}>{busy ? 'Working…' : label}</button>)}</div>}
     {confirmation && <div role="alertdialog" aria-label={`Confirm ${confirmation}`}>
       <p>Confirm {confirmation} for ticket {guest.id}? Only continue if you intend this change.</p>
-      <button type="button" disabled={busy} onClick={() => perform(confirmation)}>Confirm action</button>
+      <button type="button" disabled={busy} onClick={() => { perform(confirmation).catch(() => setError('Ticket action failed.')); }}>Confirm action</button>
       <button type="button" disabled={busy} onClick={() => setConfirmation(null)}>Keep ticket</button>
     </div>}
-    {manualRefund && <div role="status">
-      <p>Manual refund required: send {manualRefund.refundAmount} {manualRefund.refundCurrency} to {manualRefund.refundEmail || 'the buyer'} before marking it sent.</p>
+    {manualRefund && <output className="block">
+      <span className="block">Manual refund required: send {manualRefund.refundAmount} {manualRefund.refundCurrency} to {manualRefund.refundEmail || 'the buyer'} before marking it sent.</span>
       <button type="button" disabled={busy} onClick={() => request('mark-refund-sent')}>Mark Refund Sent</button>
-    </div>}
+    </output>}
     {error && <p role="alert">{error}</p>}
-    {notice && <p role="status">{notice}</p>}
+    {notice && <output className="block">{notice}</output>}
   </div>;
 }
