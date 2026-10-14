@@ -1,4 +1,4 @@
-import { serviceUrl } from '@/lib/kernel';
+import { payForbiddenMessage, postPayAsApp } from '@/lib/pay-app-request';
 
 export type PayRefundResult = { ok: true } | { ok: false; status: number; text: string };
 
@@ -6,25 +6,23 @@ export type PayRefundResult = { ok: true } | { ok: false; status: number; text: 
  * Ask the kernel pay service to refund a payment (`POST {pay}/api/refund`).
  * Omit `amount` for a full refund.
  *
- * NOTE: authentication is still the shared `PAY_SERVICE_API_KEY` bearer
- * (kernel parity — migration to an app token is tracked in imajin-ai#2739).
+ * Uses events' own app-service token with operator-approved `pay:refund`.
+ * The kernel checks payment ownership and enforces refund replay safety.
  */
 export async function requestPayRefund(body: {
   paymentId: string;
   amount?: number;
   reason?: string;
 }): Promise<PayRefundResult> {
-  const response = await fetch(`${serviceUrl('pay') ?? ''}/api/refund`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${process.env.PAY_SERVICE_API_KEY}`,
-    },
-    body: JSON.stringify(body),
-  });
+  const response = await postPayAsApp('/api/refund', body);
 
   if (response.ok) {
     return { ok: true };
   }
-  return { ok: false, status: response.status, text: await response.text() };
+  const text = await response.text();
+  return {
+    ok: false,
+    status: response.status,
+    text: response.status === 403 ? `${payForbiddenMessage('pay:refund')}. ${text}` : text,
+  };
 }

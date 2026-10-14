@@ -21,7 +21,8 @@ import {
   resetCampaignMocks,
 } from './support/campaign-route-support';
 import { nextSelect, nextUpdate, setValues, updatedTables, updateMock, whereParams } from './support/db-queue-support';
-import { fetchMock, jsonResponse, payApiKey, payUrl, textResponse } from './support/kernel-mock-support';
+import { fetchMock, jsonResponse, payUrl, textResponse } from './support/kernel-mock-support';
+import { APP_TOKEN, getPayAppTokenMock, invalidatePayAppTokenMock, resetPayAppTokenMocks } from './support/pay-app-token-support';
 import { mockLog } from './support/route-test-support';
 import { events, pledges } from '@/db';
 import { OPTIONS as cancelOptions, POST as postCancel } from '../../app/api/campaign/[eventId]/cancel/route';
@@ -34,7 +35,9 @@ const ERR_CHARGE_FAILED = 'Failed to charge pledges';
 
 /** Two confirmed pledges worth 6000 in total (target 10 000 by default). */
 const confirmedPledges = (amounts = [4000, 2000]) =>
-  amounts.map((amount, index) => makePledge({ id: `plg_${index + 1}`, amount, stripeCustomerId: `cus_${index + 1}` }));
+  amounts.map((amount, index) => makePledge({
+    id: `plg_${index + 1}`, amount, stripeCustomerId: `cus_${index + 1}`, stripeSetupIntentId: `seti_${index + 1}`,
+  }));
 
 /** Queue the event + confirmed pledges a settle needs to reach the pay service. */
 function queueSettleable(targetAmount: number | null = 5000): void {
@@ -45,6 +48,40 @@ function queueSettleable(targetAmount: number | null = 5000): void {
 describe('POST /api/campaign/{eventId}/settle', () => {
   beforeEach(() => {
     resetCampaignMocks();
+    resetPayAppTokenMocks();
+  });
+
+  it('re-mints once on 401 and preserves the bound setup ids', async () => {
+    queueSettleable();
+    getPayAppTokenMock.mockResolvedValueOnce('expired').mockResolvedValueOnce('fresh');
+    fetchMock.mockResolvedValueOnce(jsonResponse(401))
+      .mockResolvedValueOnce(jsonResponse(200, { results: [] }));
+    expect((await settle()).status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(invalidatePayAppTokenMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[1][1].headers.Authorization).toBe('Bearer fresh');
+    expect(fetchMock.mock.calls[0][1].body).toBe(fetchMock.mock.calls[1][1].body);
+  });
+
+  it.each([401, 403])('leaves pledges untouched on persistent authorization failure %s', async (status) => {
+    queueSettleable();
+    fetchMock.mockImplementation(async () => jsonResponse(status, { error: 'scope or ownership refused' }));
+    const res = await settle();
+    expect(res.status).toBe(status === 403 ? 403 : 500);
+    if (status === 403) {
+      expect(await res.json()).toEqual({ error: expect.stringContaining('approve pay:charge-pledges') });
+      expect(invalidatePayAppTokenMock).not.toHaveBeenCalled();
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(status === 401 ? 2 : 1);
+    expect(updateMock).not.toHaveBeenCalled();
+  });
+
+  it('does not charge or mutate pledges when the app token is unavailable', async () => {
+    queueSettleable();
+    getPayAppTokenMock.mockRejectedValue(new Error('not provisioned'));
+    expect((await settle()).status).toBe(500);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(updateMock).not.toHaveBeenCalled();
   });
 
   itAnswersPreflight(settleOptions);
@@ -104,12 +141,12 @@ describe('POST /api/campaign/{eventId}/settle', () => {
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe(`${payUrl}/api/charge-pledges`);
     expect(init.method).toBe('POST');
-    expect(init.headers).toMatchObject({ Authorization: `Bearer ${payApiKey}`, 'Content-Type': 'application/json' });
+    expect(init.headers).toMatchObject({ Authorization: `Bearer ${APP_TOKEN}`, 'Content-Type': 'application/json' });
     expect(JSON.parse(init.body as string)).toEqual({
       eventId: EVENT_ID,
       pledges: [
-        { pledgeId: 'plg_1', amount: 4000, currency: 'CAD', stripeCustomerId: 'cus_1', stripePaymentMethodId: 'pm_1' },
-        { pledgeId: 'plg_2', amount: 2000, currency: 'CAD', stripeCustomerId: 'cus_2', stripePaymentMethodId: 'pm_1' },
+        { pledgeId: 'plg_1', setupIntentId: 'seti_1' },
+        { pledgeId: 'plg_2', setupIntentId: 'seti_2' },
       ],
     });
 

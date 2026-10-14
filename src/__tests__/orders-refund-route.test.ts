@@ -9,8 +9,7 @@
  *  - Non-organizer caller → 403
  *  - Free/e-transfer orders skip the Stripe call
  *
- * NOTE: the pay-service call still authenticates with PAY_SERVICE_API_KEY
- * (explicitly out of scope — imajin-ai#2739), and is tested as-is.
+ * The pay-service call authenticates as events with its app-service token.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
@@ -99,6 +98,28 @@ describe('POST /api/orders/[id]/refund (#949)', () => {
     expect(res.status).toBe(400);
     expect((await res.json()).error).toBe('Order already refunded');
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('does not refund the payment twice when the completed refund is replayed', async () => {
+    nextSelect([BASE_ORDER]);
+    nextSelect(BASE_TICKETS);
+    expect((await callRefund()).status).toBe(200);
+    nextSelect([{ ...BASE_ORDER, status: 'refunded' }]);
+    expect((await callRefund()).status).toBe(400);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(publishMock).toHaveBeenCalledOnce();
+  });
+
+  it('reports missing refund scope without mutating tickets or retrying', async () => {
+    nextSelect([BASE_ORDER]);
+    nextSelect(BASE_TICKETS);
+    fetchMock.mockResolvedValue(fakeResponse(403, "scope 'pay:refund' was not granted"));
+    const res = await callRefund();
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: expect.stringContaining('approve pay:refund') });
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(updateMock).not.toHaveBeenCalled();
+    expect(publishMock).not.toHaveBeenCalled();
   });
 
   it('checks organizer rights against the order\'s event', async () => {

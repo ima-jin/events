@@ -110,6 +110,9 @@ async function processPaymentRefund(ticket: RefundableTicket, pricePaid: number)
       { status: result.status, text: result.text },
       '[refund] pay /api/refund returned error',
     );
+    if (result.status === 403) {
+      throw new ServiceError('forbidden', result.text);
+    }
     throw new ServiceError('unavailable', 'Payment refund failed — ticket status not changed', {
       status: 502,
     });

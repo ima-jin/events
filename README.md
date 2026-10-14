@@ -75,16 +75,27 @@ Registration form IDs remain editable on tiers; survey discovery widgets are not
 Events settles a paid ticket order itself. At checkout it authenticates to the pay service with its
 **own app-service token** (minted from its signing key) and declares the payee manifest (the resolved `.fair`
 chain). When the pay webhook reports the payment, events calls `POST /pay/api/settle` with the same token, the
-checkout's `transaction_id` and the `fair_manifest`; `alreadySettled: true` is success. The shared
-`PAY_SERVICE_API_KEY` is not used for settlement (refunds and campaign charge-pledges still use it, imajin-ai#2735).
+checkout's `transaction_id` and the `fair_manifest`; `alreadySettled: true` is success.
+Refunds and campaign charge-pledges also use events' own app-service token; no shared pay key is used.
 
 Operator prerequisites before ticket checkout works: (1) register events and provision its signing key
-(`IMAJIN_KERNEL_URL`, `IMAJIN_APP_DID`, one-time operator code at `/events/claim` or optional env code); (2) approve `pay:settle` via the
+(`IMAJIN_KERNEL_URL`, `IMAJIN_APP_DID`, one-time operator code at `/events/claim` or optional env code); (2) the operator must approve
+`pay:settle`, `pay:refund` and `pay:charge-pledges` for events' app DID via the
 `apps:service-scopes` card; (3) deploy the kernel contract (imajin-ai#2695) and the kernel build that adds `transactionId` to the pay
 `checkout.completed` webhook (imajin-ai#2741; it looks the `pay.transactions` row up by the Stripe session and sends
 its id — the key `/pay/api/settle` needs). If a webhook arrives without it, events logs
 `Pay webhook carried no transactionId — order NOT settled` and skips settlement. Without 1–2, checkout for an event
 with a `.fair` chain fails closed (503). See also [`docs/KERNEL-GAPS.md`](./docs/KERNEL-GAPS.md).
+
+**Deploy order:** deploy [kernel PR #2786](https://github.com/ima-jin/imajin-ai/pull/2786)
+first, then this events release. Remove the retired shared pay credential from the deployment
+environment. Refunds require an original payment bound to events' app DID. Campaign charging
+sends only `pledgeId` and `setupIntentId`; the kernel derives charge details from its app-owned,
+confirmed setup record. Legacy unbound setups must be recreated and confirmed, never backfilled
+from caller-supplied customer/card IDs. Setup/confirm wiring is tracked separately in events#27.
+Refund and charge calls invalidate the cached token and re-mint once on 401. A 403 is never
+retried: the error identifies operator scope approval and app ownership as prerequisites.
+Network/5xx failures are not automatically retried because the payment outcome may be ambiguous.
 
 ## Consuming `@ima-jin/*`
 

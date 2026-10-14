@@ -14,7 +14,7 @@
  *
  * This replaces the bus `settle` reactor for events: that reactor only runs
  * where an in-process settle executor is registered (the kernel process), and
- * events publishes from its own process. No shared `PAY_SERVICE_API_KEY`.
+ * events publishes from its own process. No shared pay key.
  *
  * Correlation. `/pay/api/settle` is keyed by the kernel `transactionId` the app-authenticated
  * checkout returned; the kernel's pay webhook that notifies events (`checkout.completed`) carries

@@ -61,11 +61,15 @@ only warns and the app boots unclaimed — claim at `/events/claim` after boot.
 | `CHECKIN_WEBHOOK_URL` | runtime | Optional external check-in callback URL; unset disables callback. Do not embed credentials in URLs. |
 | `DYKIL_URL` | runtime | Target kernel base plus `/dykil` for public survey API reads; unset yields no survey response. |
 | `IMAJIN_EVENTS_PUBLISH_PATH` | runtime | Optional approved public kernel app-auth publish route path; unset is a logged no-op. See KERNEL-GAPS.md. |
-| `PAY_SERVICE_API_KEY` | runtime | Legacy refund/charge-pledges only, tracked in imajin-ai#2735. Not settlement; leave unset unless separately authorized. No workaround minting. |
 | `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | build | Public key for campaign Payment Element card setup, matching the pay service's Stripe account/environment. Unset disables card setup with a clear error before a pledge is created. Never use a Stripe secret key. |
 | `ENABLE_TICKET_MIGRATION` | runtime | Unset or `false` until #2529 soak sign-off; only literal `true` enables the live-ticket rewrite. Prepared deploy refuses enabled gate. |
 
 ## Optional overrides and attribution
+
+Pay checkout, settlement, refund and campaign charging use events' own app-service token.
+The operator must approve `pay:settle`, `pay:refund` and `pay:charge-pledges` for that
+environment's events app DID on `apps:service-scopes`. Deploy kernel PR imajin-ai#2786 before
+this events release and remove the retired shared pay credential from the environment.
 
 | Variable | When | Contract |
 |---|---|---|

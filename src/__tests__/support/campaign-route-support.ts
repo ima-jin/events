@@ -7,7 +7,7 @@
  * route under test registers every mock:
  *   - `./route-test-support`   logger, `@/lib/auth`, `@ima-jin/config` (cors, rateLimit, getClientIP)
  *   - `./db-queue-support`     queue-based drizzle `db`
- *   - `./kernel-mock-support`  `@/lib/kernel` (pay URL), `fetch`, `PAY_SERVICE_API_KEY`
+ *   - `./kernel-mock-support`  `@/lib/kernel` (pay URL), `fetch`
  *
  * All the cross-route behaviour (preflight, rate limit, auth failure, missing
  * id, unknown event, non-campaign event, non-creator, 500) is expressed once

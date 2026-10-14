@@ -25,20 +25,19 @@
  */
 import { NextRequest } from 'next/server';
 import { vi, it, expect } from 'vitest';
+import { APP_TOKEN, resetPayAppTokenMocks } from './pay-app-token-support';
 
 const hoisted = vi.hoisted(() => {
   const payServiceUrl = 'https://kernel.test/pay';
   const authServiceUrl = 'https://kernel.test/auth';
   const profileServiceUrl = 'https://kernel.test/profile';
   const connectionsServiceUrl = 'https://kernel.test/connections';
-  const payApiKey = 'pay-api-key-fixture';
 
   // Routes capture these once, at import time.
   process.env.PAY_SERVICE_URL = payServiceUrl;
   process.env.AUTH_SERVICE_URL = authServiceUrl;
   process.env.PROFILE_SERVICE_URL = profileServiceUrl;
   process.env.CONNECTIONS_SERVICE_URL = connectionsServiceUrl;
-  process.env.PAY_SERVICE_API_KEY = payApiKey;
 
   const selectQueue: unknown[][] = [];
   const sqlQueue: unknown[][] = [];
@@ -80,7 +79,6 @@ const hoisted = vi.hoisted(() => {
     authServiceUrl,
     profileServiceUrl,
     connectionsServiceUrl,
-    payApiKey,
     selectQueue,
     sqlQueue,
     returningQueue,
@@ -108,7 +106,6 @@ export const {
   authServiceUrl,
   profileServiceUrl,
   connectionsServiceUrl,
-  payApiKey,
   logMock,
   selectMock,
   updateWhereMock,
@@ -264,6 +261,7 @@ export function fakeResponse(status: number, body: unknown = {}): Response {
 /** Common `beforeEach` reset: empties every queue and restores the default mock behaviour. */
 export function resetTicketRouteMocks(): void {
   vi.clearAllMocks();
+  resetPayAppTokenMocks();
   hoisted.selectQueue.length = 0;
   hoisted.sqlQueue.length = 0;
   hoisted.returningQueue.length = 0;
@@ -288,13 +286,13 @@ export function resetTicketRouteMocks(): void {
   fetchMock.mockResolvedValue(fakeResponse(200));
 }
 
-/** Assert the pay-service refund call (still `PAY_SERVICE_API_KEY` bearer auth — out of scope, imajin-ai#2739) and return its JSON body. */
+/** Assert events' own app-service bearer on the refund call and return its JSON body. */
 export function expectPayRefundCall(): Record<string, unknown> {
   expect(fetchMock).toHaveBeenCalledOnce();
   const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
   expect(url).toBe(`${payServiceUrl}/api/refund`);
   expect(init.method).toBe('POST');
-  expect(init.headers).toMatchObject({ Authorization: `Bearer ${payApiKey}` });
+  expect(init.headers).toMatchObject({ Authorization: `Bearer ${APP_TOKEN}` });
   return JSON.parse(init.body as string) as Record<string, unknown>;
 }
 

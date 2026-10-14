@@ -220,6 +220,9 @@ async function refundWithPayService(paymentId: string): Promise<void> {
       { status: result.status, text: result.text },
       '[order-refund] pay /api/refund returned error',
     );
+    if (result.status === 403) {
+      throw new ServiceError('forbidden', result.text);
+    }
     throw new ServiceError('unavailable', 'Payment refund failed — order status not changed', {
       status: 502,
     });

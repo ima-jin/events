@@ -290,8 +290,7 @@ describe('settleOrderViaPay', () => {
     expect(url).toBe(`${PAY_URL}/api/settle`);
     expect(headers.Authorization).toBe(`Bearer ${APP_TOKEN}`);
     expect(body).toEqual({ transaction_id: 'tx_1', fair_manifest: MANIFEST, metadata: SETTLE_META });
-    // The settle path never sends the shared key.
-    expect(JSON.stringify(headers)).not.toMatch(/service-key|PAY_SERVICE_API_KEY/);
+    expect(headers).toEqual({ 'Content-Type': 'application/json', Authorization: `Bearer ${APP_TOKEN}` });
   });
 
   it('treats alreadySettled: true as success (idempotent replay)', async () => {

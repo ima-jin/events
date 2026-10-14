@@ -89,14 +89,18 @@ See [REGISTRATION.md](./REGISTRATION.md).
 - If supplied in env, after successful first boot **delete** `IMAJIN_APP_CLAIM_CODE` from `.env.local`.
   Subsequent boots authenticate with the keystore. Loss requires operator approval with
   `reissueClaim: true`, not hand-made replacement keys.
-- Approve events' `pay:settle` service scope via the `apps:service-scopes` approval card.
+- The operator must approve `pay:settle`, `pay:refund` and `pay:charge-pledges` for events'
+  app DID via the `apps:service-scopes` approval card.
   User app tokens use audience **`events`**, with `events:read` / `events:write`;
   they do not use the kernel hostname as audience. The session-cookie fallback remains
   a migration path, not a substitute for scoped-token verification.
 - Configure `IMAJIN_APP_ATTESTATION_ID` when enabling app-auth service calls outside
   user sessions. Existing integration limitations are in [KERNEL-GAPS.md](./KERNEL-GAPS.md).
-  Refund/charge-pledges still depend on the legacy key (#2735); this deploy work does not
-  resolve or authorize that boundary gap. Never mint a shared key as a workaround.
+  Deploy kernel PR imajin-ai#2786 **first**, then this events release, and remove the
+  retired shared pay credential from the host environment. Refunds and campaign charges
+  use only events' own app token and require kernel-recorded app ownership. Legacy unbound
+  campaign setups must be recreated and confirmed (events#27); never manufacture bindings.
+  A 401 triggers one re-mint; 403 scope/ownership errors fail closed without retry.
 
 Keep credentials out of shell history, terminal recordings, PRs and logs. Do not use
 `set -x`, print `.env.local`, share `pm2 env`, `pm2 jlist` or the pm2 dump: these may contain
