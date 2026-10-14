@@ -9,7 +9,7 @@ import { EventHero, StatusBanner } from '@/components/event/event-hero';
 import { EventList } from '@/components/event/event-list';
 import { ShareButton } from '@/components/event/share-button';
 import { TicketsCard } from '@/components/event/tickets-card';
-import { makeEventView, makeTier } from '../support/ui-support';
+import { makeEventView, makeTier, mockFetch, jsonResponse } from '../support/ui-support';
 
 describe('calculateTimeLeft', () => {
   const NOW = Date.parse('2030-01-01T00:00:00Z');
@@ -168,10 +168,15 @@ describe('TicketsCard', () => {
     expect(screen.queryByRole('heading', { name: 'General' })).toBeNull();
   });
 
-  it('does not sell tickets for campaign events', () => {
+  it('replaces tickets with campaign progress for campaign events', async () => {
+    mockFetch({ '/status': jsonResponse({
+      targetAmount: 10000, currentAmount: 2500, percentFunded: 25,
+      pledgeCount: 1, deadline: null, isFullyFunded: false,
+    }) });
     render(<TicketsCard event={makeEventView({ eventType: 'campaign' })} {...props} />);
-
-    expect(screen.getByText(/Campaign pledges are not available/)).toBeTruthy();
+    expect(await screen.findByRole('progressbar', { name: 'Campaign funding' })).toHaveProperty('value', 25);
+    expect(screen.queryByRole('heading', { name: 'Tickets' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'General' })).toBeNull();
   });
 });
 

@@ -16,6 +16,8 @@ import {
   makeTierRow,
   mockBuyerFetch,
   resetPageMocks,
+  mockFetch,
+  jsonResponse,
 } from '../support/ui-support';
 
 vi.mock('@/services/events-service', async () => (await import('../support/ui-support')).eventsServiceDouble);
@@ -56,6 +58,17 @@ describe('loadPublicEvent / getViewer', () => {
     expect(serialised).not.toContain('pay@org.ca');
     expect(serialised).not.toContain('VIP');
   });
+  it('shows campaign progress and drops the ticket mobile CTA on campaign pages', async () => {
+    givenEvent(makeEventRow({ eventType: 'campaign' }));
+    mockFetch({ '/status': jsonResponse({
+      targetAmount: 10000, currentAmount: 5000, percentFunded: 50,
+      pledgeCount: 2, deadline: null, isFullyFunded: false,
+    }) });
+    await renderEventPage();
+    expect(await screen.findByRole('progressbar', { name: 'Campaign funding' })).toHaveProperty('value', 50);
+    expect(screen.queryByRole('link', { name: 'Get Tickets' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Tickets' })).toBeNull();
+  });
 
   it('answers null for an unknown event and rethrows anything else', async () => {
     eventsServiceDouble.getEventWithTicketTypes.mockRejectedValueOnce(new ServiceError('not_found', 'Event not found'));
@@ -88,6 +101,8 @@ describe('EventPage', () => {
     expect(screen.getByRole('heading', { name: 'General' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Add one General' })).toBeTruthy();
     expect(screen.getByRole('link', { name: 'Get Tickets' }).getAttribute('href')).toBe('#tickets');
+    expect(screen.queryByRole('progressbar', { name: 'Campaign funding' })).toBeNull();
+    expect(screen.getByText('Event Chat')).toBeTruthy();
   });
 
   it('never puts the private key, e-Transfer address or access codes in the markup', async () => {
