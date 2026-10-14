@@ -6,6 +6,8 @@ import { useEventForm } from './use-event-form';
 import type { EventFormProps } from './types';
 
 export type { EventFormProps, EventFormEvent, EventFormTier, JsonValue } from './types';
+export { FairAttribution, type FairAttributionProps } from './fair-attribution';
+export type { FairAttributionManifest } from './fair-manifest';
 
 export function EventForm(props: Readonly<EventFormProps>) {
   const form = useEventForm(props);
