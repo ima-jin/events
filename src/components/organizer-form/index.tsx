@@ -15,7 +15,7 @@ export function EventForm(props: Readonly<EventFormProps>) {
   let submitLabel = props.mode === 'edit' ? 'Save changes' : 'Create event';
   if (form.saving) submitLabel = 'Saving…';
   return (
-    <form noValidate onSubmit={(event) => { event.preventDefault(); void form.submit(); }} className="space-y-6">
+    <form noValidate onSubmit={(event) => { event.preventDefault(); form.submit(); }} className="space-y-6">
       <fieldset disabled={form.saving || form.uncertain} className="space-y-6">
         <DetailsFields details={form.details} update={form.update} onUploadBusy={form.setUploadBusy} />
         <section className="space-y-4 rounded-xl border border-gray-200 p-6 dark:border-gray-700">

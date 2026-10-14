@@ -2,7 +2,7 @@
 import { screen, waitFor } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { CohostManager } from '@/components/organizer/cohost-manager';
-import { CREATOR_DID, EVENT_ID, deferredResponse, jsonResponse, makeCohost, mockFetch, renderPanel } from '../support/organizer-panels-support';
+import { CREATOR_DID, EVENT_ID, deferredResponse, jsonResponse, makeCohost, mockFetch, renderPanel } from '../support/organizer-ui-support';
 
 function manager(isCreator = true) {
   return <CohostManager eventId={EVENT_ID} creatorDid={CREATOR_DID} isCreator={isCreator} />;

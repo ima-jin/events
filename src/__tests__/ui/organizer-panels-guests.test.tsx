@@ -2,7 +2,7 @@
 import { screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { GuestList } from '@/components/organizer/guest-list';
-import { EVENT_ID, deferredResponse, jsonResponse, makeGuest, mockFetch, renderPanel } from '../support/organizer-panels-support';
+import { EVENT_ID, deferredResponse, jsonResponse, makeGuest, mockFetch, renderPanel } from '../support/organizer-ui-support';
 
 describe('organizer guests', () => {
   it('shows loading then an empty list', async () => {

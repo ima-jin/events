@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import { body, change, eventFixture, jsonResponse, mockFetch, push, renderForm, tierFixture } from '../support/organizer-form-support';
+import { body, change, eventFixture, jsonResponse, mockFetch, push, renderForm, tierFixture } from '../support/organizer-ui-support';
 
 describe('organizer edit form', () => {
   it('handles missing or invalid event load without exposing errors', () => {

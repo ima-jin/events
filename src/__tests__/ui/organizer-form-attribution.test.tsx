@@ -3,7 +3,7 @@ import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { buildFairManifest } from '@ima-jin/fair';
 import { editableManifest } from '@/components/organizer-form/fair-manifest';
-import { body, jsonResponse, manifestFixture, mockFetch, renderAttribution } from '../support/organizer-form-support';
+import { body, jsonResponse, manifestFixture, mockFetch, renderAttribution } from '../support/organizer-ui-support';
 
 describe('organizer attribution', () => {
   it('renders only published attribution and transfer sections', () => {

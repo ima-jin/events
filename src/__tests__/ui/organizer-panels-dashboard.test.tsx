@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { OrganizerDashboard } from '@/components/organizer/organizer-dashboard';
 import { EventStatusControls } from '@/components/organizer/event-status-controls';
 import { EventOverviewStats } from '@/components/organizer/event-overview-stats';
-import { CREATOR_DID, EVENT_ID, jsonResponse, makeGuest, mockFetch, renderPanel } from '../support/organizer-panels-support';
+import { CREATOR_DID, EVENT_ID, jsonResponse, makeGuest, mockFetch, renderPanel } from '../support/organizer-ui-support';
 
 describe('organizer dashboard', () => {
   it('switches tabs and lazy-loads their contents', async () => {

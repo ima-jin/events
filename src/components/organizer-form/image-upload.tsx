@@ -35,7 +35,7 @@ export function ImageUpload({ onUpload, onBusy }: Readonly<{ onUpload: (url: str
     <div className="space-y-2">
       <label className="block">Upload cover image
         <input type="file" accept="image/jpeg,image/png,image/gif,image/webp" disabled={busy}
-          onChange={(event) => { void upload(event.target.files?.[0]); }} />
+          onChange={(event) => { upload(event.target.files?.[0]); }} />
       </label>
       {busy && <p role="status">Uploading image…</p>}
       {error && <p role="alert">{error}</p>}
