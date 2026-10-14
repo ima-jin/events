@@ -30,7 +30,6 @@ function validEnv(target = 'dev'): Record<string, string> {
     IMAJIN_ENV: target === 'dev' ? 'dev' : '',
     IMAJIN_APP_DID: 'did:imajin:fixture',
     IMAJIN_APP_KEYSTORE: `/fixture/events.${target}.keystore.json`,
-    IMAJIN_APP_CLAIM_CODE: 'fixture-code',
     SESSION_SECRET: 's'.repeat(64),
     TICKET_QR_SECRET: 'q'.repeat(64),
     WEBHOOK_SECRET: 'w'.repeat(64),
@@ -51,6 +50,19 @@ function sourceFiles(directory: string): string[] {
 }
 
 describe('blank-valued env contract', () => {
+  it('removes IMAJIN_APP_CLAIM_CODE from supported configuration, runtime code and operator docs', () => {
+    expect(ENV_NAMES).not.toContain('IMAJIN_APP_CLAIM_CODE');
+    const paths = [
+      '.env.example', '.env.dev.example', '.env.prod.example', 'README.md', 'AGENTS.md',
+      'instrumentation.ts', 'middleware.ts', 'scripts/check-env.mjs', 'scripts/deploy.sh',
+      ...readdirSync(join(root, 'docs')).filter((name) => name.endsWith('.md')).map((name) => `docs/${name}`),
+      ...sourceFiles(join(root, 'src')), ...sourceFiles(join(root, 'app')),
+    ];
+    for (const path of paths) {
+      const content = path.startsWith(root) ? readFileSync(path, 'utf8') : read(path);
+      expect(content, path).not.toContain('IMAJIN_APP_CLAIM_CODE');
+    }
+  });
   it.each(['.env.example', '.env.dev.example', '.env.prod.example'])('%s contains no values', (file) => {
     for (const value of Object.values(parseEnv(read(file)))) expect(value).toBe('');
   });
@@ -67,6 +79,8 @@ describe('blank-valued env contract', () => {
       for (const match of content.matchAll(/process\.env\.([A-Z][A-Z0-9_]*)/g)) names.add(match[1]);
     }
     for (const service of ['AUTH', 'PAY', 'CONNECTIONS', 'PROFILE', 'CHAT', 'NOTIFY']) names.add(`${service}_SERVICE_URL`);
+    // The SDK still reads a retired fallback internally; the app explicitly disables it.
+    names.delete('IMAJIN_APP_CLAIM_CODE');
     for (const name of names) expect(ENV_NAMES, name).toContain(name);
     const docs = read('docs/ENVIRONMENTS.md');
     for (const name of ENV_NAMES) expect(docs, name).toContain(`\`${name}\``);
@@ -108,7 +122,7 @@ describe('deploy workflow with sandboxed command fixtures', () => {
     tool('pm2', `if [[ "$1" == jlist ]]; then
       printf '%s' "\${FIXTURE_PM2:-[]}"
     else
-      [[ -z "\${IMAJIN_APP_CLAIM_CODE:-}" && -z "\${DATABASE_URL:-}" ]] || exit 5
+      [[ -z "\${DATABASE_URL:-}" ]] || exit 5
       printf "pm2 %s\\n" "$1" >> "$FIXTURE_CALLS"
     fi`);
     tool('curl', `printf '%s' '{"status":"ok","service":"imajin-events"}'`);
@@ -119,7 +133,7 @@ describe('deploy workflow with sandboxed command fixtures', () => {
           encoding: 'utf8',
           env: { ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}`,
             FIXTURE_CALLS: calls, DATABASE_URL: 'inherited-fixture-must-not-win',
-            IMAJIN_KERNEL_URL: 'inherited-fixture-must-not-win', IMAJIN_APP_CLAIM_CODE: 'inherited-fixture',
+            IMAJIN_KERNEL_URL: 'inherited-fixture-must-not-win',
             ...overrides },
         }),
     };
@@ -129,7 +143,7 @@ describe('deploy workflow with sandboxed command fixtures', () => {
     const fixture = deploymentFixture();
     try {
       const result = fixture.run();
-      expect(result.stderr).toBe('');
+      expect(result.stderr).toContain('No keystore found — claim at /events/claim after boot');
       expect(result.status).toBe(0);
       expect(readFileSync(fixture.calls, 'utf8').trim().split('\n')).toEqual([
         'git fetch', 'git checkout', 'install', 'build', 'baseline', 'migrate', 'pm2 start', 'pm2 save',
@@ -171,21 +185,20 @@ describe('deploy environment guard', () => {
 
   it('allows a restart without a claim code when a keystore exists', () => {
     const env = validEnv();
-    delete env.IMAJIN_APP_CLAIM_CODE;
     expect(validateEnvironment(env, 'dev', () => true)).toEqual([]);
   });
 
   it.each(['dev', 'prod'])('only warns on %s first boot with no keystore or claim code', (target) => {
     const env = validEnv(target);
-    delete env.IMAJIN_APP_CLAIM_CODE;
     const warnings: string[] = [];
     expect(validateEnvironment(env, target, () => false, warnings)).toEqual([]);
-    expect(warnings.join('\n')).toContain('No keystore found and IMAJIN_APP_CLAIM_CODE is not set');
+    expect(warnings.join('\n')).toContain('No keystore found');
     expect(warnings.join('\n')).toContain('claim at /events/claim after boot');
 
-    const withCode: string[] = [];
-    expect(validateEnvironment(validEnv(target), target, () => false, withCode)).toEqual([]);
-    expect(withCode).toEqual([]);
+    const withRetiredEnv: string[] = [];
+    expect(validateEnvironment({ ...env, IMAJIN_APP_CLAIM_CODE: 'FAKE_IGNORED_CODE' }, target, () => false, withRetiredEnv)).toEqual([]);
+    expect(withRetiredEnv).toEqual(warnings);
+    expect(withRetiredEnv.join('\n')).not.toContain('FAKE_IGNORED_CODE');
     const withKeystore: string[] = [];
     expect(validateEnvironment(env, target, () => true, withKeystore)).toEqual([]);
     expect(withKeystore).toEqual([]);
@@ -195,13 +208,12 @@ describe('deploy environment guard', () => {
     const dir = mkdtempSync(join(tmpdir(), 'events-unclaimed-env-'));
     const file = join(dir, '.env.local');
     const env = validEnv();
-    delete env.IMAJIN_APP_CLAIM_CODE;
     env.IMAJIN_APP_KEYSTORE = join(dir, 'events.dev.keystore.json');
     try {
       writeFileSync(file, Object.entries(env).map(([key, value]) => `${key}=${value}`).join('\n'), { mode: 0o600 });
       const result = spawnSync(process.execPath, [join(root, 'scripts/check-env.mjs'), 'dev', file], { encoding: 'utf8' });
       expect(result.status).toBe(0);
-      expect(result.stderr).toMatch(/^warning: No keystore found and IMAJIN_APP_CLAIM_CODE is not set/m);
+      expect(result.stderr).toMatch(/^warning: No keystore found/m);
       expect(result.stderr).toContain('claim at /events/claim after boot');
       expect(result.stderr).not.toMatch(/^error:/m);
       expect(result.stdout).toContain('Environment validated');
@@ -268,7 +280,7 @@ describe('deploy environment guard', () => {
       expect(checkFile('dev', file)).toHaveLength(2);
       const rejected = cli('dev', file);
       expect(rejected.status).toBe(1);
-      expect(rejected.stdout + rejected.stderr).not.toContain(env.IMAJIN_APP_CLAIM_CODE);
+      expect(rejected.stdout + rejected.stderr).not.toContain(env.SESSION_SECRET);
       expect(cli('dev', file, 'extra').status).toBe(2);
       expect(cli('dev', join(dir, 'missing')).status).toBe(2);
     } finally {

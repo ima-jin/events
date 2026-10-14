@@ -42,7 +42,7 @@ describe('getPayAppToken', () => {
   it('loads the signing key via the claim-code path and returns a token minted from it', async () => {
     expect(await getPayAppToken()).toBe('app-token');
 
-    expect(mocks.loadAppSigningKey).toHaveBeenCalledWith({ kernelUrl: KERNEL_URL, hostHint: 'events' });
+    expect(mocks.loadAppSigningKey).toHaveBeenCalledWith({ kernelUrl: KERNEL_URL, hostHint: 'events', claimCode: '' });
     expect(mocks.createAppServiceTokenProvider).toHaveBeenCalledWith({
       kernelUrl: KERNEL_URL,
       appDid: 'did:imajin:events',
@@ -50,7 +50,7 @@ describe('getPayAppToken', () => {
     });
   });
 
-  it('loads the signing key once and reuses the provider (a claim code can only be redeemed once)', async () => {
+  it('loads the signing key once and reuses the provider', async () => {
     await Promise.all([getPayAppToken(), getPayAppToken()]);
     await getPayAppToken();
 

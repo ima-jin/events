@@ -42,8 +42,8 @@ Identity minting and cutover remain operator steps (ima-jin/imajin-ai#2518, #252
    You'll get back this app's `appDid` and registry `id`.
 3. **Set env**: `cp .env.example .env.local`, then fill in `IMAJIN_APP_DID`,
    `NEXT_PUBLIC_IMAJIN_APP_ID`, `SESSION_SECRET`, `TICKET_QR_SECRET`, `APP_DB_SCHEMA`, `DATABASE_URL`, `IMAJIN_KERNEL_URL`,
-   and optionally `IMAJIN_APP_CLAIM_CODE` for automated first boot. Otherwise boot unclaimed
-   and paste the operator's one-time code at `/events/claim`. This app refuses to start without `IMAJIN_APP_DID`
+   then boot unclaimed and paste the operator's one-time code only at `/events/claim`.
+   No env edit or restart is needed to claim. This app refuses to start without `IMAJIN_APP_DID`
    set, or if a raw `IMAJIN_APP_PRIVATE_KEY` is present (see `instrumentation.ts`) — it fetches its
    own signing key at boot via `@ima-jin/auth-client`'s `loadAppSigningKey()` instead; see
    [`docs/REGISTRATION.md`](./docs/REGISTRATION.md).
@@ -84,7 +84,7 @@ checkout's `transaction_id` and the `fair_manifest`; `alreadySettled: true` is s
 Refunds and campaign charge-pledges also use events' own app-service token; no shared pay key is used.
 
 Operator prerequisites before ticket checkout works: (1) register events and provision its signing key
-(`IMAJIN_KERNEL_URL`, `IMAJIN_APP_DID`, one-time operator code at `/events/claim` or optional env code); (2) the operator must approve
+(`IMAJIN_KERNEL_URL`, `IMAJIN_APP_DID`, one-time operator code at `/events/claim`); (2) the operator must approve
 `pay:settle`, `pay:refund` and `pay:charge-pledges` for events' app DID via the
 `apps:service-scopes` card; (3) deploy the kernel contract (imajin-ai#2695) and the kernel build that adds `transactionId` to the pay
 `checkout.completed` webhook (imajin-ai#2741; it looks the `pay.transactions` row up by the Stripe session and sends
@@ -134,9 +134,9 @@ instrumentation.ts ← boot-env guards + loadAppSigningKey() bootstrap (see docs
 
 This app never reads a raw private key from env. `instrumentation.ts` fails loud at boot if
 `IMAJIN_APP_PRIVATE_KEY` is set, and instead calls `@ima-jin/auth-client`'s `loadAppSigningKey()`:
-a one-time operator code, pasted at `/events/claim` (preferred) or optionally supplied through
-`IMAJIN_APP_CLAIM_CODE`, bootstraps the same local `0600` keystore (`IMAJIN_APP_KEYSTORE`).
-Without either code or keystore, the app boots unclaimed rather than crashing; the claim page
+a one-time operator code, pasted only at `/events/claim`, bootstraps the local `0600`
+keystore (`IMAJIN_APP_KEYSTORE`).
+Without a keystore, the app boots unclaimed rather than crashing; the claim page
 activates the signing identity without a restart. Every later boot re-authenticates with the
 keystore, no operator action needed. See [`docs/REGISTRATION.md`](./docs/REGISTRATION.md#4-fetch-this-apps-own-signing-key-at-boot-7).
 

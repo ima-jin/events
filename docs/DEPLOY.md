@@ -37,15 +37,15 @@ refuses a same-named pm2 entry with a different cwd or executable. It prints no 
 1. Preflight tools, clean tracked tree, env file, standalone cwd and pm2 definition.
 2. Clear inherited contract variables so `.env.local` is authoritative; fetch/check out ref.
 3. `node scripts/check-env.mjs <dev|prod>` checks required variables, target URLs,
-   `0600` files, disabled ticket migration, and forbidden key/logging vars. With neither a
-   keystore nor a claim code it only warns: claim at `/events/claim` after boot.
+   `0600` files, disabled ticket migration, and forbidden key/logging vars. Without a
+   keystore it only warns: claim at `/events/claim` after boot.
 4. `pnpm install --frozen-lockfile` installs only this repo's published dependencies.
 5. Build with `.env.local` loaded. `NEXT_PUBLIC_*` changes always require this rebuild.
 6. Run `scripts/migrate-baseline.mjs`, then drizzle migrate with the same env file.
 7. Start/restart only `<env>-events` using this repo's ecosystem file; **`pm2 save`**.
-   Without a keystore or optional env claim code, the server boots unclaimed. The operator
-   claims at `/events/claim`; an env code instead claims through `instrumentation.ts` →
-   published `loadAppSigningKey()`. Both use the same keystore; no raw-key generation.
+   Without a keystore, the server boots unclaimed. The operator claims only at
+   `/events/claim`; the published SDK persists the bootstrap keystore and activates
+   the app immediately, without an env edit or restart.
 8. Poll loopback `/events/api/health` for `status: ok`, `service: imajin-events`.
 
 Any failure before step 7 leaves pm2 alone. This is an in-place build, **not an atomic
@@ -79,15 +79,13 @@ registered scopes. Do not use the legacy registry create response that exposes a
 See [REGISTRATION.md](./REGISTRATION.md).
 
 - Put `IMAJIN_APP_DID` and `NEXT_PUBLIC_IMAJIN_APP_ID` (registry id) in the target checkout's
-  `.env.local` via a private editor. `IMAJIN_APP_CLAIM_CODE` is **optional**: deploy without
-  it and paste the one-time operator code at `/events/claim` after boot (preferred).
-  Automated first boots can instead set the code in `.env.local`.
+  `.env.local` via a private editor. After boot, paste the one-time operator code
+  from `/jin` only at `/events/claim`, never into an environment file or shell.
 - Use `IMAJIN_APP_KEYSTORE=/home/jin/.imajin/events.dev.keystore.json` or
   `/home/jin/.imajin/events.prod.keystore.json`. Prepare a private parent directory
   (`0700`) owned by `jin`. The SDK writes the bootstrap keystore `0600`; the actual
   app signing key stays memory-only. Preserve the keystore across deploys.
-- If supplied in env, after successful first boot **delete** `IMAJIN_APP_CLAIM_CODE` from `.env.local`.
-  Subsequent boots authenticate with the keystore. Loss requires operator approval with
+- Subsequent boots authenticate with the keystore. Loss requires operator approval with
   `reissueClaim: true`, not hand-made replacement keys.
 - The operator must approve `pay:settle`, `pay:refund` and `pay:charge-pledges` for events'
   app DID via the `apps:service-scopes` approval card.

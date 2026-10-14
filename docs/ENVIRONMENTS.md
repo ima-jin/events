@@ -47,12 +47,12 @@ contract variables before loading `.env.local` for build/migration/pm2.
 
 ## Identity and conditional integrations
 
-The claim code is **optional**. With neither a keystore nor a claim code, `check-env`
-only warns and the app boots unclaimed — claim at `/events/claim` after boot.
+Without a keystore, `check-env` only warns and the app boots unclaimed.
+Approve on `/jin`, then paste the one-time code only at `/events/claim` after boot;
+the app goes live without an env edit or restart.
 
 | Variable | When | Contract |
 |---|---|---|
-| `IMAJIN_APP_CLAIM_CODE` | optional, first boot only | Operator's one-time kernel approval code for automated boot; otherwise claim at `/events/claim` after boot. Delete after successful use. Never print. |
 | `NEXT_PUBLIC_IMAJIN_APP_ID` | build | Kernel registry `app_…` id used by header sign-in; provision for interactive sign-in. |
 | `IMAJIN_APP_ATTESTATION_ID` | runtime | Service-level attestation for app-auth public kernel calls; provision for those integrations. Not an internal key. |
 | `NEXT_PUBLIC_SERVICE_PREFIX` | build | **`dev-` on dev**, unset on prod; SDK URL construction. |
@@ -104,6 +104,6 @@ this events release and remove the retired shared pay credential from the enviro
 - `NODE_ENV`: Next/pm2 set production on both host deployments.
 - `NEXT_RUNTIME`: injected by Next; bootstrap only runs in `nodejs`.
 
-`.env.example` lists all names the app and installed published SDK read, including dynamic
+`.env.example` lists supported app and published SDK configuration, including dynamic
 service overrides and forbidden/managed names. Tests check that the inventory stays complete
 and every template assignment stays blank. Runtime credentials stay only on the operator's host.
