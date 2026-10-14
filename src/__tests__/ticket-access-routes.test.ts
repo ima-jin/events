@@ -2,7 +2,7 @@
  * GET /api/events/[id]/my-ticket and GET /api/tickets/[id]/qr — the holder-side
  * access checks. Shared mocks live in support/ticket-access-support.ts.
  */
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   EVENT_ID,
   OWNER_DID,
@@ -19,6 +19,7 @@ import { isPodMemberMock } from './support/kernel-mock-support';
 import { authFailure, mockLog, requireAuthMock } from './support/route-test-support';
 import { GET as getMyTicket } from '../../app/api/events/[id]/my-ticket/route';
 import { GET as getQr } from '../../app/api/tickets/[id]/qr/route';
+import { buyerRow, PURCHASED_AT } from './support/buyer-tickets-support';
 
 const OTHER_DID = 'did:imajin:someone-else';
 const POD_ID = 'pod_1';
@@ -27,15 +28,14 @@ const NO_ACCESS = { hasTicket: false, hasAccess: false };
 const myTicket = (cookie: string | undefined = SESSION_COOKIE) =>
   getMyTicket(accessRequest(`/api/events/${EVENT_ID}/my-ticket`, { cookie }), idParams(EVENT_ID));
 
-const heldTicket = {
-  ticket: { id: TICKET_ID, status: 'valid', purchasedAt: '2030-01-01T00:00:00.000Z', pricePaid: 2500, currency: 'CAD', secret: 'x' },
-  ticketType: { name: 'VIP', description: 'Front row', perks: ['drink'], price: 2500 },
-};
+const heldTicket = buyerRow({ orderId: null }, { registrationFormId: null }, null);
 
 beforeEach(() => {
   resetTicketAccessMocks();
+  vi.stubEnv('DYKIL_URL', '');
   requireAuthMock.mockResolvedValue({ identity: { id: OWNER_DID, scopes: [], via: 'token' } });
 });
+afterEach(() => vi.unstubAllEnvs());
 
 describe('GET /api/events/[id]/my-ticket', () => {
   it('answers "no access" (200, not 401) when the caller is not authenticated', async () => {
@@ -55,7 +55,8 @@ describe('GET /api/events/[id]/my-ticket', () => {
     const res = await myTicket();
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({
+    const body = await res.json();
+    expect(body).toMatchObject({
       hasTicket: true,
       hasAccess: true,
       isOrganizer: false,
@@ -71,6 +72,15 @@ describe('GET /api/events/[id]/my-ticket', () => {
       ],
       ticketId: TICKET_ID,
     });
+    expect(body.orders).toEqual([{
+      id: TICKET_ID, isLegacy: true, quantity: 1, totalAmount: 2500, currency: 'CAD',
+      purchasedAt: PURCHASED_AT, ticketTypeName: 'VIP', fairSettlement: null,
+      tickets: [{
+        id: TICKET_ID, status: 'valid', usedAt: null, registrationStatus: 'pending', pricePaid: 2500, currency: 'CAD',
+        ticketType: { name: 'VIP', description: 'Front row', perks: ['drink'], registrationFormId: null },
+      }],
+    }]);
+    expect(body.registrationEmbedBaseUrl).toBeNull();
     expect(whereParams(0)).toEqual([EVENT_ID, OWNER_DID]);
     expect(whereParams(1)).toEqual([EVENT_ID]);
     expect(isPodMemberMock).not.toHaveBeenCalled();
@@ -85,6 +95,16 @@ describe('GET /api/events/[id]/my-ticket', () => {
     expect(body.tickets[0].ticketType).toBeNull();
     expect(body.hasAccess).toBe(true);
   });
+  it('exposes only a public registration base to authenticated callers', async () => {
+    vi.stubEnv('DYKIL_URL', 'https://dykil.test/forms/?token=discard#discard');
+    nextSelect([]);
+    nextSelect([]);
+    expect(await (await myTicket()).json()).toMatchObject({
+      orders: [], registrationEmbedBaseUrl: 'https://dykil.test/forms',
+    });
+    requireAuthMock.mockResolvedValue(authFailure());
+    expect(await (await myTicket()).json()).toEqual(NO_ACCESS);
+  });
 
   it('grants access to the event creator without any ticket', async () => {
     nextSelect([]);
@@ -92,7 +112,10 @@ describe('GET /api/events/[id]/my-ticket', () => {
 
     const body = await (await myTicket()).json();
 
-    expect(body).toEqual({ hasTicket: false, hasAccess: true, isOrganizer: true, tickets: [], ticketId: null });
+    expect(body).toEqual({
+      hasTicket: false, hasAccess: true, isOrganizer: true, tickets: [], ticketId: null,
+      orders: [], registrationEmbedBaseUrl: null,
+    });
     expect(isPodMemberMock).not.toHaveBeenCalled();
   });
 
@@ -148,13 +171,13 @@ describe('GET /api/events/[id]/my-ticket', () => {
         isPodMemberMock.mockRejectedValue(new Error('boom'));
       },
     ],
-  ])('degrades to "no access" with an empty ticket list when %s', async (_label, arrange) => {
+  ])('returns a genuine server error when %s', async (_label, arrange) => {
     arrange();
 
     const res = await myTicket();
 
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ...NO_ACCESS, tickets: [] });
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: 'Failed to check event access' });
     expect(mockLog.error).toHaveBeenCalledWith({ err: 'Error: boom' }, 'Failed to check event access');
   });
 });

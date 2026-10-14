@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import { EventDetails } from '@/components/event/event-details';
 import { EventHero, StatusBanner } from '@/components/event/event-hero';
 import { TicketsCard } from '@/components/event/tickets-card';
+import { BuyerTicketsSection } from '@/components/buyer-tickets/buyer-tickets-section';
 import { withBasePath } from '@/lib/base-path';
 import { getViewer, loadPublicEvent } from '@/lib/load-public-event';
 import { isHiddenStatus, type PublicEventView } from '@/lib/public-event';
@@ -64,6 +65,7 @@ export default async function EventPage({ params, searchParams }: Readonly<PageP
 
   const isUpcoming = new Date(event.startsAt) > new Date();
   const canBuy = event.status === 'published' && tiers.length > 0;
+  const purchase = <TicketsCard event={event} tiers={tiers} hasHiddenTiers={hasHiddenTiers} invite={invite} isAuthenticated={viewer !== null} />;
 
   return (
     <>
@@ -71,11 +73,16 @@ export default async function EventPage({ params, searchParams }: Readonly<PageP
         <EventHero event={event} />
         <StatusBanner status={event.status} />
         <EventDetails event={event} isUpcoming={isUpcoming} />
-        <TicketsCard event={event} tiers={tiers} hasHiddenTiers={hasHiddenTiers} invite={invite} isAuthenticated={viewer !== null} />
+        {viewer ? (
+          <BuyerTicketsSection key={`${event.id}:${viewer.did}`} eventId={event.id}
+            moreTicketsLabel={tiers.every((tier) => tier.price === 0) ? 'Get More Tickets' : 'Buy More Tickets'}>
+            {purchase}
+          </BuyerTicketsSection>
+        ) : purchase}
       </div>
       {canBuy && (
         <div className="fixed inset-x-0 bottom-0 z-50 border-t border-gray-800 bg-gray-900 px-4 py-3 shadow-lg md:hidden">
-          <a href="#tickets" className="block w-full rounded-lg bg-orange-500 px-8 py-3 text-center font-semibold text-white transition-colors hover:bg-orange-600">
+          <a href={viewer ? '#buy-tickets' : '#tickets'} className="block w-full rounded-lg bg-orange-500 px-8 py-3 text-center font-semibold text-white transition-colors hover:bg-orange-600">
             Get Tickets
           </a>
         </div>
