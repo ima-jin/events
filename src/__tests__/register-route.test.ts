@@ -115,7 +115,7 @@ describe('POST /api/register/[ticketId]', () => {
     const res = await register();
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ success: true, qrCodeDataUri: QR_DATA_URI });
+    expect(await res.json()).toEqual({ success: true });
     expect(whereParams(0)).toEqual([TICKET_ID]);
     expect(updatedTables()).toEqual([tickets]);
     expect(setValues()).toEqual([{ registrationStatus: 'complete' }]);
@@ -254,7 +254,7 @@ describe('POST /api/register/[ticketId]', () => {
     const res = await register();
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ success: true, qrCodeDataUri: QR_DATA_URI });
+    expect(await res.json()).toEqual({ success: true });
     await expect
       .poll(() => mockLog.error.mock.calls.map(([, message]) => message))
       .toEqual([

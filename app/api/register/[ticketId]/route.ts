@@ -238,9 +238,10 @@ export const POST = withLogger('events', async (request, { log }) => {
   const attendeeEmail =
     typeof answers.email === 'string' ? answers.email.trim().toLowerCase() : null;
 
-  const qrCodeDataUri = await notifyRegistrationCompleted(ticket, attendeeEmail, log);
+  await notifyRegistrationCompleted(ticket, attendeeEmail, log);
 
-  return NextResponse.json({ success: true, qrCodeDataUri });
+  // Registration remains public; bearer QRs are delivered by email or the holder-only QR route.
+  return NextResponse.json({ success: true });
 });
 
 export const GET = withLogger('events', async (request) => {

@@ -38,6 +38,7 @@ Validate privately with `node scripts/check-env.mjs dev` (or `prod`).
 | `IMAJIN_APP_DID` | boot + runtime | Kernel-minted DID, distinct for dev/prod; no placeholder. |
 | `IMAJIN_APP_KEYSTORE` | boot | Absolute target path above, persistent `0600` bootstrap file, parent `0700`. Not an app signing-key file. |
 | `SESSION_SECRET` | runtime | 32 random bytes encoded as 64 hex chars, unique to environment; app session signing. |
+| `TICKET_QR_SECRET` | runtime | Independent 32 random bytes encoded as 64 hex chars; HMAC for ticket QR tokens, never a kernel signing key. Rotation invalidates issued QRs; see [TICKET-QR.md](./TICKET-QR.md). |
 | `WEBHOOK_SECRET` | runtime | Same size; target pay service's `EVENTS_WEBHOOK_SECRET`; Bearer authorization for payment/settlement webhooks. |
 
 `NEXT_PUBLIC_*` values and Next basePath are baked into the build; changing them requires
