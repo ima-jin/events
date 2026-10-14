@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { BuyerTicket } from '@/lib/buyer-tickets';
 import { useRegistrationMessages, useTicketRegistration } from './registration-hooks';
 
@@ -16,9 +16,10 @@ export function TicketRegistration({
 }: Readonly<{ ticket: BuyerTicket; embedBaseUrl: string | null; onComplete: () => void }>) {
   const pending = ticket.registrationStatus === 'pending';
   const [open, setOpen] = useState(pending);
+  useEffect(() => setOpen(pending), [pending]);
   const registration = useTicketRegistration(ticket.id, onComplete);
   const url = registrationUrl(embedBaseUrl, ticket.ticketType?.registrationFormId, ticket.id);
-  const iframe = useRegistrationMessages(url, registration.complete);
+  const { iframe, height } = useRegistrationMessages(url, registration.complete);
   const eligible = ticket.status === 'valid' || ticket.status === 'held' || ticket.status === 'used';
   if (ticket.registrationStatus === 'not_required' || !ticket.ticketType?.registrationFormId || !eligible) return null;
 
@@ -33,7 +34,7 @@ export function TicketRegistration({
         <div id={`registration-${ticket.id}`} className="mt-3">
           {url ? (
             <iframe ref={iframe} src={url} title={`Attendee registration ${ticket.id}`}
-              className="min-h-[600px] w-full rounded border-0 bg-white" allow="clipboard-write" />
+              className="w-full rounded border-0 bg-white" style={{ height }} allow="clipboard-write" />
           ) : (
             <p role="alert">The registration form is unavailable. Please contact the event organizer.</p>
           )}

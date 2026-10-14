@@ -157,6 +157,7 @@ describe('per-ticket attendee registration', () => {
     await user.click(screen.getByRole('button', { name: 'Check registration completion' }));
     expect(await screen.findByText('Registration complete')).toBeTruthy();
     expect(await screen.findByRole('img')).toBeTruthy();
+    expect(screen.queryByTitle('Attendee registration tkt_buyer')).toBeNull();
     expect(fetchSpy).toHaveBeenCalledWith('/api/register/tkt_buyer', expect.objectContaining({ method: 'POST' }));
   });
 
@@ -182,6 +183,21 @@ describe('per-ticket attendee registration', () => {
     expect(fetchSpy.mock.calls.filter(([url]) => String(url).includes('/register/'))).toHaveLength(0);
     await act(async () => sendRegistrationMessage(iframe, { type: 'survey-completed', answers: { name: 'Buyer' } }));
     expect(await screen.findByText('Registration complete')).toBeTruthy();
+  });
+
+  it('keeps forms outside the QR grid and resizes only from its own trusted iframe', async () => {
+    mockBuyerFetch([makeBuyerOrder({ tickets: [registrationTicket()] })]);
+    renderBuyer();
+    const iframe = await screen.findByTitle<HTMLIFrameElement>('Attendee registration tkt_buyer');
+    expect(iframe.closest('.grid')).toBeNull();
+    expect(iframe.style.height).toBe('600px');
+    await act(async () => {
+      sendRegistrationMessage(iframe, { type: 'survey-height', height: 800 }, 'https://evil.test');
+      sendRegistrationMessage(iframe, { type: 'survey-height', height: '800' });
+    });
+    expect(iframe.style.height).toBe('600px');
+    await act(async () => sendRegistrationMessage(iframe, { type: 'survey-height', height: 800 }));
+    expect(iframe.style.height).toBe('840px');
   });
 
   it('keeps a failed registration pending and lets the buyer retry', async () => {

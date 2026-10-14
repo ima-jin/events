@@ -19,11 +19,11 @@ export function BuyerTicketsSection({
     <div className="mt-8">
       <div role="tablist" aria-label="Event tickets" className="mb-6 flex gap-2 border-b border-gray-700">
         <button type="button" role="tab" id="my-tickets-tab" aria-selected={showTickets} aria-controls="my-tickets"
-          onClick={() => tab.select('my-tickets')} className="px-4 py-3 font-semibold text-orange-400">
+          onClick={() => tab.select('my-tickets')} className={`border-b-2 px-4 py-3 font-semibold ${showTickets ? 'border-orange-500 text-orange-400' : 'border-transparent text-gray-400'}`}>
           My Tickets
         </button>
         <button type="button" role="tab" id="buy-tickets-tab" aria-selected={!showTickets} aria-controls="buy-tickets"
-          onClick={() => tab.select('buy-tickets')} className="px-4 py-3 font-semibold text-orange-400">
+          onClick={() => tab.select('buy-tickets')} className={`border-b-2 px-4 py-3 font-semibold ${showTickets ? 'border-transparent text-gray-400' : 'border-orange-500 text-orange-400'}`}>
           {orders.length > 0 ? 'Get More Tickets' : 'Get Tickets'}
         </button>
       </div>

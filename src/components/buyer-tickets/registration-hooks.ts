@@ -35,17 +35,21 @@ export function useRegistrationMessages(
   complete: () => Promise<void>,
 ) {
   const iframe = useRef<HTMLIFrameElement>(null);
+  const [height, setHeight] = useState(600);
   useEffect(() => {
     if (!embedUrl) return;
     const expectedOrigin = new URL(embedUrl, globalThis.location.href).origin;
     const receive = (event: MessageEvent) => {
       if (event.origin !== expectedOrigin || event.source !== iframe.current?.contentWindow) return;
       const data = event.data;
+      if (data?.type === 'survey-height' && typeof data.height === 'number' && Number.isFinite(data.height)) {
+        setHeight(Math.max(400, Math.min(1200, data.height + 40)));
+      }
       // On-load FYI messages have no answers and must not re-register or close a review form.
       if (data?.type === 'survey-completed' && data.answers != null) void complete();
     };
     globalThis.addEventListener('message', receive);
     return () => globalThis.removeEventListener('message', receive);
   }, [embedUrl, complete]);
-  return iframe;
+  return { iframe, height };
 }

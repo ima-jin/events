@@ -1,7 +1,7 @@
 'use client';
 
-import { useCallback, useState } from 'react';
-import type { BuyerOrder, BuyerTicket } from '@/lib/buyer-tickets';
+import { useState } from 'react';
+import type { BuyerOrder } from '@/lib/buyer-tickets';
 import { FairReceipt } from './fair-receipt';
 import { TicketQr } from './ticket-qr';
 import { TicketRegistration } from './ticket-registration';
@@ -12,19 +12,10 @@ export function formatOrderTotal(amount: number | null, currency: string | null)
   return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(amount / 100);
 }
 
-function OwnedTicket({ ticket, embedBaseUrl }: Readonly<{ ticket: BuyerTicket; embedBaseUrl: string | null }>) {
-  const [complete, setComplete] = useState(false);
-  const onComplete = useCallback(() => setComplete(true), []);
-  const current = complete ? { ...ticket, registrationStatus: 'complete' } : ticket;
-  return (
-    <div>
-      <TicketQr ticket={current} />
-      <TicketRegistration ticket={current} embedBaseUrl={embedBaseUrl} onComplete={onComplete} />
-    </div>
-  );
-}
 
 export function OrderCard({ order, embedBaseUrl }: Readonly<{ order: BuyerOrder; embedBaseUrl: string | null }>) {
+  const [completed, setCompleted] = useState<Record<string, boolean>>({});
+  const tickets = order.tickets.map((ticket) => completed[ticket.id] ? { ...ticket, registrationStatus: 'complete' } : ticket);
   const purchaseDate = order.purchasedAt
     ? new Date(order.purchasedAt).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
     : 'N/A';
@@ -39,8 +30,12 @@ export function OrderCard({ order, embedBaseUrl }: Readonly<{ order: BuyerOrder;
         <p className="text-2xl font-bold text-orange-400">{formatOrderTotal(order.totalAmount, order.currency)}</p>
       </header>
       <div className="grid gap-4 sm:grid-cols-2">
-        {order.tickets.map((ticket) => <OwnedTicket key={ticket.id} ticket={ticket} embedBaseUrl={embedBaseUrl} />)}
+        {tickets.map((ticket) => <TicketQr key={ticket.id} ticket={ticket} />)}
       </div>
+      {tickets.map((ticket) => (
+        <TicketRegistration key={ticket.id} ticket={ticket} embedBaseUrl={embedBaseUrl}
+          onComplete={() => setCompleted((previous) => ({ ...previous, [ticket.id]: true }))} />
+      ))}
       {order.fairSettlement && <FairReceipt settlement={order.fairSettlement} />}
     </article>
   );
