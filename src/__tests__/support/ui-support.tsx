@@ -14,6 +14,8 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, vi } from 'vitest';
 import { TicketPurchase, type TicketPurchaseProps } from '@/components/tickets/ticket-purchase';
 import type { PublicEventView, PublicTier } from '@/lib/public-event';
+import type { BuyerOrder, BuyerTicket, FairSettlement } from '@/lib/buyer-tickets';
+import { BuyerTicketsSection } from '@/components/buyer-tickets/buyer-tickets-section';
 
 afterEach(() => {
   cleanup();
@@ -176,4 +178,78 @@ export function resetPageMocks() {
 /** Make `getEventWithTicketTypes` answer with this event + tier rows. */
 export function givenEvent(event: Record<string, unknown> = makeEventRow(), ticketTypes: Record<string, unknown>[] = [makeTierRow()]) {
   eventsServiceDouble.getEventWithTicketTypes.mockResolvedValue({ event, ticketTypes });
+}
+
+// ─── Buyer ticket fixtures / interactions ────────────────────────────────────
+
+export const BUYER_QR = 'data:image/png;base64,iVBORw0KGgo=';
+export const REGISTRATION_BASE = 'https://forms.test/dykil';
+
+export function makeBuyerTicket(overrides: Partial<BuyerTicket> = {}): BuyerTicket {
+  return {
+    id: 'tkt_buyer', status: 'valid', usedAt: null, registrationStatus: 'not_required',
+    pricePaid: 2000, currency: 'CAD',
+    ticketType: { name: 'General', description: 'Main floor', perks: [], registrationFormId: null },
+    ...overrides,
+  };
+}
+
+export function makeBuyerOrder(overrides: Partial<BuyerOrder> = {}): BuyerOrder {
+  return {
+    id: 'ord_buyer', isLegacy: false, quantity: 1, totalAmount: 2000, currency: 'CAD',
+    purchasedAt: '2030-01-01T00:00:00.000Z', ticketTypeName: 'General',
+    fairSettlement: null, tickets: [makeBuyerTicket()], ...overrides,
+  };
+}
+
+export function makeReceipt(overrides: Partial<FairSettlement> = {}): FairSettlement {
+  return {
+    version: '1.0', settledAt: '2030-01-01T00:00:00.000Z', totalAmount: 20, currency: 'CAD',
+    chain: [{ did: 'did:imajin:organizer', amount: 18, role: 'seller' }],
+    fees: [{ role: 'platform', name: 'Protocol fee', rateBps: 1000, fixedCents: 0, amount: 2 }],
+    ...overrides,
+  };
+}
+
+export function buyerResponse(orders: BuyerOrder[] = [makeBuyerOrder()], base: string | null = REGISTRATION_BASE) {
+  return jsonResponse({ orders, registrationEmbedBaseUrl: base });
+}
+
+export function mockBuyerFetch(orders: BuyerOrder[] = [makeBuyerOrder()], extra: Record<string, Route> = {}) {
+  return mockFetch({
+    '/my-ticket': () => buyerResponse(orders),
+    '/qr': () => jsonResponse({ qrCodeDataUri: BUYER_QR }),
+    ...extra,
+  });
+}
+
+export function renderBuyer(eventId = EVENT_ID) {
+  return {
+    user: userEvent.setup(),
+    ...render(<BuyerTicketsSection eventId={eventId}><p>Purchase tickets here</p></BuyerTicketsSection>),
+  };
+}
+
+export function resetBuyerLocation(hash = '#my-tickets') {
+  globalThis.history.replaceState(null, '', `/${hash}`);
+}
+
+export function registrationTicket(overrides: Partial<BuyerTicket> = {}): BuyerTicket {
+  return makeBuyerTicket({
+    registrationStatus: 'pending',
+    ticketType: { name: 'General', description: null, perks: [], registrationFormId: 'form_1' },
+    ...overrides,
+  });
+}
+
+export function sendRegistrationMessage(iframe: HTMLIFrameElement, data: unknown, origin = 'https://forms.test', ownSource = true) {
+  globalThis.dispatchEvent(new MessageEvent('message', {
+    origin, source: ownSource ? iframe.contentWindow : globalThis.window, data,
+  }));
+}
+
+export function deferredResponse() {
+  let resolve!: (value: Response) => void;
+  const promise = new Promise<Response>((done) => { resolve = done; });
+  return { promise, resolve };
 }

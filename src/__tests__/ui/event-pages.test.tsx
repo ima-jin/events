@@ -11,8 +11,10 @@ import {
   authClientDouble,
   eventsServiceDouble,
   givenEvent,
+  makeBuyerOrder,
   makeEventRow,
   makeTierRow,
+  mockBuyerFetch,
   resetPageMocks,
 } from '../support/ui-support';
 
@@ -154,6 +156,28 @@ describe('EventPage', () => {
     await renderEventPage();
 
     await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledWith('/api/balance', expect.anything()));
+  });
+
+  it('renders buyer orders even when the event is cancelled and no tiers remain', async () => {
+    givenEvent(makeEventRow({ status: 'cancelled' }), []);
+    authClientDouble.getSession.mockResolvedValue({ did: 'did:imajin:buyer' });
+    mockBuyerFetch([makeBuyerOrder()]);
+
+    await renderEventPage();
+
+    expect(await screen.findByRole('article', { name: 'Order ord_buyer' })).toBeTruthy();
+    expect(await screen.findByRole('img', { name: 'Ticket QR Code tkt_buyer' })).toBeTruthy();
+    expect(screen.queryByRole('link', { name: 'Get Tickets' })).toBeNull();
+  });
+
+  it('does not mount or request the buyer section for a signed-out visitor', async () => {
+    givenEvent();
+    const fetchSpy = mockBuyerFetch();
+
+    await renderEventPage();
+
+    expect(screen.queryByRole('tab', { name: 'My Tickets' })).toBeNull();
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
 
