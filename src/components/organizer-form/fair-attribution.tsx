@@ -55,9 +55,9 @@ export function FairAttribution({ eventId, manifest }: Readonly<FairAttributionP
             <FairEditor manifest={draft} sections={['attribution', 'transfer']} readOnly={saving}
               onChange={(updated) => { setDraft(updated); setSaved(false); setError(''); }} />
           </fieldset>
-          <button type="button" disabled={saving} onClick={() => { save(); }}
+          <button type="button" disabled={saving} onClick={() => { save().catch(() => setError('Unable to save attribution. Check your permissions and try again.')); }}
             className="rounded-lg bg-orange-500 px-6 py-3 font-semibold text-white disabled:opacity-50">{saveLabel}</button>
-          {saved && <p role="status">Attribution saved.</p>}
+          {saved && <output className="block">Attribution saved.</output>}
           {error && <p role="alert">{error}</p>}
         </>
       ) : (

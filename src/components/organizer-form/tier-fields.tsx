@@ -25,7 +25,7 @@ export function TierFields({ tier, first, last, removable, update, move, remove 
       </div>
       <Field label="Tier name" value={tier.name} onChange={(value) => change('name', value)} />
       <Field label="Price" type="number" min={0} step="0.01" value={tier.price} onChange={(value) => change('price', value)} />
-      <label className="block">Currency
+      <label className="block"><span>Currency</span>
         <select className={INPUT_CLASS} value={tier.currency} onChange={(event) => change('currency', event.target.value)}>
           <option value="CAD">CAD</option><option value="USD">USD</option>
         </select>
@@ -37,7 +37,7 @@ export function TierFields({ tier, first, last, removable, update, move, remove 
       <p className="text-sm text-gray-500">After sales, prices can only decrease; currency cannot change; perks can only be added.</p>
       <label className="block">
         <input type="checkbox" checked={tier.requiresRegistration} onChange={(event) => change('requiresRegistration', event.target.checked)} />
-        Requires registration
+        <span>Requires registration</span>
       </label>
       {tier.requiresRegistration && (
         <>

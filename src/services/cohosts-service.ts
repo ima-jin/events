@@ -121,8 +121,8 @@ export async function removeEventCohost(eventId: string, actorDid: string, body:
   if (!validCohostDid(did)) throw new ServiceError('invalid', 'A valid did is required');
   rejectProtectedTarget(did, actorDid, event.creatorDid, 'remove');
   const members = await fetchPodMembers(podId, cookie);
-  const target = members.find((member) => member.did === did && member.role === 'cohost');
-  if (!target) throw new ServiceError('not_found', 'Cohost not found');
+  const hasTarget = members.some((member) => member.did === did && member.role === 'cohost');
+  if (!hasTarget) throw new ServiceError('not_found', 'Cohost not found');
   const result = await mutatePodMember(podId, did, cookie, 'DELETE');
   if (result.removed !== true) {
     throw new ServiceError('unavailable', 'Invalid connections removal response', { status: 502 });

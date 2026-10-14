@@ -11,7 +11,7 @@ export default async function EventAdminPage({ params }: Readonly<{ params: Prom
     <OrganizerDashboard
       eventId={eventId}
       title={String(event.title)}
-      status={String(event.status || 'draft')}
+      status={typeof event.status === 'string' ? event.status : 'draft'}
       creatorDid={String(event.creatorDid)}
       startsAt={new Date(event.startsAt as string | Date).toISOString()}
       isCreator={isCreator}

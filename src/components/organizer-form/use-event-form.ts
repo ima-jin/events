@@ -76,5 +76,6 @@ export function useEventForm(props: Readonly<EventFormProps>) {
     update, updateTier, moveTier, removeTier, submit, setUploadBusy,
     addTier: () => setTiers((current) => [...current, newTier(current[0]?.currency)]),
     cancel: () => router.push(props.event ? `/e/${encodeURIComponent(props.event.id)}` : '/dashboard'),
+    reportFailure: () => setError('Unable to save. Check your permissions and fields, then retry.'),
   };
 }

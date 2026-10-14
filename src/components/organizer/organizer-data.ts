@@ -15,11 +15,10 @@ export async function organizerRequest<T>(path: string, init?: RequestInit): Pro
 
 export function formatMoney(amount: number | null, currency: string | null): string {
   if (amount === null) return '—';
-  const code = currency || 'CAD';
   try {
-    return new Intl.NumberFormat('en-CA', { style: 'currency', currency: code }).format(amount / 100);
+    return new Intl.NumberFormat('en-CA', { style: 'currency', currency: currency ?? 'CAD' }).format(amount / 100);
   } catch {
-    return `${(amount / 100).toFixed(2)} ${code}`;
+    return `${(amount / 100).toFixed(2)} ${currency ?? 'CAD'}`;
   }
 }
 
