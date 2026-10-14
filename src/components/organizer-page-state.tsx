@@ -11,5 +11,5 @@ export function OrganizerPageError({ reset }: Readonly<{ reset: () => void }>) {
 }
 
 export function OrganizerPageLoading() {
-  return <p role="status" className="mx-auto max-w-4xl p-8 text-gray-400">Loading organizer tools…</p>;
+  return <output className="mx-auto block max-w-4xl p-8 text-gray-400">Loading organizer tools…</output>;
 }

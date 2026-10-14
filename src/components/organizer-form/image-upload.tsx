@@ -33,11 +33,11 @@ export function ImageUpload({ onUpload, onBusy }: Readonly<{ onUpload: (url: str
   }
   return (
     <div className="space-y-2">
-      <label className="block">Upload cover image
+      <label className="block"><span>Upload cover image</span>
         <input type="file" accept="image/jpeg,image/png,image/gif,image/webp" disabled={busy}
-          onChange={(event) => { upload(event.target.files?.[0]); }} />
+          onChange={(event) => { upload(event.target.files?.[0]).catch(() => setError('Image upload failed. Please try again.')); }} />
       </label>
-      {busy && <p role="status">Uploading image…</p>}
+      {busy && <output className="block">Uploading image…</output>}
       {error && <p role="alert">{error}</p>}
     </div>
   );

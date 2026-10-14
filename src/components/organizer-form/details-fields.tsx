@@ -21,7 +21,7 @@ export function DetailsFields({ details, update, onUploadBusy }: Readonly<Detail
       </div>
       <Field label="Timezone (IANA)" value={details.timezone} onChange={(value) => update('timezone', value)} />
       <p className="text-sm text-gray-500">Dates and times use this timezone, for example UTC or America/Toronto.</p>
-      <label className="block">Location type
+      <label className="block"><span>Location type</span>
         <select className={INPUT_CLASS} value={details.locationType} onChange={(event) => update('locationType', event.target.value as LocationType)}>
           <option value="physical">Physical</option><option value="virtual">Virtual</option><option value="hybrid">Hybrid</option>
         </select>
@@ -38,19 +38,19 @@ export function DetailsFields({ details, update, onUploadBusy }: Readonly<Detail
       <Field label="Cover image URL" value={details.imageUrl} onChange={(value) => update('imageUrl', value)} />
       <ImageUpload onUpload={(url) => update('imageUrl', url)} onBusy={onUploadBusy} />
       <Field label="Linked course slug" value={details.courseSlug} onChange={(value) => update('courseSlug', value)} />
-      <label className="block">Status
+      <label className="block"><span>Status</span>
         <select className={INPUT_CLASS} value={details.status} onChange={(event) => update('status', event.target.value)}>
           {['draft', 'published', 'paused', 'cancelled', 'completed'].map((status) => <option key={status} value={status}>{status}</option>)}
         </select>
       </label>
-      <label className="block">Access control
+      <label className="block"><span>Access control</span>
         <select className={INPUT_CLASS} value={details.accessMode} onChange={(event) => update('accessMode', event.target.value as FormDetails['accessMode'])}>
           <option value="public">Public</option><option value="invite_only">Invite only</option>
         </select>
       </label>
       <label className="block">
         <input type="checkbox" checked={details.emtEnabled} onChange={(event) => update('emtEnabled', event.target.checked)} />
-        Accept e-Transfer payments
+        <span>Accept e-Transfer payments</span>
       </label>
       {details.emtEnabled && <Field label="Payment email" type="email" value={details.emtEmail} onChange={(value) => update('emtEmail', value)} />}
     </section>
