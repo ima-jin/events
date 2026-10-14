@@ -16,6 +16,15 @@ const LABELS: Record<string, string> = {
 };
 
 const loadQr = (path: string, signal: AbortSignal) => readJson<{ qrCodeDataUri: string }>(path, { signal });
+function timeAgo(date: string): string {
+  const seconds = Math.floor((Date.now() - new Date(date).getTime()) / 1000);
+  if (seconds < 60) return 'just now';
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
 
 export function TicketQr({ ticket }: Readonly<{ ticket: BuyerTicket }>) {
   const path = canPresentQr(ticket) ? `/api/tickets/${encodeURIComponent(ticket.id)}/qr` : null;
@@ -25,7 +34,7 @@ export function TicketQr({ ticket }: Readonly<{ ticket: BuyerTicket }>) {
     <div className="flex flex-col items-center gap-2 rounded-lg border border-gray-700 p-3">
       <p className="font-medium">{ticket.ticketType?.name ?? 'Ticket'}</p>
       <p className="text-sm text-orange-400">{LABELS[ticket.status] ?? ticket.status}</p>
-      {ticket.usedAt && <p className="text-xs text-gray-400">Checked in {new Date(ticket.usedAt).toLocaleString()}</p>}
+      {ticket.usedAt && <p className="text-xs text-gray-400">Checked in {timeAgo(ticket.usedAt)}</p>}
       {pending && <p className="text-sm text-amber-400">Registration Required</p>}
       {qr.loading && <p role="status">Loading QR code…</p>}
       {qr.error && (

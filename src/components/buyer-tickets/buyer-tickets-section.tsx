@@ -9,8 +9,8 @@ const loadTickets = (path: string, signal: AbortSignal) => readJson<BuyerTickets
 
 /** Mounted only for a signed-in viewer; all buyer data comes from this app's routes. */
 export function BuyerTicketsSection({
-  eventId, children,
-}: Readonly<{ eventId: string; children: ReactNode }>) {
+  eventId, children, moreTicketsLabel = 'Buy More Tickets',
+}: Readonly<{ eventId: string; children: ReactNode; moreTicketsLabel?: 'Buy More Tickets' | 'Get More Tickets' }>) {
   const resource = useBuyerResource(`/api/events/${encodeURIComponent(eventId)}/my-ticket`, loadTickets);
   const orders = resource.data?.orders ?? [];
   const tab = useBuyerTab(orders.length > 0 || resource.loading || resource.error !== null);
@@ -24,7 +24,7 @@ export function BuyerTicketsSection({
         </button>
         <button type="button" role="tab" id="buy-tickets-tab" aria-selected={!showTickets} aria-controls="buy-tickets"
           onClick={() => tab.select('buy-tickets')} className={`border-b-2 px-4 py-3 font-semibold ${showTickets ? 'border-transparent text-gray-400' : 'border-orange-500 text-orange-400'}`}>
-          {orders.length > 0 ? 'Get More Tickets' : 'Get Tickets'}
+          {orders.length > 0 ? moreTicketsLabel : 'Get Tickets'}
         </button>
       </div>
       <section id="my-tickets" role="tabpanel" aria-labelledby="my-tickets-tab" hidden={!showTickets} className="space-y-6">

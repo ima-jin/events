@@ -223,10 +223,10 @@ export function mockBuyerFetch(orders: BuyerOrder[] = [makeBuyerOrder()], extra:
   });
 }
 
-export function renderBuyer(eventId = EVENT_ID) {
+export function renderBuyer(eventId = EVENT_ID, moreTicketsLabel: 'Buy More Tickets' | 'Get More Tickets' = 'Buy More Tickets') {
   return {
     user: userEvent.setup(),
-    ...render(<BuyerTicketsSection eventId={eventId}><p>Purchase tickets here</p></BuyerTicketsSection>),
+    ...render(<BuyerTicketsSection eventId={eventId} moreTicketsLabel={moreTicketsLabel}><p>Purchase tickets here</p></BuyerTicketsSection>),
   };
 }
 
@@ -252,4 +252,8 @@ export function deferredResponse() {
   let resolve!: (value: Response) => void;
   const promise = new Promise<Response>((done) => { resolve = done; });
   return { promise, resolve };
+}
+
+export function recentlyUsedTicket(secondsAgo: number): BuyerTicket {
+  return makeBuyerTicket({ status: 'used', usedAt: new Date(Date.now() - secondsAgo * 1000).toISOString() });
 }

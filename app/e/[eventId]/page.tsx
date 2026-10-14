@@ -73,7 +73,12 @@ export default async function EventPage({ params, searchParams }: Readonly<PageP
         <EventHero event={event} />
         <StatusBanner status={event.status} />
         <EventDetails event={event} isUpcoming={isUpcoming} />
-        {viewer ? <BuyerTicketsSection key={`${event.id}:${viewer.did}`} eventId={event.id}>{purchase}</BuyerTicketsSection> : purchase}
+        {viewer ? (
+          <BuyerTicketsSection key={`${event.id}:${viewer.did}`} eventId={event.id}
+            moreTicketsLabel={tiers.every((tier) => tier.price === 0) ? 'Get More Tickets' : 'Buy More Tickets'}>
+            {purchase}
+          </BuyerTicketsSection>
+        ) : purchase}
       </div>
       {canBuy && (
         <div className="fixed inset-x-0 bottom-0 z-50 border-t border-gray-800 bg-gray-900 px-4 py-3 shadow-lg md:hidden">

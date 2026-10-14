@@ -5,7 +5,7 @@ import { BuyerTicketsSection } from '@/components/buyer-tickets/buyer-tickets-se
 import {
   BUYER_QR, REGISTRATION_BASE, buyerResponse, deferredResponse, jsonResponse,
   makeBuyerOrder, makeBuyerTicket, makeReceipt, mockBuyerFetch, mockFetch,
-  registrationTicket, renderBuyer, resetBuyerLocation, sendRegistrationMessage,
+  recentlyUsedTicket, registrationTicket, renderBuyer, resetBuyerLocation, sendRegistrationMessage,
 } from '../support/ui-support';
 
 beforeEach(() => resetBuyerLocation());
@@ -74,7 +74,7 @@ describe('buyer ticket orders', () => {
     const { user } = renderBuyer();
     await screen.findByRole('article');
     expect(screen.getByRole('tab', { name: 'My Tickets' }).getAttribute('aria-selected')).toBe('true');
-    await user.click(screen.getByRole('tab', { name: 'Get More Tickets' }));
+    await user.click(screen.getByRole('tab', { name: 'Buy More Tickets' }));
     expect(screen.getByText('Purchase tickets here')).toBeTruthy();
     await act(async () => {
       globalThis.location.hash = '#my-tickets';
@@ -82,6 +82,21 @@ describe('buyer ticket orders', () => {
     });
     expect(screen.getByRole('article')).toBeTruthy();
   });
+
+  it('keeps the Get More Tickets label for free events', async () => {
+    mockBuyerFetch([makeBuyerOrder({ totalAmount: 0 })]);
+    renderBuyer('evt_1', 'Get More Tickets');
+    await screen.findByRole('article');
+    expect(screen.getByRole('tab', { name: 'Get More Tickets' })).toBeTruthy();
+  });
+
+  it.each([[0, 'just now'], [120, '2m ago'], [7200, '2h ago'], [172800, '2d ago']])(
+    'shows a kernel-parity relative check-in time for %s seconds', async (seconds, label) => {
+      mockBuyerFetch([makeBuyerOrder({ tickets: [recentlyUsedTicket(Number(seconds))] })]);
+      renderBuyer();
+      expect(await screen.findByText(`Checked in ${label}`)).toBeTruthy();
+    },
+  );
 
   it('renders one receipt per order in major units, not once per ticket', async () => {
     mockBuyerFetch([makeBuyerOrder({ fairSettlement: makeReceipt(), tickets: [makeBuyerTicket(), makeBuyerTicket({ id: 'two' })] })]);
