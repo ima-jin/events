@@ -11,7 +11,8 @@ const TRACKING_TABLE = '__drizzle_migrations';
 
 export class BaselineMismatchError extends Error {
   constructor(problems) {
-    super(`Refusing to baseline:\n${problems.map((problem) => `  - ${problem}`).join('\n')}`);
+    const details = problems.map((problem) => `  - ${problem}`).join('\n');
+    super(`Refusing to baseline:\n${details}`);
     this.name = 'BaselineMismatchError';
   }
 }
