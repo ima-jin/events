@@ -14,7 +14,6 @@ name: CI
 #     (BEL 0x07, form-feed 0x0C, lone CR) before they merge.
 
 on:
-  workflow_dispatch:
   push:
     branches: [main]
   pull_request:
