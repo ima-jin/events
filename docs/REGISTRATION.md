@@ -117,3 +117,21 @@ the approved vault/tool flow and `/jin` re-sync to register the signer, callback
 Preserve the public pin and durable replay directories on shared persistent local storage;
 trusted util-linux `flock` and a multi-host shared-store adapter before scaling are required.
 See [DEPLOY.md](./DEPLOY.md#kernel-signed-callbacks) for discovery, rollout and failure handling.
+## Campaign payment setup
+
+Campaign creation and confirmation require the separate operator-approved `pay:setup-intent`
+service scope. Events calls `POST /pay/api/setup-intent` and `/pay/api/setup-intent/verify`
+with its own app-service token; neither client Stripe results nor a session cookie grant
+verification authority. The seller must have an active `stripe:events` BYO connector with
+Customers and SetupIntents write/read permissions and PaymentMethods read permission.
+
+Deploy the kernel verification contract before enabling pledges. Missing routes, revoked
+approval, unavailable Stripe or malformed verification responses return 503 without confirming.
+Legacy pledges without the seller/account binding return `setup_intent_legacy` (409) and need
+a new setup; no platform-account fallback exists. The browser must confirm using that seller
+account's publishable key, not the platform key.
+
+Kernel imajin-ai#2796 supplies the seller's sealed publishable key with each payment setup.
+Events uses that key for Stripe.js and sends the server-recorded seller DID for each pledge
+when collecting through `pay:charge-pledges`. Each pledge's own charge outcome is recorded
+independently; confirmation alone is a verified saved method, not collected funds.
