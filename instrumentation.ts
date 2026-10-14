@@ -12,6 +12,8 @@ import { bootstrapSigningIdentity } from '@/lib/signing-identity';
  * bootstrap keystore on every later boot; see #7 and docs/REGISTRATION.md).
  * Refusing to boot on a misconfigured env catches the problem immediately
  * instead of serving requests no kernel call could ever authenticate.
+ * Without a keystore or optional env claim code, bootstrap returns unclaimed;
+ * middleware gates ordinary routes until the operator claims at /events/claim.
  */
 export function validateSigningKeyBootEnv(): void {
   if (process.env.IMAJIN_APP_PRIVATE_KEY) {

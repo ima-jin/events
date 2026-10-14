@@ -422,6 +422,47 @@ components:
       description: UTF-8 CSV with a leading BOM.
 
 paths:
+  /api/claim:
+    post:
+      tags: [platform]
+      operationId: postClaim
+      summary: Redeem the operator's one-time claim code while unclaimed
+      description: >
+        Bootstrap exception to ordinary session/app-token authentication: the operator's
+        kernel-issued claimCode in the body is the single-use bearer capability.
+        Mounted at /events/api/claim with NEXT_PUBLIC_BASE_PATH=/events. Exchanges
+        through the published SDK, checks IMAJIN_APP_DID, persists the same 0600
+        bootstrap keystore as first boot and activates the signing identity without
+        a restart. Never returns signing key material. Returns 404 once claimed.
+      x-public: true
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [claimCode]
+              properties:
+                claimCode: { type: string, minLength: 1, maxLength: 200 }
+      responses:
+        "200":
+          description: Claim redeemed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  appDid: { type: string }
+                  publicKey: { type: string, nullable: true }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429":
+          description: Too many claim attempts
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
   /api/health:
     get:
       tags: [platform]
@@ -440,6 +481,9 @@ paths:
                   status: { type: string, example: ok }
                   service: { type: string, example: imajin-events }
                   timestamp: { type: string, format: date-time }
+                  claimed:
+                    type: boolean
+                    description: False until a signing identity is active; claim at /events/claim.
 
   /api/spec:
     get:

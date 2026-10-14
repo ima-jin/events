@@ -37,7 +37,8 @@ Identity minting and cutover remain operator steps (ima-jin/imajin-ai#2518, #252
    You'll get back this app's `appDid` and registry `id`.
 3. **Set env**: `cp .env.example .env.local`, then fill in `IMAJIN_APP_DID`,
    `NEXT_PUBLIC_IMAJIN_APP_ID`, `SESSION_SECRET`, `APP_DB_SCHEMA`, `DATABASE_URL`, `IMAJIN_KERNEL_URL`,
-   and (first boot only) `IMAJIN_APP_CLAIM_CODE`. This app refuses to start without `IMAJIN_APP_DID`
+   and optionally `IMAJIN_APP_CLAIM_CODE` for automated first boot. Otherwise boot unclaimed
+   and paste the operator's one-time code at `/events/claim`. This app refuses to start without `IMAJIN_APP_DID`
    set, or if a raw `IMAJIN_APP_PRIVATE_KEY` is present (see `instrumentation.ts`) — it fetches its
    own signing key at boot via `@ima-jin/auth-client`'s `loadAppSigningKey()` instead; see
    [`docs/REGISTRATION.md`](./docs/REGISTRATION.md).
@@ -51,7 +52,8 @@ Identity minting and cutover remain operator steps (ima-jin/imajin-ai#2518, #252
    ```bash
    pnpm dev
    ```
-   `/api/health` and `/api/spec` should respond immediately; `/api/me` returns your DID once
+   `/api/health` responds immediately; other routes are gated until claimed. After claiming,
+   `/api/spec` responds and `/api/me` returns your DID once
    you sign in through the header's "Sign in with Imajin" link.
 
 ## Settlement (registered-app contract)
@@ -63,7 +65,7 @@ checkout's `transaction_id` and the `fair_manifest`; `alreadySettled: true` is s
 `PAY_SERVICE_API_KEY` is not used for settlement (refunds and campaign charge-pledges still use it, imajin-ai#2735).
 
 Operator prerequisites before ticket checkout works: (1) register events and provision its signing key
-(`IMAJIN_KERNEL_URL`, `IMAJIN_APP_DID`, one-time `IMAJIN_APP_CLAIM_CODE`); (2) approve `pay:settle` via the
+(`IMAJIN_KERNEL_URL`, `IMAJIN_APP_DID`, one-time operator code at `/events/claim` or optional env code); (2) approve `pay:settle` via the
 `apps:service-scopes` card; (3) deploy the kernel contract (imajin-ai#2695) and the kernel build that adds `transactionId` to the pay
 `checkout.completed` webhook (imajin-ai#2741; it looks the `pay.transactions` row up by the Stripe session and sends
 its id — the key `/pay/api/settle` needs). If a webhook arrives without it, events logs
@@ -102,9 +104,11 @@ instrumentation.ts ← boot-env guards + loadAppSigningKey() bootstrap (see docs
 
 This app never reads a raw private key from env. `instrumentation.ts` fails loud at boot if
 `IMAJIN_APP_PRIVATE_KEY` is set, and instead calls `@ima-jin/auth-client`'s `loadAppSigningKey()`:
-a one-time claim code (`IMAJIN_APP_CLAIM_CODE`) bootstraps a local `0600` keystore
-(`IMAJIN_APP_KEYSTORE`) on first boot; every later boot re-authenticates with that keystore, no
-operator action needed. See [`docs/REGISTRATION.md`](./docs/REGISTRATION.md#4-fetch-this-apps-own-signing-key-at-boot-7).
+a one-time operator code, pasted at `/events/claim` (preferred) or optionally supplied through
+`IMAJIN_APP_CLAIM_CODE`, bootstraps the same local `0600` keystore (`IMAJIN_APP_KEYSTORE`).
+Without either code or keystore, the app boots unclaimed rather than crashing; the claim page
+activates the signing identity without a restart. Every later boot re-authenticates with the
+keystore, no operator action needed. See [`docs/REGISTRATION.md`](./docs/REGISTRATION.md#4-fetch-this-apps-own-signing-key-at-boot-7).
 
 ## Mounting under a path prefix
 
