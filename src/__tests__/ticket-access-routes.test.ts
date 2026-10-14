@@ -185,16 +185,43 @@ describe('GET /api/events/[id]/my-ticket', () => {
 describe('GET /api/tickets/[id]/qr', () => {
   const qr = () => getQr(accessRequest(`/api/tickets/${TICKET_ID}/qr`), idParams(TICKET_ID));
   const ERR_QR_FAILED = { error: 'Failed to generate QR code' };
+  it('requires authentication before looking up the ticket', async () => {
+    requireAuthMock.mockResolvedValue(authFailure());
+    expect((await qr()).status).toBe(401);
+    expect(selectMock).not.toHaveBeenCalled();
+    expect(generateQRCodeMock).not.toHaveBeenCalled();
+  });
 
-  it('returns the QR code data URI for the ticket id', async () => {
+  it('returns 404 to a non-holder or for an unknown ticket', async () => {
+    requireAuthMock.mockResolvedValue({ identity: { id: OTHER_DID, scopes: [], via: 'token' } });
+    expect((await qr()).status).toBe(404);
+    expect(whereParams(0)).toEqual([TICKET_ID, OTHER_DID]);
+    expect(generateQRCodeMock).not.toHaveBeenCalled();
+  });
+
+  it('uses the verified act-as holder rather than the caller DID', async () => {
+    nextSelect([{ id: TICKET_ID }]);
+    requireAuthMock.mockResolvedValue({
+      identity: { id: OTHER_DID, actingAs: OWNER_DID, scopes: [], via: 'token' },
+    });
+    expect((await qr()).status).toBe(200);
+    expect(whereParams(0)).toEqual([TICKET_ID, OWNER_DID]);
+  });
+
+  it.each(['cookie', 'token'] as const)('returns the holder QR without caching via %s', async (via) => {
+    nextSelect([{ id: TICKET_ID }]);
+    requireAuthMock.mockResolvedValue({ identity: { id: OWNER_DID, scopes: [], via } });
     const res = await qr();
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ qrCodeDataUri: QR_DATA_URI });
     expect(generateQRCodeMock).toHaveBeenCalledWith(TICKET_ID);
+    expect(whereParams(0)).toEqual([TICKET_ID, OWNER_DID]);
+    expect(res.headers.get('Cache-Control')).toBe('private, no-store');
   });
 
   it('answers 500 when the generator yields nothing', async () => {
+    nextSelect([{ id: TICKET_ID }]);
     generateQRCodeMock.mockResolvedValue('');
 
     const res = await qr();
@@ -204,6 +231,7 @@ describe('GET /api/tickets/[id]/qr', () => {
   });
 
   it('answers 500 and logs when the generator throws', async () => {
+    nextSelect([{ id: TICKET_ID }]);
     generateQRCodeMock.mockRejectedValue(new Error('boom'));
 
     const res = await qr();

@@ -32,6 +32,7 @@ function validEnv(target = 'dev'): Record<string, string> {
     IMAJIN_APP_KEYSTORE: `/fixture/events.${target}.keystore.json`,
     IMAJIN_APP_CLAIM_CODE: 'fixture-code',
     SESSION_SECRET: 's'.repeat(64),
+    TICKET_QR_SECRET: 'q'.repeat(64),
     WEBHOOK_SECRET: 'w'.repeat(64),
   };
 }
@@ -217,6 +218,12 @@ describe('deploy environment guard', () => {
     expect(validateEnvironment({}, 'dev', () => false).join('\n')).toContain('DATABASE_URL: required');
   });
 
+  it('requires the app-held ticket QR secret without exposing values', () => {
+    const env = validEnv();
+    delete env.TICKET_QR_SECRET;
+    expect(validateEnvironment(env, 'dev', () => true)).toContain('TICKET_QR_SECRET: required');
+  });
+
   it.each(['IMAJIN_APP_PRIVATE_KEY', 'AUTH_INTERNAL_API_KEY', 'PROFILE_INTERNAL_API_KEY',
     'ENABLE_REQUEST_LOG', 'ENABLE_APP_LOG', 'LOG_DB_TRANSPORT', 'PORT', 'NODE_ENV', 'NEXT_RUNTIME'])(
     'refuses %s without leaking its value', (name) => {
@@ -238,7 +245,7 @@ describe('deploy environment guard', () => {
     ['NEXT_PUBLIC_DOMAIN', 'other'], ['NEXT_PUBLIC_SERVICE_PREFIX', ''],
     ['IMAJIN_ENV', ''], ['IMAJIN_APP_DID', 'invalid'],
     ['IMAJIN_APP_AUD', 'jin.imajin.ai'], ['SESSION_SECRET', 'short'],
-    ['WEBHOOK_SECRET', 'short'], ['ENABLE_TICKET_MIGRATION', 'true'],
+    ['TICKET_QR_SECRET', 'short'], ['WEBHOOK_SECRET', 'short'], ['ENABLE_TICKET_MIGRATION', 'true'],
     ['IMAJIN_APP_KEYSTORE', './relative.json'],
   ])('refuses %s drift', (name, value) => {
     expect(validateEnvironment({ ...validEnv(), [name]: value }, 'dev', () => true).join('\n')).toContain(name);

@@ -55,7 +55,8 @@ vi.mock('@ima-jin/logger', () => ({
 vi.mock('@/lib/auth', () => ({
   requireAuth: hoisted.requireAuthMock,
   requireHardDID: hoisted.requireHardDIDMock,
-  resolveActingDid: (identity: { id: string }) => identity.id,
+  resolveActingDid: (identity: { id: string; actingAs?: string; actingFor?: string }) =>
+    identity.actingFor ?? identity.actingAs ?? identity.id,
 }));
 
 vi.mock('@ima-jin/auth', () => ({

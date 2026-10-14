@@ -39,6 +39,7 @@ export function GuestActions({ eventId, guest, isCreator, onChanged, onRefundPen
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<GuestAction | null>(null);
+  const [qrToken, setQrToken] = useState('');
   const [manualRefund, setManualRefund] = useState<ActionResult | null>(null);
 
   async function perform(action: GuestAction) {
@@ -47,7 +48,10 @@ export function GuestActions({ eventId, guest, isCreator, onChanged, onRefundPen
     setNotice(null);
     try {
       const result = await organizerRequest<ActionResult>(
-        organizerPath(eventId, `/tickets/${encodeURIComponent(guest.id)}/${action}`), { method: 'POST' },
+        organizerPath(eventId, `/tickets/${encodeURIComponent(guest.id)}/${action}`),
+        action === 'check-in'
+          ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: qrToken.trim() }) }
+          : { method: 'POST' },
       );
       setConfirmation(null);
       if (result.manualRefundRequired) {
@@ -66,10 +70,11 @@ export function GuestActions({ eventId, guest, isCreator, onChanged, onRefundPen
   }
 
   function request(action: GuestAction) {
-    if (action === 'check-in' || action === 'resend-email') {
+    if (action === 'resend-email') {
       perform(action).catch(() => setError('Ticket action failed.'));
       return;
     }
+    setQrToken('');
     setConfirmation(action);
   }
 
@@ -79,7 +84,13 @@ export function GuestActions({ eventId, guest, isCreator, onChanged, onRefundPen
       <button key={action} type="button" disabled={busy} onClick={() => request(action)}>{busy ? 'Working…' : label}</button>)}</div>}
     {confirmation && <div role="alertdialog" aria-label={`Confirm ${confirmation}`}>
       <p>Confirm {confirmation} for ticket {guest.id}? Only continue if you intend this change.</p>
-      <button type="button" disabled={busy} onClick={() => { perform(confirmation).catch(() => setError('Ticket action failed.')); }}>Confirm action</button>
+      {confirmation === 'check-in' && <label className="block">
+        <span className="block">Signed ticket QR token</span>
+        <input className="block w-full rounded border p-2" value={qrToken}
+          onChange={(event) => setQrToken(event.target.value)} autoComplete="off"
+          placeholder="Scan or paste the ticket-v1 token" />
+      </label>}
+      <button type="button" disabled={busy || (confirmation === 'check-in' && !qrToken.trim())} onClick={() => { perform(confirmation).catch(() => setError('Ticket action failed.')); }}>Confirm action</button>
       <button type="button" disabled={busy} onClick={() => setConfirmation(null)}>Keep ticket</button>
     </div>}
     {manualRefund && <output className="block">

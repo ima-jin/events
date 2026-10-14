@@ -5,6 +5,7 @@ import { requireActor } from '@/lib/route-guards';
 import { evaluateEligibility } from '@/lib/kernel';
 import { isEventOrganizer } from '@/lib/organizer';
 import { getClient } from '@/db';
+import { verifyTicketQrToken } from '@/lib/ticket-qr-token';
 
 const log = createLogger('events');
 const sql = getClient();
@@ -58,6 +59,10 @@ export async function POST(
     const orgCheck = await isEventOrganizer(id, did, request);
     if (!orgCheck.authorized) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+    const body = await request.json().catch(() => null);
+    if (!verifyTicketQrToken(body?.token, ticketId)) {
+      return NextResponse.json({ error: 'Invalid or expired ticket QR token' }, { status: 400 });
     }
 
     const [ticket] = await sql`

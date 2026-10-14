@@ -1747,7 +1747,17 @@ paths:
     post:
       tags: [tickets]
       operationId: checkInTicket
-      summary: Check a valid ticket in (creator or cohost)
+      summary: Check a valid ticket in with a signed QR token (creator or cohost)
+      description: Raw-ID legacy QRs are rejected; reissue via the holder QR route or ticket email.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: { type: string, description: Scanned ticket-v1 HMAC token bound to ticketId }
       security:
         - appToken: [events:write]
         - cookieAuth: []
@@ -1765,7 +1775,7 @@ paths:
                       id: { type: string }
                       usedAt: { type: string, format: date-time }
         "400":
-          description: Ticket is not valid or already checked in
+          description: Invalid/expired QR token, invalid ticket or already checked in
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1949,9 +1959,11 @@ paths:
     get:
       tags: [tickets]
       operationId: getTicketQr
-      summary: QR code (data URI) encoding a ticket id
-      x-public: true
-      security: []
+      summary: Signed ticket QR code (data URI), current holder only
+      description: Uses the authenticated holder or verified act-as DID. Non-holders receive 404.
+      security:
+        - appToken: [events:read]
+        - cookieAuth: []
       parameters:
         - { name: id, in: path, required: true, schema: { type: string } }
       responses:
@@ -1963,6 +1975,8 @@ paths:
                 type: object
                 properties:
                   qrCodeDataUri: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/ServerError" }
 
   /api/tickets/{id}/confirm-payment:
@@ -2032,7 +2046,6 @@ paths:
                 type: object
                 properties:
                   success: { type: boolean }
-                  qrCodeDataUri: { type: string, nullable: true }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
           description: Ticket registration status is not `pending`

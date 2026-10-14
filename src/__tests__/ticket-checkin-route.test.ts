@@ -25,6 +25,7 @@ import {
   fetchMock,
   logMock,
   makeTicketRequest,
+  makeRequest,
   nextSql,
   publishMock,
   resetTicketRouteMocks,
@@ -34,6 +35,7 @@ import {
   itReturns403WhenNotOrganizer,
 } from './support/ticket-route-support';
 import { POST } from '../../app/api/events/[id]/tickets/[ticketId]/check-in/route';
+import { createTicketQrToken } from '@/lib/ticket-qr-token';
 
 const ATTENDEE_DID = 'did:imajin:attendee';
 const USED_AT = '2026-07-14T14:00:00.000Z';
@@ -43,7 +45,10 @@ const WEBHOOK_URL = 'https://hooks.test/checkin';
 const VALID_TICKET = { id: TICKET_ID, status: 'valid', used_at: null, owner_did: ATTENDEE_DID };
 const USED_ROW = { id: TICKET_ID, used_at: USED_AT, status: 'used' };
 
-const callCheckIn = () => POST(makeTicketRequest('check-in'), ROUTE_PARAMS);
+const callWithToken = (token: unknown) => POST(makeRequest(
+  `/api/events/${EVENT_ID}/tickets/${TICKET_ID}/check-in`, 'POST', { token },
+), ROUTE_PARAMS);
+const callCheckIn = () => callWithToken(createTicketQrToken(TICKET_ID));
 
 /** Queue a successful check-in (ticket SELECT, then UPDATE ... RETURNING). */
 function queueCheckIn(ticket: Record<string, unknown> = VALID_TICKET): void {
@@ -52,11 +57,32 @@ function queueCheckIn(ticket: Record<string, unknown> = VALID_TICKET): void {
 }
 
 describe('POST /api/events/[id]/tickets/[ticketId]/check-in', () => {
-  beforeEach(resetTicketRouteMocks);
+  beforeEach(() => {
+    resetTicketRouteMocks();
+    vi.stubEnv('TICKET_QR_SECRET', 'qr-test-fixture-'.repeat(5));
+  });
 
   itReturns401WhenAuthFails(callCheckIn);
 
   itReturns403WhenNotOrganizer(callCheckIn);
+
+  it.each(['raw ID', 'forged', 'expired', 'wrong ticket', 'missing', 'malformed JSON'])(
+    'rejects a %s QR before reading or updating a ticket', async (kind) => {
+      let token: unknown = TICKET_ID;
+      if (kind === 'forged') {
+        token = createTicketQrToken(TICKET_ID).slice(0, -5) + 'AAAAA';
+      }
+      if (kind === 'expired') token = createTicketQrToken(TICKET_ID, 1);
+      if (kind === 'wrong ticket') token = createTicketQrToken('tkt_other');
+      if (kind === 'missing') token = undefined;
+      const res = kind === 'malformed JSON'
+        ? await POST(makeTicketRequest('check-in'), ROUTE_PARAMS)
+        : await callWithToken(token);
+      expect(res.status).toBe(400);
+      expect(sqlMock).not.toHaveBeenCalled();
+      expect(publishMock).not.toHaveBeenCalled();
+    },
+  );
 
   it('returns 404 when ticket is not found', async () => {
     nextSql([]); // ticket SELECT → empty

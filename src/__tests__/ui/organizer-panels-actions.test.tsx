@@ -11,8 +11,14 @@ describe('organizer guest actions', () => {
     const { user } = renderPanel(<GuestActions eventId={EVENT_ID} guest={makeGuest()} isCreator={false} onChanged={changed} />);
     expect(screen.queryByRole('button', { name: 'Refund' })).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Check In' }));
+    expect(spy).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Confirm action' }));
+    expect(spy).not.toHaveBeenCalled();
+    await user.type(screen.getByLabelText('Signed ticket QR token'), 'ticket-v1.fixture.signature');
+    await user.click(screen.getByRole('button', { name: 'Confirm action' }));
     await waitFor(() => expect(changed).toHaveBeenCalledOnce());
     expect(spy.mock.calls[0][0]).toBe('/api/events/evt_1/tickets/ticket_1/check-in');
+    expect(JSON.parse(spy.mock.calls[0][1]?.body as string)).toEqual({ token: 'ticket-v1.fixture.signature' });
     await user.click(screen.getByRole('button', { name: 'Resend Email' }));
     expect(spy.mock.calls[1][0]).toContain('/resend-email');
   });

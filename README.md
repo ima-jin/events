@@ -36,7 +36,7 @@ Identity minting and cutover remain operator steps (ima-jin/imajin-ai#2518, #252
 2. **Register this app with the kernel** — see [`docs/REGISTRATION.md`](./docs/REGISTRATION.md).
    You'll get back this app's `appDid` and registry `id`.
 3. **Set env**: `cp .env.example .env.local`, then fill in `IMAJIN_APP_DID`,
-   `NEXT_PUBLIC_IMAJIN_APP_ID`, `SESSION_SECRET`, `APP_DB_SCHEMA`, `DATABASE_URL`, `IMAJIN_KERNEL_URL`,
+   `NEXT_PUBLIC_IMAJIN_APP_ID`, `SESSION_SECRET`, `TICKET_QR_SECRET`, `APP_DB_SCHEMA`, `DATABASE_URL`, `IMAJIN_KERNEL_URL`,
    and optionally `IMAJIN_APP_CLAIM_CODE` for automated first boot. Otherwise boot unclaimed
    and paste the operator's one-time code at `/events/claim`. This app refuses to start without `IMAJIN_APP_DID`
    set, or if a raw `IMAJIN_APP_PRIVATE_KEY` is present (see `instrumentation.ts`) — it fetches its
