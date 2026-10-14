@@ -28,6 +28,10 @@ The kernel verifies both and returns `{ appDid, userDid, scopes }` — that trip
 
 ## Getting started
 
+For host deployment, use [`docs/DEPLOY.md`](./docs/DEPLOY.md)'s one-command dev/prod
+runbook and [`docs/ENVIRONMENTS.md`](./docs/ENVIRONMENTS.md)'s blank-valued env contracts.
+Identity minting and cutover remain operator steps (ima-jin/imajin-ai#2518, #2529, #2516).
+
 1. **Clone this repo** (`git clone https://github.com/ima-jin/events`).
 2. **Register this app with the kernel** — see [`docs/REGISTRATION.md`](./docs/REGISTRATION.md).
    You'll get back this app's `appDid` and registry `id`.
