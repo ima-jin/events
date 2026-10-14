@@ -11,6 +11,11 @@ deps, no monorepo internals, no DB access, no in-process bus** — it talks to I
 `@ima-jin/*` SDK packages (from npmjs.org, no auth needed) are fine to depend on; they're the same versioned
 artifact every app — first-party or third-party — consumes.
 
+## Sonar analysis
+
+Analysis mode, administrator setup, and exact-head PR verification are
+documented in [`docs/SONAR.md`](./docs/SONAR.md).
+
 ## Source of truth is the user's
 
 This app holds nothing authoritative. The signed records are **the user's own**, on their per-DID path. The kernel is
