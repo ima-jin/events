@@ -27,6 +27,10 @@ import { randomBytes } from 'node:crypto';
 import { createPledgePayment, SETUP_INTENT_CONTRACT } from '@/lib/pledge-payment';
 
 export const OPTIONS = createPreflight();
+
+function recordedSetupIntent(id: string | null) {
+  return id ? eq(pledges.stripeSetupIntentId, id) : isNull(pledges.stripeSetupIntentId);
+}
 function campaignAvailability(event: NonNullable<Awaited<ReturnType<typeof findEvent>>>, cors: HeadersInit) {
   if (event.eventType !== 'campaign') return jsonError('Not a campaign event', 400, cors);
   if (event.status !== 'published') return jsonError('Campaign is not available for pledging', 400, cors);
@@ -115,9 +119,7 @@ export const POST = withLogger('events', async (request: NextRequest, { log }) =
           eq(pledges.status, existingPledge.status),
           eq(pledges.amount, existingPledge.amount),
           eq(pledges.currency, existingPledge.currency),
-          existingPledge.stripeSetupIntentId
-            ? eq(pledges.stripeSetupIntentId, existingPledge.stripeSetupIntentId)
-            : isNull(pledges.stripeSetupIntentId),
+          recordedSetupIntent(existingPledge.stripeSetupIntentId),
           eq(pledges.metadata, existingPledge.metadata),
         ))
         .returning({ id: pledges.id });
