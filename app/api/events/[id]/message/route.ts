@@ -1,4 +1,5 @@
-import { serviceUrl } from '@/lib/kernel';
+import { getContactEmail, serviceUrl } from '@/lib/kernel';
+import { getPayAppToken } from '@/lib/pay-app-token';
 import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@ima-jin/logger';
 import { denyUnlessOrganizer, requireActor, type Actor } from '@/lib/route-guards';
@@ -11,9 +12,6 @@ import { eventUrl, buildPublicUrlAbsolute } from '@ima-jin/config';
 export const dynamic = 'force-dynamic';
 
 const sql = getClient();
-
-const NOTIFY_URL = (serviceUrl('notify') ?? '');
-const NOTIFY_WEBHOOK_SECRET = process.env.NOTIFY_WEBHOOK_SECRET;
 
 interface MessageFilter {
   type: 'everyone' | 'ticket_type' | 'registration_complete' | 'registration_incomplete';
@@ -128,7 +126,6 @@ export async function POST(
   const { id } = await params;
   const actor = await authorizeOrganizer(request, id);
   if (actor instanceof NextResponse) return actor;
-  const { identity } = actor;
 
   let body: { subject: string; markdown: string; filter?: MessageFilter };
   try {
@@ -142,9 +139,16 @@ export async function POST(
     return NextResponse.json({ error: 'Missing required fields: subject, markdown' }, { status: 400 });
   }
 
-  if (!NOTIFY_WEBHOOK_SECRET) {
-    log.error({}, '[message] NOTIFY_WEBHOOK_SECRET not configured');
-    return NextResponse.json({ error: 'Broadcast service not configured' }, { status: 500 });
+  const notifyUrl = serviceUrl('notify');
+  if (!notifyUrl) {
+    return NextResponse.json({ error: 'Broadcast service not configured' }, { status: 503 });
+  }
+  let appToken: string;
+  try {
+    appToken = await getPayAppToken();
+  } catch {
+    log.error({}, '[message] App-service token unavailable');
+    return NextResponse.json({ error: 'Broadcast service unavailable' }, { status: 503 });
   }
 
   // Fetch event details for context
@@ -168,19 +172,11 @@ export async function POST(
   const fullSubject = `${event.title}: ${subject}`;
 
   // Resolve organizer email for reply-to
-  const AUTH_SERVICE_URL = (serviceUrl('auth') ?? '');
-  let organizerEmail: string | undefined;
+  let organizerEmail: string | null = null;
   try {
-    const contactRes = await fetch(
-      `${AUTH_SERVICE_URL}/api/identity/${encodeURIComponent(identity.id)}/contact`,
-      { headers: { 'x-webhook-secret': NOTIFY_WEBHOOK_SECRET }, cache: 'no-store' },
-    );
-    if (contactRes.ok) {
-      const contactData = await contactRes.json();
-      organizerEmail = contactData.email;
-    }
-  } catch (err) {
-    log.warn({ err: String(err) }, '[message] Failed to resolve organizer email for reply-to');
+    organizerEmail = await getContactEmail(actor.did);
+  } catch {
+    log.warn({}, '[message] Failed to resolve organizer email for reply-to');
   }
 
   // Forward to notify broadcast with event-contextualized HTML
@@ -188,11 +184,12 @@ export async function POST(
 
   let broadcastResult: { sent: number; skipped: number; errors: number };
   try {
-    const res = await fetch(`${NOTIFY_URL}/api/broadcast`, {
+    const res = await fetch(`${notifyUrl}/api/broadcast`, {
       method: 'POST',
+      redirect: 'error',
       headers: {
         'Content-Type': 'application/json',
-        'x-webhook-secret': NOTIFY_WEBHOOK_SECRET,
+        Authorization: `Bearer ${appToken}`,
       },
       body: JSON.stringify({
         scope: 'events',
@@ -212,14 +209,13 @@ export async function POST(
     });
 
     if (!res.ok) {
-      const err = await res.text();
-      log.error({ status: res.status, err }, '[message] Broadcast failed');
+      log.error({ status: res.status }, '[message] Broadcast failed');
       return NextResponse.json({ error: 'Broadcast failed' }, { status: 502 });
     }
 
     broadcastResult = await res.json();
-  } catch (err) {
-    log.error({ err: String(err) }, '[message] Broadcast request error');
+  } catch {
+    log.error({}, '[message] Broadcast request error');
     return NextResponse.json({ error: 'Broadcast service unavailable' }, { status: 502 });
   }
 

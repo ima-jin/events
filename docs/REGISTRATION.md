@@ -101,3 +101,19 @@ app DID via the `apps:service-scopes` card; an unapproved or unclaimed app fails
 The kernel also checks that the original payment/setup belongs to that app DID. Deploy
 kernel PR imajin-ai#2786 before this events release. Other public-contract limitations are documented in
 [KERNEL-GAPS.md](./KERNEL-GAPS.md).
+
+Organizer broadcasts use events' own app-service token from the published
+`@ima-jin/auth-client` **0.8.18** `createAppServiceTokenProvider`.
+Approve `notify:broadcast` for events' app DID through `apps:service-scopes` on `/jin`.
+The app never uses a kernel-internal contact credential: optional reply-to email comes from
+the public profile resolver and is omitted when not visible.
+
+## Kernel callback registration
+
+The kernel signs; events verifies with the published `@ima-jin/auth/kernel-webhook` **0.8.18**.
+The recipient audience is this deployment's `IMAJIN_APP_DID`, not the scoped-token slug.
+No shared callback credential is generated, exchanged or copied. The kernel operator uses
+the approved vault/tool flow and `/jin` re-sync to register the signer, callbacks and app scopes.
+Preserve the public pin and durable replay directories on shared persistent local storage;
+trusted util-linux `flock` and a multi-host shared-store adapter before scaling are required.
+See [DEPLOY.md](./DEPLOY.md#kernel-signed-callbacks) for discovery, rollout and failure handling.

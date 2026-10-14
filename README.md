@@ -102,13 +102,34 @@ Refund and charge calls invalidate the cached token and re-mint once on 401. A 4
 retried: the error identifies operator scope approval and app ownership as prerequisites.
 Network/5xx failures are not automatically retried because the payment outcome may be ambiguous.
 
+## Kernel-signed callbacks and organizer broadcasts (#38)
+
+The kernel signs payment and settlement callbacks; events verifies the exact bytes with
+published `@ima-jin/auth` **0.8.18** before parsing or business side effects. Verification uses
+the configured `IMAJIN_APP_DID` as audience and `serviceUrl('auth')` for public signing-key discovery.
+No shared callback credential is provisioned, generated or copied.
+Preserve `data/kernel-webhook-pins/` and `data/kernel-webhook-nonces/` on persistent writable
+local filesystem storage shared by every worker; util-linux `/usr/bin/flock` is required.
+Multi-host replicas require a shared-store adapter before scaling.
+Unauthorized signatures/replays return 401, correctly signed invalid JSON returns 400,
+and unavailable verification returns 503.
+
+Organizer messages require creator/co-host authorization and send events' own app-service
+token to notify with approved `notify:broadcast`. The published `@ima-jin/auth-client`
+**0.8.18** token provider is shared with pay calls. Optional reply-to email uses the public
+profile resolver, never an internal contact credential. Token mint failures fail closed (503);
+notify rejection fails closed (502), without a legacy credential retry.
+The kernel operator completes signer provisioning through the approved vault/tool step and
+`/jin` re-sync before receiver rollout. See [DEPLOY.md](./docs/DEPLOY.md#kernel-signed-callbacks).
+App self-secrets are vault-loaded at boot as implemented in events#39 / PR #44; see the registration runbook.
+
 ## Consuming `@ima-jin/*`
 
 Published `@ima-jin/*` packages (e.g. `@ima-jin/auth-client`, `@ima-jin/config`, `@ima-jin/ui`) are served from
 npmjs.org, the default registry — no `.npmrc` scoping and no auth token needed to install them:
 
 ```bash
-pnpm add @ima-jin/auth-client
+pnpm add @ima-jin/auth@0.8.18 @ima-jin/auth-client@0.8.18
 ```
 
 ## Layout

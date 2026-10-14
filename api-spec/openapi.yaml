@@ -89,17 +89,45 @@ components:
       in: header
       name: X-App-Authorization
       description: Legacy app-auth header carrying the attestation id from the user's consent flow.
-    webhookBearer:
-      type: http
-      scheme: bearer
-      description: "`Bearer ${WEBHOOK_SECRET}` — shared secret with the pay service."
-    webhookSecretHeader:
+    kernelSignature:
       type: apiKey
       in: header
-      name: x-webhook-secret
-      description: "`${WEBHOOK_SECRET}` — shared secret sent by the kernel event bus."
+      name: x-kernel-signature
+      description: >-
+        Ed25519 kernel signature binding app DID audience, timestamp, nonce, HTTP method,
+        public path/query and exact body bytes. All five x-kernel-* headers are required.
 
   parameters:
+    KernelAudience:
+      name: x-kernel-audience
+      in: header
+      required: true
+      schema: { type: string }
+      description: Recipient app DID; must equal local IMAJIN_APP_DID, not the app-token slug.
+    KernelTimestamp:
+      name: x-kernel-timestamp
+      in: header
+      required: true
+      schema: { type: string, pattern: "^[0-9]+$" }
+      description: Unix timestamp in seconds; inclusive freshness window is ±300 seconds.
+    KernelNonce:
+      name: x-kernel-nonce
+      in: header
+      required: true
+      schema: { type: string, format: uuid }
+      description: One-use nonce; retries must be freshly signed with a new nonce.
+    KernelKid:
+      name: x-kernel-kid
+      in: header
+      required: true
+      schema: { type: string }
+      description: Trusted signing-key identifier from public auth-service discovery.
+    KernelSignature:
+      name: x-kernel-signature
+      in: header
+      required: true
+      schema: { type: string, pattern: "^[0-9a-fA-F]{128}$" }
+      description: Hex-encoded Ed25519 signature over the SDK v1 canonical payload.
     EventId:
       name: id
       in: path
@@ -1325,6 +1353,10 @@ paths:
       tags: [events]
       operationId: sendBroadcastMessage
       summary: Send a broadcast message to confirmed ticket holders (creator or cohost)
+      description: >-
+        After organizer authorization, forwards with events' own app-service Bearer token and approved
+        notify:broadcast scope. Optional reply-to uses the public profile resolver and is omitted when
+        unavailable. No internal contact credential or legacy credential fallback is used.
       security:
         - appToken: [events:write]
         - cookieAuth: []
@@ -1361,6 +1393,11 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/ServerError" }
         "502": { $ref: "#/components/responses/BadGateway" }
+        "503":
+          description: Notify service not configured or app-service token unavailable; fails closed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /api/events/{id}/my-ticket:
     parameters:
@@ -2749,9 +2786,19 @@ paths:
       tags: [webhooks]
       operationId: paymentWebhook
       summary: Checkout-completed webhook from the pay service
-      description: Creates the order and tickets for a completed Stripe checkout. Authenticated with the shared `WEBHOOK_SECRET`.
+      description: >-
+        Creates the order and tickets for a completed Stripe checkout. The kernel signs; the app verifies
+        through published SDK 0.8.18 before parsing or business effects. Audience is local IMAJIN_APP_DID;
+        public key discovery uses serviceUrl('auth'). Durable nonce evidence and SDK public pins are kept
+        in persistent data/kernel-webhook-nonces and data/kernel-webhook-pins with util-linux flock.
       security:
-        - webhookBearer: []
+        - kernelSignature: []
+      parameters:
+        - $ref: "#/components/parameters/KernelAudience"
+        - $ref: "#/components/parameters/KernelTimestamp"
+        - $ref: "#/components/parameters/KernelNonce"
+        - $ref: "#/components/parameters/KernelKid"
+        - $ref: "#/components/parameters/KernelSignature"
       requestBody:
         required: true
         content:
@@ -2769,7 +2816,12 @@ paths:
                 type: object
                 properties:
                   received: { type: boolean }
-        "401": { $ref: "#/components/responses/Unauthorized" }
+        "400":
+          description: Correctly signed body is not valid JSON.
+        "401":
+          description: Missing, invalid, tampered, wrong-audience, stale, future or replayed signature.
+        "503":
+          description: Verification unavailable (discovery, trust or storage failure); no business effects.
         "500": { $ref: "#/components/responses/ServerError" }
 
   /api/webhook/settlement:
@@ -2778,10 +2830,18 @@ paths:
       operationId: settlementWebhook
       summary: .fair settlement snapshot webhook
       description: >
-        Stores the resolved .fair settlement on the order. Authenticated with the shared `WEBHOOK_SECRET` in
-        the `x-webhook-secret` header. The body may be bare or wrapped in a bus envelope (`{ payload }`).
+        Stores the resolved .fair settlement on the order. The kernel signs; events verifies through
+        published SDK 0.8.18 before parsing or business effects, with local IMAJIN_APP_DID audience,
+        public auth-service discovery, durable nonce evidence and persistent SDK public pins.
+        The body may be bare or wrapped in a bus envelope (`{ payload }`).
       security:
-        - webhookSecretHeader: []
+        - kernelSignature: []
+      parameters:
+        - $ref: "#/components/parameters/KernelAudience"
+        - $ref: "#/components/parameters/KernelTimestamp"
+        - $ref: "#/components/parameters/KernelNonce"
+        - $ref: "#/components/parameters/KernelKid"
+        - $ref: "#/components/parameters/KernelSignature"
       requestBody:
         required: true
         content:
@@ -2802,13 +2862,17 @@ paths:
                 payload: { type: object, description: Bus-envelope form; the settlement fields live here }
       responses:
         "200":
-          description: Snapshot saved
+          description: Snapshot saved after successful kernel-signature verification.
           content:
             application/json:
               schema:
                 type: object
                 properties:
                   received: { type: boolean }
-        "400": { $ref: "#/components/responses/BadRequest" }
-        "401": { $ref: "#/components/responses/Unauthorized" }
+        "400":
+          description: Correctly signed invalid JSON or invalid settlement input.
+        "401":
+          description: Missing, invalid, tampered, wrong-audience, stale, future or replayed signature.
+        "503":
+          description: Verification unavailable (discovery, trust or storage failure); no business effects.
         "500": { $ref: "#/components/responses/ServerError" }

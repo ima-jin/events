@@ -37,6 +37,8 @@ bash scripts/deploy.sh prod <tag-or-sha>
 
 Default ref is `origin/main`; the script fetches and checks out the ref detached, never pulls
 over local changes. Required tools: Node 22+ (see `.nvmrc`), pnpm 9.15.0, git, pm2, curl.
+Kernel-signed callbacks additionally require trusted util-linux `/usr/bin/flock` and persistent
+writable storage shared by all local workers (see below).
 Only one deploy per checkout at a time. The script verifies the canonical standalone cwd and
 refuses a same-named pm2 entry with a different cwd or executable. It prints no env values.
 
@@ -95,6 +97,7 @@ See [REGISTRATION.md](./REGISTRATION.md).
   `reissueClaim: true`, not hand-made replacement keys.
 - The operator must approve `pay:settle`, `pay:refund` and `pay:charge-pledges` for events'
   app DID via the `apps:service-scopes` approval card.
+  Organizer messages additionally require `notify:broadcast` on that same app DID.
   User app tokens use audience **`events`**, with `events:read` / `events:write`;
   they do not use the kernel hostname as audience. The session-cookie fallback remains
   a migration path, not a substitute for scoped-token verification.
@@ -120,12 +123,7 @@ before adoption (retain/restore with the database operator; never force a mismat
 App self-secrets are kernel-issued and sealed from `imajin.app.json`; provision/claim,
 or use **Sync manifest secrets** on `/jin` and countersign for an existing registration.
 Never generate, reveal, copy or populate app self-secrets in an env file.
-The separate webhook credential transition is tracked in events#38.
-The pay service's corresponding `EVENTS_WEBHOOK_SECRET`
-must match `WEBHOOK_SECRET`; its callback is
-`https://<environment-kernel-host>/events/api/webhook/payment`, authenticated by
-`Authorization: Bearer` (not a body secret or `x-webhook-secret`). These are secrets, **not**
-app signing keys. Do not log webhook headers.
+The kernel signs callbacks; events verifies public keys, with no shared callback credential.
 
 Before changing pm2:
 
@@ -195,3 +193,40 @@ then `pm2 save`. Restore data only through the operator's reviewed database back
 Baseline mismatch: stop and review catalog differences; nothing was adopted. Invalid identity:
 review DID/claim/keystore names privately; ask Ryan for reissue if needed. Payment failure:
 confirm the registered service scope and webhook configuration, never add an internal key.
+
+## Kernel-signed callbacks
+
+Deploy a kernel with signed app callbacks (imajin-ai#2800 / #2798) **before** this receiver.
+The kernel operator completes the approved vault/tool setup for its signer and re-syncs the
+registered events app and service scopes through `/jin`; no kernel key or internal credential
+is copied into events. Verify the callback registration for both `/events/api/webhook/payment`
+and `/events/api/webhook/settlement` on the target public origin and app DID.
+Complete dev verification before an approved prod rollout; these are operator steps, not CI actions.
+
+The app verifies exact body bytes before JSON parsing or business processing with
+`verifyKernelWebhook` from the published `@ima-jin/auth/kernel-webhook` **0.8.18**.
+The expected audience is trusted local `process.env.IMAJIN_APP_DID`, not an inbound header
+or the user-token audience slug. `authServiceUrl` comes from `serviceUrl('auth')`;
+public discovery uses `{authServiceUrl}/.well-known/kernel-signing-key` over HTTPS.
+The SDK pins public keys on first use; rotation requires overlap with existing trusted pins.
+Never delete pins to work around a trust failure.
+
+Preserve `data/kernel-webhook-pins/` (SDK public pins) and `data/kernel-webhook-nonces/`
+(app durable nonce store) beneath the process cwd across restarts, deploys and rollbacks.
+The nonce adapter atomically updates `data/kernel-webhook-nonces/nonces.json`, pruning expired
+entries on each consumption; its 100,000-entry capacity fails closed. The SDK/app creates its
+storage directories. Never remove a live journal or pin files to bypass replay or trust checks.
+The process user needs writable persistent local filesystem storage, shared by every local
+worker, and trusted Linux `/usr/bin/flock` from util-linux for atomic cross-process locking.
+Do not use ephemeral release-local data directories. No database schema change is needed.
+Before adding multi-host replicas, supply a shared-store adapter with atomic insert-if-absent,
+expiry and coordinated pin locking; independent host-local stores cannot reject cross-host replay.
+Use `configureEventsWebhookNonceStore` to inject that shared nonce adapter; public pins must also
+use the same trusted namespace with coordinated storage/locking.
+
+Signatures bind audience, timestamp, nonce, HTTP method, public path/query and exact body bytes.
+The inclusive freshness window is ±300 seconds and each nonce is accepted only once, including
+across local workers and restarts. Retries must be freshly signed with a new nonce. Caddy must
+preserve the `/events` prefix, query, body bytes and all five `x-kernel-*` headers.
+Signature/audience/freshness/replay failures return **401**; correctly signed invalid JSON
+returns **400**; discovery, trust or storage failure returns **503** without business side effects.
