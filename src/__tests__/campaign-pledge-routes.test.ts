@@ -23,7 +23,7 @@ import {
   resetCampaignMocks,
   signInAs,
 } from './support/campaign-route-support';
-import { insertMock, nextInsert, nextSelect, nextUpdate, selectMock, setValues, updatedTables, valuesMock } from './support/db-queue-support';
+import { insertMock, nextInsert, nextSelect, nextUpdate, selectMock, setValues, updatedTables, valuesMock, whereParams } from './support/db-queue-support';
 import { fetchMock, jsonResponse, payUrl, textResponse } from './support/kernel-mock-support';
 import { mockLog } from './support/route-test-support';
 import { pledges } from '@/db';
@@ -292,6 +292,61 @@ describe('POST /api/campaign/pledge', () => {
 });
 
 describe('server-verified pledge confirmation', () => {
+  it('queries only the authenticated buyer and verifies canonical row values, ignoring posted bindings', async () => {
+    nextSelect([boundPledge()]);
+    nextUpdate([boundPledge({ status: 'confirmed', stripePaymentMethodId: 'pm_new' })]);
+    verifiedPayment();
+    const res = await confirm({
+      pledgeId: 'plg_1', setupIntentId: 'seti_1', paymentMethodId: 'pm_new',
+      buyerDid: CREATOR_DID, sellerDid: BACKER_DID, amount: 1, customerId: 'cus_forged',
+    });
+    expect(res.status).toBe(200);
+    expect(whereParams(0)).toEqual(['plg_1', BACKER_DID]);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${payUrl}/api/setup-intent/verify`);
+    expect(init.headers).toMatchObject({ Authorization: 'Bearer app-token' });
+    expect(JSON.parse(init.body as string)).toEqual({
+      pledgeId: 'plg_1', eventId: EVENT_ID, buyerDid: BACKER_DID, sellerDid: CREATOR_DID,
+      amount: 5000, currency: 'CAD', setupIntentId: 'seti_1', customerId: 'cus_1',
+    });
+    expect(whereParams(1)).toEqual([
+      'plg_1', BACKER_DID, 'pending', 'seti_1', 'cus_1', 5000, 'CAD',
+      JSON.stringify({ sellerDid: CREATOR_DID, setupIntentContract: SETUP_INTENT_CONTRACT }),
+    ]);
+  });
+
+  it('rejects another buyer before any kernel request', async () => {
+    signInAs(CREATOR_DID);
+    nextSelect([]);
+    expect((await confirm()).status).toBe(404);
+    expect(whereParams(0)).toEqual(['plg_1', CREATOR_DID]);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(updatedTables()).toEqual([]);
+  });
+
+  it('rejects concurrent setup replacement without overwriting a confirmed pledge', async () => {
+    nextSelect([makeEvent()]);
+    nextSelect([boundPledge()]);
+    nextUpdate([]);
+    fetchMock.mockResolvedValue(jsonResponse(200, SETUP_INTENT));
+    const res = await pledge();
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ code: 'pledge_changed' });
+    expect(whereParams(2).slice(0, 6)).toEqual(['plg_1', BACKER_DID, 'pending', 5000, 'CAD', 'seti_1']);
+  });
+
+  it('fails closed when verification returns non-JSON', async () => {
+    nextSelect([boundPledge()]);
+    fetchMock.mockResolvedValue(textResponse(200, '<html>proxy</html>', 'OK'));
+    expect((await confirm()).status).toBe(503);
+    expect(updatedTables()).toEqual([]);
+  });
+
+  it.each([null, [], 123])('answers typed 400 for non-object JSON (%j)', async (body) => {
+    expect((await confirm(body)).status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(updatedTables()).toEqual([]);
+  });
   it.each([
     ['not succeeded', 409, 'setup_intent_not_succeeded'],
     ['forged intent', 404, 'setup_intent_resource_not_found'],
