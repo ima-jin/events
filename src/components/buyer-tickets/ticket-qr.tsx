@@ -36,7 +36,7 @@ export function TicketQr({ ticket }: Readonly<{ ticket: BuyerTicket }>) {
       <p className="text-sm text-orange-400">{LABELS[ticket.status] ?? ticket.status}</p>
       {ticket.usedAt && <p className="text-xs text-gray-400">Checked in {timeAgo(ticket.usedAt)}</p>}
       {pending && <p className="text-sm text-amber-400">Registration Required</p>}
-      {qr.loading && <p role="status">Loading QR code…</p>}
+      {qr.loading && <output>Loading QR code…</output>}
       {qr.error && (
         <div role="alert">
           <p>{qr.error}</p>

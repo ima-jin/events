@@ -18,8 +18,8 @@ export function useTicketRegistration(ticketId: string, onComplete: () => void) 
     try {
       await completeRegistration(ticketId, attempt.signal);
       if (!attempt.signal.aborted) onComplete();
-    } catch (failure) {
-      if (!attempt.signal.aborted) setError(errorMessage(failure));
+    } catch (error_) {
+      if (!attempt.signal.aborted) setError(errorMessage(error_));
     } finally {
       controller.current = null;
       if (!attempt.signal.aborted) setBusy(false);

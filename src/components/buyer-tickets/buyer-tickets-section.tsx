@@ -29,7 +29,7 @@ export function BuyerTicketsSection({
       </div>
       <section id="my-tickets" role="tabpanel" aria-labelledby="my-tickets-tab" hidden={!showTickets} className="space-y-6">
         <h2 className="text-2xl font-bold">My Tickets</h2>
-        {resource.loading && <p role="status">Loading your tickets…</p>}
+        {resource.loading && <output className="block">Loading your tickets…</output>}
         {resource.error && (
           <div role="alert">
             <p>Could not load your tickets: {resource.error}</p>

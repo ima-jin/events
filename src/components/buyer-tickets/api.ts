@@ -35,12 +35,14 @@ async function registrationAttempt(path: string, signal: AbortSignal, lastAttemp
   return false;
 }
 
+async function registerWithRetries(path: string, signal: AbortSignal, attempt: number): Promise<void> {
+  if (await registrationAttempt(path, signal, attempt === 3)) return;
+  await new Promise<void>((resolve) => setTimeout(resolve, 500 * 2 ** (attempt - 1)));
+  signal.throwIfAborted();
+  return registerWithRetries(path, signal, attempt + 1);
+}
+
 /** Survey persistence can race the completion message; preserve the kernel's bounded retries. */
-export async function completeRegistration(ticketId: string, signal: AbortSignal): Promise<void> {
-  const path = withBasePath(`/api/register/${encodeURIComponent(ticketId)}`);
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    if (await registrationAttempt(path, signal, attempt === 3)) return;
-    await new Promise<void>((resolve) => setTimeout(resolve, 500 * 2 ** (attempt - 1)));
-    signal.throwIfAborted();
-  }
+export function completeRegistration(ticketId: string, signal: AbortSignal): Promise<void> {
+  return registerWithRetries(withBasePath(`/api/register/${encodeURIComponent(ticketId)}`), signal, 1);
 }
