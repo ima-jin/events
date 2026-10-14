@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, isNull, type SQL } from 'drizzle-orm';
 import { db, events, ticketTypes } from '@/db';
 
 export type EventRow = typeof events.$inferSelect;
@@ -76,6 +76,16 @@ export async function insertEvent(values: NewEventRow): Promise<EventRow> {
 export async function updateEventById(eventId: string, updates: Partial<NewEventRow>): Promise<EventRow | undefined> {
   const [row] = await db.update(events).set(updates).where(eq(events.id, eventId)).returning();
   return row;
+}
+
+/** Attach once: concurrent initializers use the winning pod without replacing it. */
+export async function attachEventPodIfMissing(eventId: string, podId: string): Promise<EventRow | null> {
+  const [row] = await db
+    .update(events)
+    .set({ podId })
+    .where(and(eq(events.id, eventId), isNull(events.podId)))
+    .returning();
+  return row ?? await getEventById(eventId);
 }
 
 /** All ticket types of an event. */

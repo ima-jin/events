@@ -892,10 +892,11 @@ paths:
     get:
       tags: [events]
       operationId: listCohosts
-      summary: List the event's cohosts
-      description: Public. Membership is read from the kernel pod API using the caller's cookie; an unreachable kernel yields an empty list.
-      x-public: true
-      security: []
+      summary: List the event's cohosts (creator or cohost)
+      description: Membership is read from the kernel pod API using the caller's cookie. Upstream failures preserve their status and error; profile resolution is best effort.
+      security:
+        - appToken: [events:read]
+        - cookieAuth: []
       responses:
         "200":
           description: Cohosts, oldest first
@@ -907,12 +908,21 @@ paths:
                   cohosts:
                     type: array
                     items: { $ref: "#/components/schemas/Cohost" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/ServerError" }
+        "502":
+          description: Connections service unreachable or returned an invalid response
     post:
       tags: [events]
       operationId: addCohost
       summary: Add a cohost (event creator only)
+      description: >
+        Forwards the caller's cookie to connections. Resolves handles, rejects the creator,
+        and treats an existing active membership as success. Chat enrollment is best effort.
+        If the event has no pod, creates a private event pod through the public API and
+        attaches it atomically; verified-identity/trust-graph gate errors are preserved.
       security:
         - appToken: [events:write]
         - cookieAuth: []
@@ -940,6 +950,46 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/ServerError" }
+        "502":
+          description: Connections or profile service unreachable or invalid response
+    delete:
+      tags: [events]
+      operationId: removeCohost
+      summary: Remove a cohost (event creator only)
+      description: >
+        Rejects self/creator removal and targets that are not active cohosts.
+        Calls the documented connections DELETE /api/pods/{id}/members with JSON {did},
+        forwarding the caller's cookie. Connections errors preserve their status and message.
+      security:
+        - appToken: [events:write]
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [did]
+              properties:
+                did: { type: string, description: DID of an active cohost }
+      responses:
+        "200":
+          description: Cohost removed
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [removed]
+                properties:
+                  removed: { type: boolean, const: true }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+        "502":
+          description: Connections service unreachable or returned an invalid response
+
 
   /api/events/{id}/fair:
     parameters:
