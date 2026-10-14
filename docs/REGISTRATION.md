@@ -24,6 +24,8 @@ Privately populate the standalone checkout's `0600` `.env.local`:
 Never print or paste approval-card credentials, key material or `.env.local` into logs,
 issues or command history. **`IMAJIN_APP_PRIVATE_KEY` must never be set.**
 
+<a id="4-fetch-this-apps-own-signing-key-at-boot-7"></a>
+
 ## Claim — normal boot through the published SDK
 
 `instrumentation.ts` refuses a missing DID or raw-key env, then calls

@@ -123,7 +123,8 @@ repair, no migration SQL rewrite, no force flag.
 
 ## One-time cutover — deferred to #2529 / #2516
 
-The kernel deploy configs currently still declare monorepo events entries. Their ownership
+The kernel deploy configs currently still declare monorepo events entries
+([gap(kernel) #2784](https://github.com/ima-jin/imajin-ai/issues/2784), Refs #2518). Their ownership
 must be removed/reconciled by the kernel cutover work **before** a standalone entry is started,
 otherwise a subsequent kernel deploy can re-point it. This PR makes no kernel changes.
 
