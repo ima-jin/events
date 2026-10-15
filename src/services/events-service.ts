@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { generateEventKeypair } from '@/lib/event-keypair.mjs';
 import { createLogger } from '@ima-jin/logger';
 import { getForestScopeConfig, getNodeSelf } from '@ima-jin/config';
 import { buildFairManifest } from '@ima-jin/fair';
@@ -106,13 +107,6 @@ async function loadEd25519() {
   return ed;
 }
 
-/** Generate the event's Ed25519 ticket-signing keypair (hex encoded). */
-async function generateEventKeypair(): Promise<EventKeypair> {
-  const ed = await loadEd25519();
-  const privateKey = ed.utils.randomSecretKey();
-  const publicKey = await ed.getPublicKey(privateKey);
-  return { privateKey: bytesToHex(privateKey), publicKey: bytesToHex(publicKey) };
-}
 
 /** Register the event's DID with the auth service, signing the payload the same way /api/register verifies it. */
 async function registerEventDid(title: string, keypair: EventKeypair): Promise<string> {
