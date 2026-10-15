@@ -1,5 +1,5 @@
 import { chmod, mkdtemp, readFile, stat, symlink, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { getTableColumns, is } from 'drizzle-orm';
 import { getTableConfig, PgTable } from 'drizzle-orm/pg-core';
@@ -9,7 +9,7 @@ import { generateEventKeypair } from '../../src/lib/event-keypair.mjs';
 import { createScrubber, isPublicEvent, POLICY, TABLES } from '../soak/policy.mjs';
 import {
   argumentsFor, assertDirectory, assertTarget, catalog, didMapping, endpoint,
-  environment, privateRead, runCli, transaction,
+  environment, operatorPath, privateRead, runCli, transaction,
 } from '../soak/common.mjs';
 import { exportData } from '../soak/export-prod-shaped.mjs';
 import { loadData, validateManifest, visitRows } from '../soak/load-dev.mjs';
@@ -127,7 +127,7 @@ function database(data: Rows = fixtureData(), source = true) {
 }
 
 async function exported() {
-  const directory = join(await mkdtemp(join(tmpdir(), 'events-soak-test-')), 'artifact');
+  const directory = join(await mkdtemp(join(homedir(), 'events-soak-test-')), 'artifact');
   const source = database();
   const output = logger();
   const manifest = await exportData(source, { directory, sourceUrl }, output);
@@ -232,7 +232,7 @@ describe('read-only source and guarded loader round trip', () => {
   it('refuses a source without enforced read-only and does not issue row SELECTs', async () => {
     const source = database();
     source.readOnly = 'off';
-    const directory = join(await mkdtemp(join(tmpdir(), 'soak-ro-')), 'out');
+    const directory = join(await mkdtemp(join(homedir(), 'soak-ro-')), 'out');
     await expect(exportData(source, { directory, sourceUrl }, logger())).rejects.toThrow('not read-only');
     expect(source.unsafe.mock.calls.map(([text]) => text)).toEqual([
       'BEGIN TRANSACTION READ ONLY ISOLATION LEVEL REPEATABLE READ',
@@ -326,7 +326,7 @@ describe('configuration, manifest and artifact refusal paths', () => {
     }
   });
   it('reads only 0600 regular env/map files, not inherited env; rejects symlinks and DID collisions', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'soak-env-'));
+    const dir = await mkdtemp(join(homedir(), 'soak-env-'));
     const file = join(dir, 'env');
     await writeFile(file, 'DATABASE_URL=postgres://fixture@dev.invalid/imajin_dev\nAPP_DB_SCHEMA=events\nIMAJIN_ENV=dev', { mode: 0o600 });
     expect(await environment(file)).toEqual({ ...env, DATABASE_URL: 'postgres://fixture@dev.invalid/imajin_dev' });
@@ -347,6 +347,13 @@ describe('configuration, manifest and artifact refusal paths', () => {
     await writeFile(file, 'APP_DB_SCHEMA=events');
     await expect(environment(file)).rejects.toThrow('DATABASE_URL');
     await expect(assertDirectory(link)).rejects.toThrow('0700');
+  });
+  it('refuses traversal and symlink-parent escapes outside the operator home', async () => {
+    await expect(operatorPath('/etc/passwd')).rejects.toThrow('home directory');
+    const dir = await mkdtemp(join(homedir(), 'soak-path-'));
+    const link = join(dir, 'escape');
+    await symlink('/tmp', link);
+    await expect(operatorPath(join(link, 'artifact'))).rejects.toThrow('escapes');
   });
   it('rejects invalid manifests, missing/extra columns, checksum/count changes and public artifact modes before writes', async () => {
     const { directory, manifest } = await exported();

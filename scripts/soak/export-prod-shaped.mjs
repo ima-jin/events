@@ -2,7 +2,7 @@ import { mkdir, open } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import {
-  argumentsFor, artifactColumns, catalog, connectFile, didMapping, endpoint, quote,
+  argumentsFor, artifactColumns, catalog, connectFile, didMapping, endpoint, operatorPath, quote,
   runCli, serverIdentity, tableSql, transaction,
 } from './common.mjs';
 import { createScrubber, isPublicEvent, SCRUB_VERSION, TABLES } from './policy.mjs';
@@ -23,7 +23,7 @@ async function writeTable(sql, table, directory, scrub) {
   try {
     // Cursor batches bound raw data in memory. Scrub before writing a single byte.
     for await (const rows of sql.unsafe(selection(table)).cursor(100)) {
-      for (const row of rows) {
+      for await (const row of rows) {
         const visible = table === 'events' ? isPublicEvent(row) : row.__visible === true;
         const line = `${JSON.stringify(scrub(table, row, visible))}\n`;
         checksum.update(line);
@@ -39,13 +39,14 @@ async function writeTable(sql, table, directory, scrub) {
 }
 
 export async function exportData(sql, { directory, sourceUrl, mapping = Object.create(null) }, output = console) {
+  directory = await operatorPath(directory);
   await mkdir(directory, { mode: 0o700 }); // Refuse existing directories, including symlinks.
   const scrub = createScrubber(mapping);
   const manifest = await transaction(sql, true, async (tx) => {
     const schemaFingerprint = await catalog(tx);
     const sourceServer = await serverIdentity(tx);
     const tables = {};
-    for (const table of TABLES) {
+    for await (const table of TABLES) {
       tables[table] = await writeTable(tx, table, directory, scrub);
       output.log(`${table}: ${tables[table].count} rows scrubbed`);
     }

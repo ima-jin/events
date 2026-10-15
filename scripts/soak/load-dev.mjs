@@ -7,12 +7,12 @@ import postgres from 'postgres';
 import { generateEventKeypair } from '../../src/lib/event-keypair.mjs';
 import {
   argumentsFor, artifactColumns, assertDirectory, assertTarget, catalog, environment,
-  quote, readManifest, refuse, runCli, serverIdentity, tableList, tableSql, transaction,
+  operatorPath, quote, readManifest, refuse, runCli, serverIdentity, tableList, tableSql, transaction,
 } from './common.mjs';
 import { POLICY, SCRUB_VERSION, TABLES } from './policy.mjs';
 
 export function validateManifest(manifest) {
-  refuse(!manifest || manifest.formatVersion !== 1 || manifest.scrubMapVersion !== SCRUB_VERSION
+  refuse(manifest?.formatVersion !== 1 || manifest.scrubMapVersion !== SCRUB_VERSION
     || manifest.schema !== 'events', 'Unsupported manifest format, scrub version or schema.');
   for (const field of ['schemaFingerprint', 'sourceEndpoint', 'sourceServer']) {
     refuse(!/^[a-f0-9]{64}$/.test(manifest[field] || ''), 'Invalid manifest fingerprint.');
@@ -27,6 +27,7 @@ export function validateManifest(manifest) {
 }
 
 export async function visitRows(directory, table, expected, visit = async () => {}) {
+  directory = await operatorPath(directory);
   const file = await open(join(directory, `${table}.jsonl`), constants.O_RDONLY | constants.O_NOFOLLOW);
   const checksum = createHash('sha256');
   let count = 0;
@@ -67,7 +68,7 @@ async function snapshot(sql, backup) {
     await tx.unsafe(`LOCK TABLE ${tableList()} IN ACCESS EXCLUSIVE MODE`);
     await tx.unsafe(`CREATE SCHEMA ${quote(backup)}`);
     await tx.unsafe(`REVOKE ALL ON SCHEMA ${quote(backup)} FROM PUBLIC`);
-    for (const table of TABLES) {
+    for await (const table of TABLES) {
       await tx.unsafe(`CREATE TABLE ${tableSql(table, backup)} AS TABLE ${tableSql(table)}`);
       await tx.unsafe(`REVOKE ALL ON TABLE ${tableSql(table, backup)} FROM PUBLIC`);
     }
@@ -89,7 +90,7 @@ export async function loadData(sql, { directory, env, manifest, commit = false }
   validateManifest(manifest);
   assertTarget(env, manifest);
   await assertDirectory(directory);
-  for (const table of TABLES) await visitRows(directory, table, manifest.tables[table]);
+  for await (const table of TABLES) await visitRows(directory, table, manifest.tables[table]);
   await transaction(sql, true, (tx) => validateTarget(tx, env, manifest));
   for (const table of TABLES) output.log(`${table}: ${manifest.tables[table].count} rows planned`);
   if (!commit) {
@@ -107,7 +108,7 @@ export async function loadData(sql, { directory, env, manifest, commit = false }
       await tx.unsafe(`LOCK TABLE ${tableList()} IN ACCESS EXCLUSIVE MODE`);
       await validateTarget(tx, env, manifest); // Recheck catalog under exclusive locks.
       await tx.unsafe(`TRUNCATE TABLE ${tableList()} RESTART IDENTITY`);
-      for (const table of TABLES) {
+      for await (const table of TABLES) {
         // Revalidate bytes on the loading pass; any mutation rolls the entire load back.
         await visitRows(directory, table, manifest.tables[table], (row) => insertRow(tx, table, row));
       }

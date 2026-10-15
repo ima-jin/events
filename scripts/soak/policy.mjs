@@ -94,7 +94,7 @@ export function createScrubber(didMap = {}) {
   const salt = randomBytes(32); // Per-export, memory-only; never persisted or returned.
   const digest = (value) => createHmac('sha256', salt).update(String(value)).digest('hex');
   const rules = {
-    'scrub:did': (value) => didMap[value] ?? `did:imajin:scrubbed-${digest(value)}`,
+    'scrub:did': (value) => Object.hasOwn(didMap, value) ? didMap[value] : `did:imajin:scrubbed-${digest(value)}`,
     'scrub:email': (value) => `scrubbed+${digest(value)}@example.invalid`,
     'scrub:id': (value) => `scrubbed_${digest(value)}`,
     'scrub:text': neutralText,

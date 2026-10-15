@@ -9,6 +9,8 @@ to production or inspect real environment files. See [DEPLOY.md](./DEPLOY.md) fo
 
 Run on the server as **`jin`**, from `/home/jin/dev/events`, using **Node 22** and
 **pnpm 9.15.0**, with this reviewed loader revision and its frozen-lockfile dependencies.
+All operator input/output paths must remain beneath that user's home directory; canonical
+parent checks reject traversal and symlink-parent escapes. Leaf inputs cannot be symlinks.
 The exporter accesses only the app's eight `events` tables, in a read-only repeatable-read
 transaction; it never queries kernel/other-app schemas. Schedule production reads with Ryan
 so the export's load and snapshot lifetime are acceptable; do not stop or interrupt production.

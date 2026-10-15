@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
-import { lstat, open } from 'node:fs/promises';
+import { lstat, open, realpath } from 'node:fs/promises';
 import { constants } from 'node:fs';
+import { homedir } from 'node:os';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 import { parseArgs, parseEnv } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import postgres from 'postgres';
@@ -15,9 +17,22 @@ export const quote = (identifier) => `"${identifier.replaceAll('"', '""')}"`;
 export const tableSql = (table, schema = 'events') => `${quote(schema)}.${quote(table)}`;
 export const tableList = () => [...TABLES].reverse().map((table) => tableSql(table)).join(', ');
 export const artifactColumns = (table) => Object.keys(POLICY[table]).filter((name) => POLICY[table][name] !== 'regenerate');
+/** Operator inputs stay beneath jin's home; canonicalize parents to reject symlink escapes. */
+export async function operatorPath(path) {
+  const root = await realpath(homedir());
+  const candidate = resolve(root, path);
+  if (!candidate.startsWith(`${root}${sep}`)) throw new Refusal('Operator paths must stay beneath the operator home directory.');
+  const parent = await realpath(dirname(candidate));
+  const result = join(parent, basename(candidate));
+  if (!result.startsWith(`${root}${sep}`)) throw new Refusal('Operator path parent escapes the home directory.');
+  return result;
+}
 
 export async function privateRead(path) {
-  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  const checked = await operatorPath(path);
+  const root = await realpath(homedir());
+  if (!checked.startsWith(`${root}${sep}`)) throw new Refusal('Input path escapes the home directory.');
+  const file = await open(checked, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     const stat = await file.stat();
     refuse(!stat.isFile() || (stat.mode & 0o777) !== 0o600, 'Input files must be regular files with mode 0600.');
@@ -28,7 +43,10 @@ export async function privateRead(path) {
 }
 
 export async function assertDirectory(path) {
-  const stat = await lstat(path);
+  const checked = await operatorPath(path);
+  const root = await realpath(homedir());
+  if (!checked.startsWith(`${root}${sep}`)) throw new Refusal('Artifact path escapes the home directory.');
+  const stat = await lstat(checked);
   refuse(!stat.isDirectory() || (stat.mode & 0o777) !== 0o700, 'Artifact directory must have mode 0700 and not be a symlink.');
 }
 
@@ -95,7 +113,7 @@ export async function catalog(sql) {
     ORDER BY table_name, ordinal_position`);
   for (const table of TABLES) {
     const actual = columns.filter((column) => column.table_name === table);
-    const names = actual.map((column) => column.column_name).sort();
+    const names = actual.map((column) => column.column_name).sort((a, b) => a.localeCompare(b));
     refuse(JSON.stringify(names) !== JSON.stringify(Object.keys(POLICY[table]).sort()), 'Unclassified or missing schema columns.');
     refuse(actual.some((column) => column.is_identity !== 'NO'
       || column.is_generated !== 'NEVER' || /nextval\s*\(/i.test(column.column_default || '')),
