@@ -41,7 +41,7 @@ Identity minting and cutover remain operator steps (ima-jin/imajin-ai#2518, #252
 2. **Register this app with the kernel** — see [`docs/REGISTRATION.md`](./docs/REGISTRATION.md).
    You'll get back this app's `appDid` and registry `id`.
 3. **Set env**: `cp .env.example .env.local`, then fill in `IMAJIN_APP_DID`,
-   `NEXT_PUBLIC_IMAJIN_APP_ID`, `SESSION_SECRET`, `TICKET_QR_SECRET`, `APP_DB_SCHEMA`, `DATABASE_URL`, `IMAJIN_KERNEL_URL`,
+   `NEXT_PUBLIC_IMAJIN_APP_ID`, `APP_DB_SCHEMA`, `DATABASE_URL`, `IMAJIN_KERNEL_URL`,
    then boot unclaimed and paste the operator's one-time code only at `/events/claim`.
    No env edit or restart is needed to claim. This app refuses to start without `IMAJIN_APP_DID`
    set, or if a raw `IMAJIN_APP_PRIVATE_KEY` is present (see `instrumentation.ts`) — it fetches its
@@ -152,3 +152,8 @@ prefix instead of at `/`. `next.config.js` reads it for Next's own `basePath` (c
 Every Imajin app before the external integrators was first-party (same repo, same server, privileged access). Apps
 built from this template are the **external-integrator** test: if this app can do everything it needs through app-auth
 and the public API alone, the federated-app boundary is real.
+
+Self-secrets are declared in `imajin.app.json` and loaded from the vault at boot
+with the app's own keystore identity. Never populate them in env. For existing registrations,
+use **Sync manifest secrets** on `/jin` and countersign before restart.
+See [REGISTRATION.md](./docs/REGISTRATION.md) for provisioning and rotation.

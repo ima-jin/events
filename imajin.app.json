@@ -1,0 +1,6 @@
+{
+  "secrets": [
+    { "name": "SESSION_SECRET", "kind": "random-32B" },
+    { "name": "TICKET_QR_SECRET", "kind": "random-32B" }
+  ]
+}

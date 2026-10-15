@@ -18,6 +18,12 @@ the persisted process list still referenced the old checkouts.
 
 ## One command per environment
 
+**Upgrade order (each environment separately):** deploy a kernel that includes
+ima-jin/imajin-ai#2801, then select **Sync manifest secrets** on `/jin` and countersign
+events' `imajin.app.json` declarations **before upgrading this app**. Skipping that
+order makes a claimed app fail closed at boot with exit status 1. Fresh provision/claim
+issues and seals the declarations through the kernel. No deployment is performed by this PR.
+
 On the **ProLiant kernel host**, as its existing `jin` process-manager user, from the target
 standalone checkout:
 
@@ -111,8 +117,11 @@ to that schema. A shared database is acceptable with a schema-scoped role; no ac
 kernel/other-app tables is required. `APP_DB_SCHEMA=events` is fixed. Back up this schema
 before adoption (retain/restore with the database operator; never force a mismatched baseline).
 
-Privately populate `SESSION_SECRET` and `WEBHOOK_SECRET` with independently generated
-32-byte random values per environment. The pay service's corresponding `EVENTS_WEBHOOK_SECRET`
+App self-secrets are kernel-issued and sealed from `imajin.app.json`; provision/claim,
+or use **Sync manifest secrets** on `/jin` and countersign for an existing registration.
+Never generate, reveal, copy or populate app self-secrets in an env file.
+The separate webhook credential transition is tracked in events#38.
+The pay service's corresponding `EVENTS_WEBHOOK_SECRET`
 must match `WEBHOOK_SECRET`; its callback is
 `https://<environment-kernel-host>/events/api/webhook/payment`, authenticated by
 `Authorization: Bearer` (not a body secret or `x-webhook-secret`). These are secrets, **not**
@@ -128,6 +137,10 @@ This validates without recording history. A refusal is a hard stop; no destructi
 repair, no migration SQL rewrite, no force flag.
 
 ## One-time cutover — deferred to #2529 / #2516
+existing ticket QRs are invalidated at cutover; no reissue
+
+Per Ryan's 2026-10-14 ruling on ima-jin/imajin-ai#2516, the kernel vault issues a new
+ticket QR secret at cutover. Never copy the old secret or carry it over into the vault.
 
 The kernel deploy configs currently still declare monorepo events entries
 ([gap(kernel) #2784](https://github.com/ima-jin/imajin-ai/issues/2784), Refs #2518). Their ownership

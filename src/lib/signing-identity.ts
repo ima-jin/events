@@ -5,6 +5,7 @@ import {
   resolveKeystorePath,
   type AppSigningKey,
 } from '@ima-jin/auth-client';
+import { loadSelfSecrets } from './self-secrets';
 
 /**
  * This app's own vault signing key (#7, #2427, mirrors `ima-jin/imajin-ai`'s
@@ -79,12 +80,15 @@ function hasBootstrapKeystore(): boolean {
  * silently unsigned.
  */
 export async function bootstrapSigningIdentity(): Promise<void> {
+  writeSigningIdentity(null);
   if (!hasBootstrapKeystore()) {
     return;
   }
   // Suppress the SDK's legacy env fallback, even if the keystore disappears
   // between the precondition check and the SDK read. Only /claim may claim.
-  writeSigningIdentity(await loadAppSigningKey({ claimCode: '' }));
+  const identity = await loadAppSigningKey({ claimCode: '' });
+  await loadSelfSecrets(identity.appDid);
+  writeSigningIdentity(identity);
 }
 
 /** Returns the signing identity bootstrapped by `bootstrapSigningIdentity()` or `claimWithCode()`. */
@@ -153,6 +157,7 @@ export async function claimWithCode(params: ClaimWithCodeParams): Promise<AppSig
     throw new AppDidMismatchError(expectedAppDid, identity.appDid);
   }
 
+  await loadSelfSecrets(identity.appDid);
   writeSigningIdentity(identity);
   return identity;
 }

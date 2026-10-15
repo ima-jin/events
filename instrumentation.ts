@@ -1,4 +1,5 @@
 import { bootstrapSigningIdentity } from '@/lib/signing-identity';
+import { VaultSecretError, warnIgnoredSelfSecretEnv } from '@/lib/self-secrets';
 
 /**
  * Next.js instrumentation hook (stable since Next 15) — runs once when the
@@ -38,5 +39,14 @@ export async function register(): Promise<void> {
   }
 
   validateSigningKeyBootEnv();
-  await bootstrapSigningIdentity();
+  warnIgnoredSelfSecretEnv();
+  try {
+    await bootstrapSigningIdentity();
+  } catch (error) {
+    if (error instanceof VaultSecretError) {
+      console.error(error.message);
+      process.exit(1);
+    }
+    throw error;
+  }
 }

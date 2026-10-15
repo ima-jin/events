@@ -18,7 +18,8 @@ remove unused blank optional entries (some SDK fallbacks distinguish unset from 
 
 The port comes from pm2, **not** the env file. Both deployed instances run
 `NODE_ENV=production`; `IMAJIN_ENV` distinguishes dev cookies. Separate DID, claim,
-keystore, database credentials and random secrets per environment.
+keystore and database credentials per environment. App self-secrets are issued and sealed
+by the kernel, then loaded into memory; see [REGISTRATION.md](./REGISTRATION.md).
 Validate privately with `node scripts/check-env.mjs dev` (or `prod`).
 
 ## Required on every deployment
@@ -37,8 +38,6 @@ Validate privately with `node scripts/check-env.mjs dev` (or `prod`).
 | `NEXT_PUBLIC_BASE_PATH` | build + boot | Exactly `/events`; Caddy preserves it. |
 | `IMAJIN_APP_DID` | boot + runtime | Kernel-minted DID, distinct for dev/prod; no placeholder. |
 | `IMAJIN_APP_KEYSTORE` | boot | Absolute target path above, persistent `0600` bootstrap file, parent `0700`. Not an app signing-key file. |
-| `SESSION_SECRET` | runtime | 32 random bytes encoded as 64 hex chars, unique to environment; app session signing. |
-| `TICKET_QR_SECRET` | runtime | Independent 32 random bytes encoded as 64 hex chars; HMAC for ticket QR tokens, never a kernel signing key. Rotation invalidates issued QRs; see [TICKET-QR.md](./TICKET-QR.md). |
 | `WEBHOOK_SECRET` | runtime | Same size; target pay service's `EVENTS_WEBHOOK_SECRET`; Bearer authorization for payment/settlement webhooks. |
 
 `NEXT_PUBLIC_*` values and Next basePath are baked into the build; changing them requires
@@ -106,4 +105,4 @@ this events release and remove the retired shared pay credential from the enviro
 
 `.env.example` lists supported app and published SDK configuration, including dynamic
 service overrides and forbidden/managed names. Tests check that the inventory stays complete
-and every template assignment stays blank. Runtime credentials stay only on the operator's host.
+and every template assignment stays blank. Vault-loaded self-secrets stay only in process memory.

@@ -6,19 +6,23 @@ requires the route's exact ticket ID, and rejects expiry at or before the curren
 Tokens are bearer credentials: do not log, share publicly or cache them.
 
 ## Deployment and migration
-Provision a dedicated app-held `TICKET_QR_SECRET` independently for each environment:
-at least 32 random bytes encoded as 64 hex characters. Keep it in the private
-`.env.local`, not a public variable, kernel private key, or repository file.
-`scripts/check-env.mjs` requires it and QR issuance fails closed without it.
-All app instances serving the same environment must use the same secret.
+The registered-app manifest declares the QR HMAC recipe. The kernel issues and seals it
+on provision/claim; the published app-keystore vault loader fetches it only into memory
+before events becomes ready. For an existing registration, use **Sync manifest secrets**
+on `/jin` and countersign, then restart. No env credential or env fallback exists.
+QR issuance fails closed before vault loading completes. All instances using the same
+app DID fetch that app's current generation.
 
-**Old raw-ID QRs are rejected, with no organizer override.** Before deployment,
-notify organizers and holders: holders sign in and load their ticket QR again,
-or organizers resend ticket emails (the existing resend cooldown still applies).
-All email issuance paths now use the same signed format. Updating the check-in
-client to submit the scanned token is required in the same deployment window.
+**Old raw-ID QRs are rejected, with no organizer override.** All email issuance
+paths use the same signed format; the check-in client submits the scanned token.
 There is no database migration. Rotating the secret invalidates all existing
-tokens; reissue QRs through the same holder/email paths after rotation.
+tokens after restart.
+Use **Rotate** on `/jin`, countersign, then restart through the operator's deployment tool;
+no file edit, credential reveal or copying step is needed.
+At cutover the kernel vault issues a new ticket QR secret. Existing ticket QRs
+are invalidated; no reissue or carry-over is performed. Never copy the old secret.
+This follows Ryan's 2026-10-14 ruling on ima-jin/imajin-ai#2516: events is pre-1.0,
+and production has zero upcoming events and zero tickets for those events.
 
 Default emailed/API tokens have no expiry, to support saved and printed tickets.
 The signing helper accepts an optional expiry for bounded-lifetime issuance.
