@@ -40,7 +40,7 @@ export async function runFlows(config, auth, { fetcher = fetch, output = console
   }
   function browser(name, url, instruction) {
     // Only validated Stripe checkout URLs or locally constructed public URLs reach operator output.
-    const safeUrl = url.replaceAll(/[\r\n\t]/g, '');
+    const safeUrl = url.replaceAll(/[\u0000-\u001f\u007f]/g, '');
     output.log(`${name}: ${safeUrl}\n${instruction}`);
   }
   async function render(name, path, role) {
@@ -86,17 +86,21 @@ export async function runFlows(config, auth, { fetcher = fetch, output = console
     return rows;
   }
 
-  const created = await step('Create event', () => request('api/events', {
-    method: 'POST', role: 'organizer', body: {
-      title: 'Cutover soak fixture', description: 'Disposable dev soak fixture',
-      startsAt: new Date(Date.now() + 7 * 86_400_000).toISOString(), chatEnabled: false,
-      tickets: [
-        { name: 'RSVP', price: 0, currency: 'CAD', quantity: 20 },
-        { name: 'Standard', price: 100, currency: 'CAD', quantity: 20 },
-        { name: 'Supporter', price: 200, currency: 'CAD', quantity: 20 },
-      ],
-    },
-  }));
+  const created = await step('Create event', async () => {
+    const data = await request('api/events', {
+      method: 'POST', role: 'organizer', body: {
+        title: 'Cutover soak fixture', description: 'Disposable dev soak fixture',
+        startsAt: new Date(Date.now() + 7 * 86_400_000).toISOString(), chatEnabled: false,
+        tickets: [
+          { name: 'RSVP', price: 0, currency: 'CAD', quantity: 20 },
+          { name: 'Standard', price: 100, currency: 'CAD', quantity: 20 },
+          { name: 'Supporter', price: 200, currency: 'CAD', quantity: 20 },
+        ],
+      },
+    });
+    requireValue(data.event?.id && data.ticketTypes?.length === 3);
+    return data;
+  });
   state.eventId = created?.event?.id;
   state.types = created?.ticketTypes;
   if (!state.eventId) {

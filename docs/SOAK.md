@@ -145,6 +145,118 @@ Never copy the old secret or carry it over into the vault. The expected dev flow
 old genuine signed ticket token returning **400** with
 `Invalid or expired ticket QR token`, not a 500 or successful admission. A newly issued
 ticket's scanned token must check in successfully. Keep both results in #2529 evidence.
+## Record, rollback, rehearse
+
+Run as the host's existing process-manager user from canonical `~/dev/events`
+or `~/prod/events`. Node 22+, git, pnpm, pm2 and curl are required. A per-environment
+private lock prevents overlapping rollback operations; also prevent concurrent deploys.
+Never share `pm2 jlist`, `pm2 env` or pm2 dumps. The helper privately captures stdout/stderr
+and never forwards raw subprocess/database errors. No tracing is enabled.
+
+### Before cutover: prepare and record
+
+1. Keep the kernel copy `~/<env>/imajin-ai/apps/events` and its dependencies and
+   `.next/BUILD_ID` available. Kernel config #2804 released dev-events ownership;
+   that is not a guarantee the historical app remains buildable. If missing,
+   stop: the kernel operator must first restore a compatible checkout/build using
+   the approved kernel build procedure (`pnpm --filter @imajin/events build` from
+   `~/<env>/imajin-ai`), preserving that environment's private configuration.
+   This script never builds/edits the kernel.
+2. Complete approved standalone baseline adoption **before recording**, using the
+   target's existing events-only database role and reviewed [migration procedure](./MIGRATIONS.md).
+   Dry-run first; if adoption is needed, use `node --env-file=.env.local
+   scripts/migrate-baseline.mjs` from the standalone checkout in the authorized window.
+   The tracker is `events.__drizzle_migrations`. Recording before adoption makes its
+   new baseline hash a post-record migration unknown to the kernel, and rollback refuses.
+   There is deliberately **no baseline exception and no force bypass**.
+3. Select the clean standalone checkout SHA intended for cutover/return. Record while
+   the current pm2 events entry still points at the **kernel** app:
+
+```bash
+bash scripts/soak/rollback.sh dev record
+# Separately, only in Ryan's approved prod cutover window:
+bash scripts/soak/rollback.sh prod record
+```
+
+The record is `~/.imajin/events-rollback-<env>-<UTC timestamp>.json` (0600; parent
+private 0700). It contains target/time, standalone HEAD, only migration names/hashes,
+and only these pm2 fields: name, canonical cwd, executable, listener args,
+allowlisted node args, env-file **path** and port. No env values or other process
+definitions are saved. Unknown arguments/duplicate processes/noncanonical paths refuse.
+
+`record` will not snapshot standalone as the rollback destination. Preserve this
+pre-cutover record; latest validly named record for the selected environment is used.
+Do not hand-edit it, overwrite it after cutover, or reuse another environment's record.
+The script does not back up data: keep the operator's reviewed backup independently.
+
+### Roll back to the saved kernel copy
+
+```bash
+bash scripts/soak/rollback.sh dev rollback
+# Same command with prod only in an authorized rollback window.
+```
+
+Before deleting anything, the helper requires a private record, current compatible
+events process (or no events process after an interrupted transition), the saved kernel
+build/executable/env-file path, and a non-shrunken migration history. Any post-record
+hash must match SQL known to that kernel checkout's `migrations/*.sql`. It prints unknown
+safe hashes and refuses otherwise; migrations are never undone or silently approved.
+
+It deletes **only** `<env>-events`, starts the saved executable/cwd/args, runs `pm2 save`,
+polls loopback `/events/api/health`, then public health using the standalone env file's
+`NEXT_PUBLIC_EVENTS_URL` (fallback `NEXT_PUBLIC_APP_URL`). Health must be JSON
+`status: ok`, service `events` (historical copy) or `imajin-events` (standalone).
+Each endpoint allows 30 attempts, 5-second request timeout, 2-second retry delay.
+It never edits Caddy, env files, application rows or any other process.
+
+**Consequences remain:** tickets issued by standalone with its new QR secret will
+not verify on the old kernel copy. Do not copy secrets to repair this. Kernel-copy
+paid flows may fail closed if that copy has no claimed identity. Health alone does
+not prove paid flows or data compatibility; verify with the approved test account.
+Rollback uses the same events data, not a restore or a destructive migration.
+
+### Dev rehearsal and return to standalone
+
+```bash
+bash scripts/soak/rollback.sh dev rehearse
+```
+
+Prod rehearsal is always refused. Before cutover this performs record → rollback →
+roll forward; after cutover it **reuses the saved pre-cutover record**, never replaces
+it with a standalone definition. No prior record after cutover means refusal.
+Rehearsal preflights the clean standalone tree, tools, private env, saved SHA containing
+`scripts/deploy.sh`, kernel build and migration history before the first deletion.
+
+After verifying the kernel copy, it removes only events again (the deploy script
+correctly refuses a stale kernel cwd) and runs `bash scripts/deploy.sh dev <saved-SHA>`.
+That is the existing install/build/baseline/migrate/start/save path, not a new deployment
+implementation. The saved SHA must include the approved deploy tooling. Finally it
+checks pm2 is back at `~/dev/events`, then loopback and public health. A successful
+rehearsal **must leave dev on standalone**.
+
+If a rehearsal fails after process transition, it attempts the same recorded standalone
+recovery and still exits nonzero. If recovery also fails, stop the cutover, retain the
+record/data, inspect privately and use the approved saved-ref deployment/kernel restore
+procedure. Do not repeatedly deploy across unknown migrations. A killed process can
+leave `~/.imajin/events-rollback-<env>.lock`; inspect process state privately before
+removing a stale lock and retrying. An absent events process can be restored from
+the record, but an unknown or duplicate events definition refuses.
+
+### Timing and evidence
+
+Expect record/preflight in 1–10 seconds; pm2 delete/start/save in 2–15 seconds;
+healthy rollback in 5–30 seconds; full dev rehearsal in roughly **2–8 minutes**,
+dominated by install/build/migration/roll-forward. Health failure can take about
+208 seconds per endpoint (30 × 5 seconds + 29 × 2 seconds). Build timeout is 30 minutes.
+These are estimates, **not a claim of measured host rehearsal** or zero downtime.
+
+Rehearsal writes a private timestamped timing report under `~/.imajin/`, including
+step durations, status and recovery outcome, without pm2/env values. Attach only its
+safe timing summary to #2529, with actual UTC window, kernel/standalone refs and the
+post-rehearsal flow pass. A missing kernel build is an operator decision, not a reason
+to change the kernel in this PR:
+
+`DECISION · kernel events build · Which compatible kernel build can be retained for dev rehearsal? · options a restore/build approved historical app/b defer window/c abandon rollback target · rec: a — rehearse a real compatible target before approving cutover`
 
 ## Results template for #2529
 
