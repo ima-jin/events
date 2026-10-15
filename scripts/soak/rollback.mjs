@@ -11,13 +11,18 @@ import { fileURLToPath } from 'node:url';
 import { parseEnv } from 'node:util';
 import postgres from 'postgres';
 import { ENV_NAMES } from '../check-env.mjs';
+import { createReport, finishReport, timedCommand, timedPhase } from './rollback-report.mjs';
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const HASH = /^[a-f0-9]{64}$/;
 const REF = /^[a-f0-9]{40,64}$/;
 const TAG = /^[0-9]{4}_[a-zA-Z0-9_-]+$/;
 class Refusal extends Error {}
-const refuse = (message) => { throw new Refusal(message); };
+const refuse = (message, decision) => {
+  const error = new Refusal(message);
+  error.decision = decision;
+  throw error;
+};
 const privateFile = (file) => {
   const stat = lstatSync(file);
   if (!stat.isFile() || (stat.mode & 0o777) !== 0o600 || stat.uid !== process.getuid()) {
@@ -150,11 +155,16 @@ export function checkMigrations(record, hashes, known) {
   if (unknown.length > 0) refuse(`Post-record migrations unknown to kernel copy: ${unknown.join(', ')}. Refusing rollback; no force bypass.`);
 }
 
+function preflightKernelBuild(context) {
+  if (!existsSync(join(context.kernel, '.next/BUILD_ID'))) {
+    refuse(`DECISION #2804: Kernel events .next/BUILD_ID missing (#2804). Before retrying, the kernel operator must build apps/events from ~/${context.target}/imajin-ai with that environment's approved kernel build procedure (pnpm --filter @imajin/events build), preserving its env and secrets. Operator approval is required; nothing was changed.`, {
+      code: '#2804', status: 'operator-decision-required', prerequisite: 'approved-kernel-events-build',
+    });
+  }
+}
+
 function preflightRollback(context, record, hashes) {
   checkMigrations(record, hashes, migrationFiles(join(context.home, context.target, 'imajin-ai/migrations')));
-  if (!existsSync(join(context.kernel, '.next/BUILD_ID'))) {
-    refuse(`Kernel events .next/BUILD_ID missing (#2804). Before retrying, the kernel operator must build apps/events from ~/${context.target}/imajin-ai with that environment's approved kernel build procedure (pnpm --filter @imajin/events build), preserving its env and secrets. Nothing was changed.`);
-  }
   if (!existsSync(record.process.exec)) refuse('Saved kernel events executable missing; operator must restore dependencies before rollback.');
   privateFile(record.process.envFile);
 }
@@ -182,12 +192,21 @@ function probeHealth(run, url) {
   }
 }
 
-async function awaitHealthy(run, url, sleep) {
-  for (let attempt = 1; attempt <= 30; attempt++) {
-    if (probeHealth(run, url)) return true;
-    if (attempt < 30) await sleep(2_000);
-  }
-  return false;
+async function awaitHealthy(run, url, sleep, attempt = 1) {
+  if (probeHealth(run, url)) return true;
+  if (attempt >= 30) return false;
+  await sleep(2_000);
+  return awaitHealthy(run, url, sleep, attempt + 1);
+}
+
+async function checkEndpoints(endpoints, context, run, output, sleep, started) {
+  if (endpoints.length === 0) return;
+  const [[label, url], ...remaining] = endpoints;
+  await timedPhase(context.report, `${label} health`, async () => {
+    if (!await awaitHealthy(run, url, sleep)) refuse(`${label} events health failed after ${Date.now() - started}ms; stop and inspect privately.`);
+  });
+  output.log(`${label} events health ok; elapsed ${Date.now() - started}ms.`);
+  await checkEndpoints(remaining, context, run, output, sleep, started);
 }
 
 export async function health(context, run, output, sleep = (ms) => new Promise((done) => setTimeout(done, ms))) {
@@ -195,10 +214,7 @@ export async function health(context, run, output, sleep = (ms) => new Promise((
   const endpoints = [
     ['loopback', `http://127.0.0.1:${context.port}/events/api/health`], ['public', context.publicUrl],
   ];
-  for (const [label, url] of endpoints) {
-    if (!await awaitHealthy(run, url, sleep)) refuse(`${label} events health failed after ${Date.now() - started}ms; stop and inspect privately.`);
-    output.log(`${label} events health ok; elapsed ${Date.now() - started}ms.`);
-  }
+  await checkEndpoints(endpoints, context, run, output, sleep, started);
 }
 
 function startSaved(context, record, run) {
@@ -292,7 +308,7 @@ async function recoverStandalone(context, record, run, output, sleep) {
 
 async function transition(context, record, action, dependencies) {
   const { run, output, sleep } = dependencies;
-  output.log('Rollback consequences: existing ticket QRs remain invalid after cutover; no reissue. The new standalone app identity may fail under kernel code; do not copy secrets or replace identities.');
+  output.log('Rollback consequences: tickets issued with the standalone NEW QR secret will not verify on the kernel copy; no reissue. Existing pre-cutover ticket QRs may verify again on kernel. The new standalone app identity may fail under kernel code; paid flows fail closed if the kernel copy lacks the claimed identity. Do not copy secrets or replace identities.');
   const started = Date.now();
   try {
     removeEvents(context, run, 'Remove current events');
@@ -322,7 +338,10 @@ async function execute(context, action, dependencies) {
     run('bash', ['-c', 'command -v "$1" >/dev/null', '--', tool], { step: 'Rollback tool preflight' });
   }
   current(context, run); // Refuse unknown/duplicate processes before any mutation.
-  preflightRollback(context, record, await readTracking(context.env));
+  await timedPhase(context.report, 'rollback preflight', async () => {
+    preflightKernelBuild(context);
+    preflightRollback(context, record, await readTracking(context.env));
+  });
   if (action === 'rehearse') preflightForward(context, record, run);
   await transition(context, record, action, dependencies);
 }
@@ -337,6 +356,16 @@ function releaseLock(lock, output) {
   }
 }
 
+function persistReport(report, result, decision, output) {
+  try {
+    finishReport(report, result, decision);
+    if (report) output.log('Private rehearsal timing report saved (0600) under ~/.imajin.');
+    return result;
+  } catch {
+    output.error('Could not save private rehearsal timing report; inspect ~/.imajin permissions privately.');
+    return 1;
+  }
+}
 /**
  * Dependencies are injectable only in-process for sandboxed fixtures. The CLI
  * has no mock mode, env override, arbitrary command, record path, or force flag.
@@ -344,21 +373,28 @@ function releaseLock(lock, output) {
 export async function main(argv, dependencies = {}) {
   const output = dependencies.output ?? console;
   let lock;
+  let report;
+  let decision;
+  let result = 1;
   try {
     const { target, action } = invocation(argv);
     const context = createContext(target, dependencies);
+    if (action === 'rehearse') report = createReport(context.directory);
+    context.report = report;
     lock = acquireLock(context);
     await execute(context, action, {
-      run: dependencies.command ?? command, readTracking: dependencies.tracking ?? tracking,
+      run: timedCommand(dependencies.command ?? command, report), readTracking: dependencies.tracking ?? tracking,
       output, sleep: dependencies.sleep,
     });
-    return 0;
+    result = 0;
   } catch (error) {
+    if (error instanceof Refusal) decision = error.decision;
     output.error(error instanceof Refusal ? error.message : 'Rollback failed: private configuration, process, or database error. No subprocess output or credentials are printed.');
-    return 1;
   } finally {
+    result = persistReport(report, result, decision, output);
     releaseLock(lock, output);
   }
+  return result;
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

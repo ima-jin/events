@@ -85,11 +85,15 @@ function fixture(target = 'dev') {
     },
   });
   const recordFiles = () => existsSync(join(home, '.imajin'))
-    ? readdirSync(join(home, '.imajin')).filter((file) => file.endsWith('.json'))
+    ? readdirSync(join(home, '.imajin')).filter((file) => file.startsWith('events-rollback-') && file.endsWith('.json'))
+    : [];
+  const reportFiles = () => existsSync(join(home, '.imajin'))
+    ? readdirSync(join(home, '.imajin')).filter((file) => file.startsWith('events-rehearsal-') && file.endsWith('.json'))
     : [];
   return {
-    home, checkout, kernel, known, calls, logs, run, recordFiles,
+    home, checkout, kernel, known, calls, logs, run, recordFiles, reportFiles,
     record: () => readFileSync(join(home, '.imajin', recordFiles()[0]), 'utf8'),
+    report: () => readFileSync(join(home, '.imajin', reportFiles()[0]), 'utf8'),
     setHashes: (value: string[]) => { hashes = value; },
     setCwd: (value: string | undefined) => { cwd = value; },
     setFail: (value: string) => { fail = value; },
@@ -226,6 +230,9 @@ describe('rollback operator contract with sandboxed process fixtures', () => {
       expect(f.calls.indexOf(healthCalls[0])).toBeGreaterThan(f.calls.findIndex((call) => call.args[0] === 'save'));
       expect(f.logs.join('\n')).toContain('elapsed');
       expect(f.logs.join('\n')).toContain('new standalone app identity may fail');
+      expect(f.logs.join('\n')).toContain('standalone NEW QR secret will not verify on the kernel copy');
+      expect(f.logs.join('\n')).toContain('pre-cutover ticket QRs may verify again');
+      expect(f.logs.join('\n')).toContain('paid flows fail closed');
       expect(f.getCwd()).toBe(f.kernel);
     } finally { f.dispose(); }
   });
@@ -257,6 +264,54 @@ describe('rollback operator contract with sandboxed process fixtures', () => {
     } finally { f.dispose(); }
   });
 
+  it('writes a private safe rehearsal report with individually timed transition commands', async () => {
+    const f = fixture();
+    try {
+      expect(await f.run('rehearse')).toBe(0);
+      expect(f.reportFiles()).toHaveLength(1);
+      const file = f.reportFiles()[0];
+      expect(file).toMatch(/^events-rehearsal-dev-[0-9T_Z-]+\.json$/);
+      expect(statSync(join(f.home, '.imajin', file)).mode & 0o777).toBe(0o600);
+      const text = f.report();
+      const report = JSON.parse(text);
+      expect(report.status).toBe('pass');
+      expect(report.durationMs).toBeGreaterThanOrEqual(0);
+      expect(report.steps.map((step: { label: string }) => step.label)).toEqual(expect.arrayContaining([
+        'rollback preflight', 'Remove current events', 'Start saved kernel events definition',
+        'Persist events rollback', 'Remove events for roll-forward', 'Persist roll-forward boundary',
+        'Recorded standalone deployment', 'loopback health', 'public health',
+      ]));
+      for (const step of report.steps) {
+        expect(Object.keys(step)).toEqual(['label', 'status', 'durationMs']);
+        expect(step.durationMs).toBeGreaterThanOrEqual(0);
+        expect(step.status).toBe('pass');
+      }
+      for (const forbidden of [privateMarker, f.home, ref, 'DATABASE_URL', '.env.local', 'node_modules']) {
+        expect(text).not.toContain(forbidden);
+      }
+    } finally { f.dispose(); }
+  });
+
+  it('writes a failed #2804 DECISION report before querying removed kernel migrations', async () => {
+    const f = fixture();
+    try {
+      expect(await f.run('record')).toBe(0);
+      rmSync(join(f.kernel, '.next'), { recursive: true });
+      rmSync(join(f.home, 'dev/imajin-ai/migrations'), { recursive: true });
+      f.clear();
+      expect(await f.run('rehearse')).toBe(1);
+      expect(f.logs.join('\n')).toContain('DECISION #2804');
+      expect(mutations(f.calls)).toEqual([]);
+      const report = JSON.parse(f.report());
+      expect(report.status).toBe('fail');
+      expect(report.decision).toEqual({
+        code: '#2804', status: 'operator-decision-required', prerequisite: 'approved-kernel-events-build',
+      });
+      expect(report.steps).toContainEqual(expect.objectContaining({ label: 'rollback preflight', status: 'fail' }));
+      expect(f.report()).not.toContain(privateMarker);
+    } finally { f.dispose(); }
+  });
+
   it.each(['pm2 start', 'health'])('recovers standalone after rehearsal %s failure while returning failure', async (stage) => {
     const f = fixture();
     try {
@@ -269,6 +324,7 @@ describe('rollback operator contract with sandboxed process fixtures', () => {
       expect(f.getCwd()).toBe(f.checkout);
       expect(f.logs.join('\n')).toContain('Recorded standalone recovery succeeded');
       expect(f.logs.join('\n')).not.toContain(privateMarker);
+      expect(JSON.parse(f.report()).status).toBe('fail');
     } finally { f.dispose(); }
   });
 
