@@ -6,7 +6,7 @@ import { createInterface } from 'node:readline';
 import postgres from 'postgres';
 import { generateEventKeypair } from '../../src/lib/event-keypair.mjs';
 import {
-  argumentsFor, artifactColumns, assertDirectory, assertTarget, catalog, environment,
+  argumentsFor, artifactColumns, assertDirectory, assertTarget, catalog, connectionOptions, environment,
   operatorPath, quote, readManifest, refuse, runCli, serverIdentity, tableList, tableSql, transaction,
 } from './common.mjs';
 import { POLICY, SCRUB_VERSION, TABLES } from './policy.mjs';
@@ -58,8 +58,9 @@ export async function visitRows(directory, table, expected, visit = async () => 
 
 export async function validateTarget(sql, env, manifest) {
   assertTarget(env, manifest);
-  const identity = await serverIdentity(sql);
-  refuse(identity === manifest.sourceServer, 'Target resolves to the source server/database.');
+  const server = await serverIdentity(sql);
+  refuse(server.identity === manifest.sourceServer, 'Target resolves to the source server/database.');
+  refuse(server.database !== 'imajin_dev', 'Connected target database must be imajin_dev.');
   refuse(await catalog(sql) !== manifest.schemaFingerprint, 'Schema fingerprint mismatch; no force override.');
 }
 
@@ -127,7 +128,7 @@ export async function main(argv, output = console) {
   validateManifest(manifest);
   const env = await environment(args['target-env-file']);
   assertTarget(env, manifest); // Refuse unsafe targets before opening any connection.
-  const client = postgres(env.DATABASE_URL, { max: 1, onnotice: () => {}, debug: false });
+  const client = postgres(env.DATABASE_URL, connectionOptions(env.DATABASE_URL));
   const sql = await client.reserve();
   try {
     await loadData(sql, { directory: args.in, env, manifest, commit: args.commit }, output);

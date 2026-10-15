@@ -8,7 +8,7 @@ import * as schema from '../../src/db/schema';
 import { generateEventKeypair } from '../../src/lib/event-keypair.mjs';
 import { createScrubber, isPublicEvent, POLICY, TABLES } from '../soak/policy.mjs';
 import {
-  argumentsFor, assertDirectory, assertTarget, catalog, didMapping, endpoint,
+  argumentsFor, assertDirectory, assertTarget, catalog, connectionOptions, didMapping, endpoint,
   environment, operatorPath, privateRead, runCli, transaction,
 } from '../soak/common.mjs';
 import { exportData } from '../soak/export-prod-shaped.mjs';
@@ -68,12 +68,13 @@ function database(data: Rows = fixtureData(), source = true) {
   const backups: Rows[] = [];
   const client = {
     source, readOnly: 'on', drift: false, extraColumn: false, sequence: false, failInsert: '',
+    actualDatabase: source ? 'fixture_source' : 'imajin_dev', behavior: '',
     unsafe: vi.fn((text: string, params: string[] = []) => {
       const execute = async () => {
         if (text.startsWith('BEGIN')) before = structuredClone(state);
         if (text === 'ROLLBACK') state = before;
         if (text.includes("current_setting('transaction_read_only')")) return [{ read_only: client.readOnly }];
-        if (text.includes('current_database()')) return [{ database: source ? 'fixture_source' : 'imajin_dev', host: source ? '192.0.2.1' : '192.0.2.2', port: 5432 }];
+        if (text.includes('current_database()')) return [{ database: client.actualDatabase, host: source ? '192.0.2.1' : '192.0.2.2', port: 5432 }];
         if (text.includes('information_schema.columns')) {
           const result = structuredClone(columns);
           if (client.extraColumn) result.push({ ...result[0], column_name: 'unclassified_pii' });
@@ -82,6 +83,11 @@ function database(data: Rows = fixtureData(), source = true) {
           return result;
         }
         if (text.includes('pg_constraint') || text.includes('pg_indexes')) return [];
+        if (text.includes('pg_inherits')) return TABLES.map((table_name) => ({
+          table_name, relkind: 'r', relpersistence: 'p', relrowsecurity: false,
+          relforcerowsecurity: false, relispartition: false, inherited: false,
+          triggers: false, rules: false, ...(client.behavior ? { [client.behavior]: true } : {}),
+        }));
         if (text.startsWith('CREATE SCHEMA')) backups.push(structuredClone(state));
         if (text.startsWith('TRUNCATE')) {
           expect(text).not.toContain('CASCADE');
@@ -299,6 +305,18 @@ describe('read-only source and guarded loader round trip', () => {
     const { directory, manifest } = await exported();
     await expect(loadData(database(), { directory, env, manifest, commit: true }, logger())).rejects.toThrow('source server/database');
   });
+  it('refuses a connected database that differs from the checked URL before writes', async () => {
+    const { directory, manifest } = await exported();
+    const target = database(fixtureData(), false);
+    target.actualDatabase = 'fixture_wrong_database';
+    await expect(loadData(target, { directory, env, manifest, commit: true }, logger())).rejects.toThrow('Connected target');
+    expect(target.backups).toHaveLength(0);
+  });
+  it.each(['relrowsecurity', 'relforcerowsecurity', 'relispartition', 'inherited', 'triggers', 'rules'])('rejects unsupported table behavior %s before exporting data', async (behavior) => {
+    const source = database();
+    source.behavior = behavior;
+    await expect(catalog(source)).rejects.toThrow('Unsupported table behavior');
+  });
 });
 
 describe('configuration, manifest and artifact refusal paths', () => {
@@ -324,6 +342,17 @@ describe('configuration, manifest and artifact refusal paths', () => {
     for (const args of [[], ['--url', sourceUrl], ['--target-env-file', 'file', '--in', 'out', '--force']]) {
       expect(() => argumentsFor(args, false)).toThrow();
     }
+  });
+  it('pins all connection fields to the file URL, including empty-password and default port', () => {
+    const options = connectionOptions(env.DATABASE_URL);
+    expect(options.host).toEqual(['dev.invalid']);
+    expect(options.port).toEqual([5432]);
+    expect(options.username).toBe('fixture');
+    expect(options.database).toBe('imajin_dev');
+    expect(options.password()).toBe('');
+    expect(connectionOptions('postgres://fixture@[::1]/imajin_dev').host).toEqual(['::1']);
+    expect(connectionOptions('postgres://fixture@dev.invalid/imajin%5Fdev').database).toBe('imajin_dev');
+    expect(() => connectionOptions('postgres://dev.invalid/imajin_dev')).toThrow('role');
   });
   it('reads only 0600 regular env/map files, not inherited env; rejects symlinks and DID collisions', async () => {
     const dir = await mkdtemp(join(homedir(), 'soak-env-'));

@@ -88,7 +88,10 @@ tables export successfully and the read-only transaction commits. A partial dire
 its manifest is not usable; retry into another new private directory.
 
 Loading checks exact table/column coverage, versions, counts, checksums and the target schema
-fingerprint (columns/types/defaults, constraints and indexes). It checks file modes and refuses
+fingerprint (columns/types/precision/collation/defaults, constraints, indexes and ordinary-table
+properties). RLS, user triggers/rules, inheritance and partitioning are refused before export/load.
+Connection host, port, role, database and password are pinned to the file URL, not ambient PG
+variables; the connected target database must also report `imajin_dev`. It checks file modes and refuses
 symlink inputs. Committed loading rechecks catalog under exclusive locks and validates bytes
 again during insertion. Checksums detect changed files; they are not a signature or proof that
 an untrusted manifest is authentic. Keep custody of the whole private directory.
@@ -147,7 +150,7 @@ it does not use inherited connection values. No database URL appears on the comm
 node --env-file=/home/jin/dev/events/.env.local --input-type=module <<'NODE'
 import postgres from 'postgres';
 import {
-  assertDirectory, assertTarget, environment, quote, readManifest, refuse,
+  assertDirectory, assertTarget, connectionOptions, environment, quote, readManifest, refuse,
   tableList, tableSql, transaction,
 } from './scripts/soak/common.mjs';
 import { validateManifest, validateTarget } from './scripts/soak/load-dev.mjs';
@@ -164,7 +167,7 @@ async function restore() {
   validateManifest(manifest);
   const env = await environment('/home/jin/dev/events/.env.local');
   assertTarget(env, manifest); // Exact dev + imajin_dev + events; no prod markers/source endpoint.
-  const client = postgres(env.DATABASE_URL, { max: 1, onnotice: () => {}, debug: false });
+  const client = postgres(env.DATABASE_URL, connectionOptions(env.DATABASE_URL));
   try {
     const sql = await client.reserve();
     try {

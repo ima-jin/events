@@ -44,7 +44,7 @@ export async function exportData(sql, { directory, sourceUrl, mapping = Object.c
   const scrub = createScrubber(mapping);
   const manifest = await transaction(sql, true, async (tx) => {
     const schemaFingerprint = await catalog(tx);
-    const sourceServer = await serverIdentity(tx);
+    const sourceServer = (await serverIdentity(tx)).identity;
     const tables = {};
     for await (const table of TABLES) {
       tables[table] = await writeTable(tx, table, directory, scrub);

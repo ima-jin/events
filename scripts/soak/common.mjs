@@ -57,7 +57,7 @@ export function endpoint(url) {
   const allowed = new Set(['sslmode', 'connect_timeout', 'application_name']);
   refuse([...parsed.searchParams.keys()].some((key) => !allowed.has(key)), 'Unsupported DATABASE_URL parameters.');
   const database = decodeURIComponent(parsed.pathname.slice(1));
-  refuse(!parsed.hostname || !database, 'DATABASE_URL must specify host and database.');
+  refuse(!parsed.hostname || !database || !parsed.username, 'DATABASE_URL must specify host, role and database.');
   const identity = hash(JSON.stringify([parsed.hostname.toLowerCase(), parsed.port || '5432', database]));
   return { identity, database };
 }
@@ -83,7 +83,7 @@ export function assertTarget(env, manifest) {
 export async function serverIdentity(sql) {
   const [row] = await sql.unsafe(`SELECT current_database() AS database,
     inet_server_addr()::text AS host, inet_server_port() AS port`);
-  return hash(JSON.stringify([row.host, row.port, row.database]));
+  return { identity: hash(JSON.stringify([row.host, row.port, row.database])), database: row.database };
 }
 
 /** All transaction-control SQL is fixed, never derived from arguments or source rows. */
@@ -106,8 +106,9 @@ export async function transaction(sql, readOnly, work) {
 }
 
 export async function catalog(sql) {
-  const columns = await sql.unsafe(`SELECT table_name, column_name, data_type, udt_name,
-    is_nullable, column_default, is_identity, is_generated
+  const columns = await sql.unsafe(`SELECT table_name, column_name, data_type, udt_schema, udt_name,
+    is_nullable, column_default, is_identity, is_generated, character_maximum_length,
+    numeric_precision, numeric_scale, datetime_precision, collation_name, domain_schema, domain_name
     FROM information_schema.columns WHERE table_schema = 'events'
     AND table_name IN (${TABLES.map((table) => `'${table}'`).join(',')})
     ORDER BY table_name, ordinal_position`);
@@ -128,13 +129,44 @@ export async function catalog(sql) {
   const indexes = await sql.unsafe(`SELECT tablename, indexname, indexdef FROM pg_indexes
     WHERE schemaname = 'events' AND tablename IN (${TABLES.map((table) => `'${table}'`).join(',')})
     ORDER BY tablename, indexname`);
-  return hash(JSON.stringify({ columns: Array.from(columns), constraints: Array.from(constraints), indexes: Array.from(indexes) }));
+  const behavior = await sql.unsafe(`SELECT c.relname AS table_name, c.relkind, c.relpersistence,
+    c.relrowsecurity, c.relforcerowsecurity, c.relispartition,
+    EXISTS (SELECT 1 FROM pg_inherits i WHERE i.inhrelid = c.oid OR i.inhparent = c.oid) AS inherited,
+    EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid = c.oid AND NOT t.tgisinternal) AS triggers,
+    EXISTS (SELECT 1 FROM pg_rewrite r WHERE r.ev_class = c.oid AND r.rulename <> '_RETURN') AS rules
+    FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'events' AND c.relname IN (${TABLES.map((table) => `'${table}'`).join(',')})
+    ORDER BY c.relname`);
+  refuse(behavior.length !== TABLES.length || behavior.some((table) => table.relkind !== 'r'
+    || table.relpersistence !== 'p' || table.relrowsecurity || table.relforcerowsecurity
+    || table.relispartition || table.inherited || table.triggers || table.rules),
+  'Unsupported table behavior: RLS, triggers, rules, inheritance or non-ordinary tables.');
+  return hash(JSON.stringify({
+    columns: Array.from(columns), constraints: Array.from(constraints),
+    indexes: Array.from(indexes), behavior: Array.from(behavior),
+  }));
 }
 
 export async function connectFile(path, connect = postgres) {
   const env = await environment(path);
-  const client = connect(env.DATABASE_URL, { max: 1, onnotice: () => {}, debug: false });
+  const client = connect(env.DATABASE_URL, connectionOptions(env.DATABASE_URL));
   return { env, client };
+}
+/** Pin identity to the env-file URL, never ambient PGPORT/PGUSER/PGPASSWORD defaults. */
+export function connectionOptions(url) {
+  endpoint(url);
+  const parsed = new URL(url);
+  return {
+    host: [parsed.hostname.replaceAll('[', '').replaceAll(']', '')],
+    port: [Number(parsed.port || '5432')],
+    database: decodeURIComponent(parsed.pathname.slice(1)),
+    username: decodeURIComponent(parsed.username),
+    password: () => decodeURIComponent(parsed.password),
+    ssl: parsed.searchParams.get('sslmode') || false,
+    connect_timeout: Number(parsed.searchParams.get('connect_timeout') || '30'),
+    connection: { application_name: 'events-soak', search_path: 'pg_catalog', row_security: 'off' },
+    max: 1, onnotice: () => {}, debug: false,
+  };
 }
 
 export function argumentsFor(argv, exporting) {
