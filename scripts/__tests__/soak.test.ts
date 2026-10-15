@@ -10,7 +10,7 @@ import { generateEventKeypair } from '../../src/lib/event-keypair.mjs';
 import { createScrubber, isPublicEvent, POLICY, SCRUB_VERSION, TABLES } from '../soak/policy.mjs';
 import {
   argumentsFor, assertDirectory, assertTarget, catalog, connectionOptions, didMapping, endpoint,
-  environment, operatorPath, privateRead, Refusal, runCli, transaction,
+  environment, hash, operatorPath, privateRead, Refusal, runCli, transaction,
 } from '../soak/common.mjs';
 import { exportData } from '../soak/export-prod-shaped.mjs';
 import { loadData, validateManifest, visitRows } from '../soak/load-dev.mjs';
@@ -184,7 +184,7 @@ describe('exhaustive scrub classification', () => {
 
   it.each(checkedColumns)('preserves checked operational text in %s.%s', (table, column, value) => {
     const row = { ...fixtureData()[table][0], [column]: value };
-    expect(createScrubber()(table, row)[column] === value).toBe(true);
+    expect(hash(JSON.stringify(createScrubber()(table, row)[column]))).toBe(hash(JSON.stringify(value)));
     expect(createScrubber()(table, { ...row, [column]: null })[column]).toBeNull();
   });
 
@@ -196,7 +196,7 @@ describe('exhaustive scrub classification', () => {
     const directory = join(await mkdtemp(join(homedir(), 'soak-refusal-')), 'artifact');
     const output = logger();
     const failure = await exportData(source, { directory, sourceUrl }, output).catch((error: unknown) => error);
-    expect(failure instanceof Refusal).toBe(true);
+    expect(failure).toBeInstanceOf(Refusal);
     expect((failure as Error).message).toBe(`Unexpected keep value: ${table}.${column}.`);
     expect((failure as Error).message.includes(rejected)).toBe(false);
     expect(JSON.stringify(output.log.mock.calls).includes(rejected)).toBe(false);
@@ -217,7 +217,7 @@ describe('exhaustive scrub classification', () => {
         expect(() => scrub('events', { ...fixtureData().events[0], [column]: value })).toThrow(Refusal);
       }
     }
-    expect(scrub('events', { ...fixtureData().events[0], timezone: 'UTC' }).timezone === 'UTC').toBe(true);
+    expect(hash(String(scrub('events', { ...fixtureData().events[0], timezone: 'UTC' }).timezone))).toBe(hash('UTC'));
   });
 
   it('normalizes email case and surrounding whitespace within one versioned export', async () => {
@@ -225,7 +225,7 @@ describe('exhaustive scrub classification', () => {
     const row = fixtureData().orders[0];
     const normalized = scrub('orders', row).buyer_email;
     const variant = String(row.buyer_email).toUpperCase();
-    expect(scrub('orders', { ...row, buyer_email: ` \t${variant}\n` }).buyer_email === normalized).toBe(true);
+    expect(hash(String(scrub('orders', { ...row, buyer_email: ` \t${variant}\n` }).buyer_email))).toBe(hash(String(normalized)));
     const { directory, manifest } = await exported();
     expect(SCRUB_VERSION).toBe(2);
     expect(manifest.scrubMapVersion).toBe(SCRUB_VERSION);
@@ -331,7 +331,7 @@ describe('read-only source and guarded loader round trip', () => {
     await expect(visitRows(directory, 'event_invites', manifest.tables.event_invites)).resolves.toBeUndefined();
     const target = database(fixtureData(), false);
     await loadData(target, { directory, env, manifest, commit: true }, logger());
-    expect(target.rows().event_invites.length).toBe(250);
+    expect(target.rows().event_invites).toHaveLength(250);
     expect(new Set(target.rows().event_invites.map((row) => row.id)).size).toBe(250);
   });
   it('streams only scrubbed rows to private files and logs only counts', async () => {
@@ -505,8 +505,8 @@ describe('guarded dev snapshot restore', () => {
     const retained = structuredClone(target.retained);
     const output = logger();
     expect(await restoreData(target, { directory, env, manifest, backup, commit: true }, output)).toEqual({ committed: true });
-    expect(JSON.stringify(target.rows()) === JSON.stringify(retained)).toBe(true);
-    expect(JSON.stringify(target.retained) === JSON.stringify(retained)).toBe(true);
+    expect(hash(JSON.stringify(target.rows()))).toBe(hash(JSON.stringify(retained)));
+    expect(hash(JSON.stringify(target.retained))).toBe(hash(JSON.stringify(retained)));
     const queries = target.unsafe.mock.calls.map(([text]) => text);
     expect(queries[0]).toBe('BEGIN TRANSACTION READ ONLY ISOLATION LEVEL REPEATABLE READ');
     expect(queries.at(-1)).toContain('pg_advisory_unlock');
@@ -537,8 +537,8 @@ describe('guarded dev snapshot restore', () => {
     const retained = structuredClone(target.retained);
     target.failInsert = 'tickets';
     await expect(restoreData(target, { directory, env, manifest, backup, commit: true }, logger())).rejects.toThrow();
-    expect(JSON.stringify(target.rows()) === JSON.stringify(fixtureData())).toBe(true);
-    expect(JSON.stringify(target.retained) === JSON.stringify(retained)).toBe(true);
+    expect(hash(JSON.stringify(target.rows()))).toBe(hash(JSON.stringify(fixtureData())));
+    expect(hash(JSON.stringify(target.retained))).toBe(hash(JSON.stringify(retained)));
     expect(target.unsafe.mock.calls.some(([text]) => text === 'ROLLBACK')).toBe(true);
     expect(target.unsafe.mock.calls.at(-1)![0]).toContain('pg_advisory_unlock');
   });
@@ -550,7 +550,7 @@ describe('guarded dev snapshot restore', () => {
       target[failure] = true;
       await expect(restoreData(target, { directory, env, manifest, backup, commit }, logger())).rejects.toThrow();
       expect(target.unsafe.mock.calls.some(([text]) => /^(TRUNCATE|INSERT)/.test(text))).toBe(false);
-      expect(JSON.stringify(target.rows()) === JSON.stringify(fixtureData())).toBe(true);
+      expect(hash(JSON.stringify(target.rows()))).toBe(hash(JSON.stringify(fixtureData())));
     }
   });
 
