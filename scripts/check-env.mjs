@@ -90,6 +90,9 @@ export function validateEnvironment(env, target, keystoreExists = existsSync, wa
   checkUrls(env, target === 'dev' ? 'dev-jin.imajin.ai' : 'jin.imajin.ai', problems);
   checkTargetSettings(env, target, problems);
   checkIdentityAndSecrets(env, target, problems);
+  if (env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY) {
+    warnings.push("NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY is ignored; the seller's key comes from the kernel. Delete it from the env file.");
+  }
   if (!keystoreExists(env.IMAJIN_APP_KEYSTORE || '')) {
     warnings.push("No keystore found — claim at /events/claim after boot with the one-time code from the operator's /jin approval card (docs/REGISTRATION.md).");
   }

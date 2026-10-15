@@ -28,8 +28,6 @@ export const stripeReactDouble = {
 };
 
 export function resetCampaign() {
-  // A stale platform value must never select the campaign's Stripe account.
-  vi.stubEnv('NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY', 'pk_test_platform');
   vi.stubEnv('NEXT_PUBLIC_BASE_PATH', '');
   globalThis.history.replaceState(null, '', '/evt_1');
   globalThis.sessionStorage.clear();
