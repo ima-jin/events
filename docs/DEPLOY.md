@@ -137,6 +137,10 @@ repair, no migration SQL rewrite, no force flag.
 ## One-time cutover — deferred to #2529 / #2516
 existing ticket QRs are invalidated at cutover; no reissue
 
+Use [SOAK.md](./SOAK.md) for the #2529 scripted flow pass, private test inputs,
+manual evidence gates and rollback rehearsal/results template. Tooling tests do not
+replace the real authorized dev rehearsal or Ryan's sign-off.
+
 Per Ryan's 2026-10-14 ruling on ima-jin/imajin-ai#2516, the kernel vault issues a new
 ticket QR secret at cutover. Never copy the old secret or carry it over into the vault.
 
@@ -184,6 +188,10 @@ Public checks: `https://dev-jin.imajin.ai/events/api/health` and
 `https://jin.imajin.ai/events/api/health`.
 
 ## Rollback and refusal
+
+See [SOAK.md](./SOAK.md) for `scripts/soak/rollback.sh <dev|prod> <record|rollback|rehearse>`,
+safe pre-cutover recording, migration/build refusal paths, timings and dev roll-forward.
+Caddy stays unchanged: first-cutover rollback re-points only the events pm2 process.
 
 `bash scripts/deploy.sh <env> <previous-tag-or-sha>` rebuilds and restarts the prior standalone
 release. Migrations are forward-only; do not roll code back across an incompatible migration.

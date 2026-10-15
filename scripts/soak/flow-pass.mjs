@@ -10,7 +10,7 @@ function requireValue(value) {
   return value;
 }
 
-export async function runFlows(config, auth, { fetcher = fetch, output = console, pause = sleep, readAuth = () => privateJson(config.authFile) } = {}) {
+export async function runFlows(config, auth, { fetcher = fetch, output = console, pause = (ms) => sleep(ms), readAuth = () => privateJson(config.authFile) } = {}) {
   const request = transport(config, auth, fetcher);
   const rows = [];
   const state = {};
@@ -40,7 +40,8 @@ export async function runFlows(config, auth, { fetcher = fetch, output = console
   }
   function browser(name, url, instruction) {
     // Only validated Stripe checkout URLs or locally constructed public URLs reach operator output.
-    output.log(`${name}: ${JSON.stringify(url)}\n${instruction}`);
+    const safeUrl = url.replaceAll(/[\r\n\t]/g, '');
+    output.log(`${name}: ${safeUrl}\n${instruction}`);
   }
   async function render(name, path, role) {
     return step(name, async () => {
@@ -129,6 +130,16 @@ export async function runFlows(config, auth, { fetcher = fetch, output = console
   await publicChecks(state.eventId);
   const freeType = state.types?.find((type) => type.price === 0);
   const paidTypes = state.types?.filter((type) => type.price > 0) ?? [];
+  await step('Hold and cancel unconfirmed ticket', async () => {
+    const held = await request(`${eventPath}/hold`, { method: 'POST', role: 'buyer', body: {
+      ticketTypeId: requireValue(paidTypes[0]?.id), holdHours: 1,
+    } });
+    requireValue(held.ticket?.status === 'held');
+    const cancelled = await request(`${eventPath}/tickets/${identifier(held.ticket.id)}/cancel`, {
+      method: 'POST', role: 'organizer', body: {},
+    });
+    requireValue(cancelled.ticket?.status === 'cancelled');
+  });
   const rsvp = await step('Free RSVP', async () => {
     const data = await request('api/checkout/free', { method: 'POST', role: 'buyer', body: {
       eventId: state.eventId, ticketTypeId: requireValue(freeType?.id),

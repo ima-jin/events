@@ -42,6 +42,8 @@ function fixture({ live = false, createFail = false, settleFail = false, setupLi
     if (path.endsWith('/fair')) return json({ manifest: body.manifest });
     if (path.endsWith('/api/events/evt_fixture') || path.endsWith('/api/events/evt_campaign')) return json({ event: body });
     if (path.endsWith('/checkout/free')) return json({ success: true, ticketId: 'tkt_fixture' });
+    if (path.endsWith('/hold')) return json({ ticket: { id: 'held_fixture', status: 'held' } });
+    if (path.endsWith('/cancel')) return json({ ticket: { id: 'held_fixture', status: 'cancelled' } });
     if (path.endsWith('/qr')) return json({ qrCodeDataUri: 'data:image/png;base64,fixture' });
     if (path.includes('/old/check-in')) return json({ error: 'Invalid or expired ticket QR token' }, 400);
     if (path.endsWith('/check-in')) return json({ ticket: { id: 'tkt_fixture', usedAt: '2026-10-15' } });
@@ -213,6 +215,30 @@ describe('scripted HTTP flows', () => {
     });
     expect(rows.find((row) => row.name === 'Pledge TEST SetupIntent')?.result).toBe('fail');
     expect(calls.some((call) => call.path.endsWith('/settle'))).toBe(false);
+  });
+  it('times out browser state polling and never refunds an unobserved order', async () => {
+    const data = fixture();
+    let now = 0;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const fetcher: typeof fetch = async (input, init) => {
+      if (String(input).includes('/my-ticket')) return new Response('{"orders":[]}');
+      return data.fetcher(input, init);
+    };
+    try {
+      const rows = await runFlows(options([...args(), '--interactive', '--timeout-seconds', '1']), {}, {
+        fetcher, output: quiet, pause: async () => { now += 2000; },
+        readAuth: () => ({ newTicketTokens: { tkt_fixture: 'fixture' } }),
+      });
+      expect(rows.find((row) => row.name === 'Payment callback effect')?.result).toBe('fail');
+      expect(data.calls.some((call) => call.path.endsWith('/refund'))).toBe(false);
+    } finally { clock.mockRestore(); }
+  });
+  it('reports failed campaign charges as failures', async () => {
+    const { fetcher } = fixture({ settleFail: true });
+    const rows = await runFlows(options([...args(), '--interactive']), {}, {
+      fetcher, output: quiet, readAuth: () => ({ newTicketTokens: { tkt_fixture: 'fixture' } }),
+    });
+    expect(rows.find((row) => row.name === 'Campaign settle')?.result).toBe('fail');
   });
   it('exits nonzero for automated failures, writes only a private new report, refuses invalid auth', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'soak-main-'));
