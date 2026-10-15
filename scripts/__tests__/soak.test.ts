@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, readFile, stat, symlink, writeFile } from 'node:fs/promises';
+import { appendFile, chmod, mkdtemp, readFile, stat, symlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { getTableColumns, is } from 'drizzle-orm';
@@ -57,7 +57,10 @@ function fixtureData(): Rows {
     emt_email: 'fixture-person@example.invalid', virtual_url: 'https://fixture.invalid/private',
   });
   Object.assign(rows.orders[0], { buyer_did: 'did:imajin:fixture-person', buyer_email: 'fixture-person@example.invalid', payment_id: 'fixture_live_id' });
-  Object.assign(rows.tickets[0], { owner_did: 'did:imajin:fixture-person', original_owner_did: 'did:imajin:fixture-person', signature: 'fixture_old_signature' });
+  Object.assign(rows.tickets[0], {
+    owner_did: 'did:imajin:fixture-person', original_owner_did: 'did:imajin:fixture-person',
+    signature: 'fixture_old_signature', status: 'used', used_at: '2026-01-02T00:00:00.000Z',
+  });
   return rows;
 }
 
@@ -68,7 +71,8 @@ function database(data: Rows = fixtureData(), source = true) {
   const backups: Rows[] = [];
   const client = {
     source, readOnly: 'on', drift: false, extraColumn: false, sequence: false, failInsert: '',
-    actualDatabase: source ? 'fixture_source' : 'imajin_dev', behavior: '',
+    actualDatabase: source ? 'fixture_source' : 'imajin_dev', behavior: '', precisionDrift: false,
+    failSnapshot: false, onInsert: async () => {},
     unsafe: vi.fn((text: string, params: string[] = []) => {
       const execute = async () => {
         if (text.startsWith('BEGIN')) before = structuredClone(state);
@@ -80,6 +84,7 @@ function database(data: Rows = fixtureData(), source = true) {
           if (client.extraColumn) result.push({ ...result[0], column_name: 'unclassified_pii' });
           if (client.sequence) result[0].column_default = "nextval('fixture')" as never;
           if (client.drift) result[0].udt_name = 'changed';
+          if (client.precisionDrift) Object.assign(result[0], { datetime_precision: 0, collation_name: 'fixture_changed_collation' });
           return result;
         }
         if (text.includes('pg_constraint') || text.includes('pg_indexes')) return [];
@@ -89,6 +94,7 @@ function database(data: Rows = fixtureData(), source = true) {
           triggers: false, rules: false, ...(client.behavior ? { [client.behavior]: true } : {}),
         }));
         if (text.startsWith('CREATE SCHEMA')) backups.push(structuredClone(state));
+        if (text.startsWith('CREATE TABLE') && client.failSnapshot) throw new Error('fixture snapshot failure');
         if (text.startsWith('TRUNCATE')) {
           expect(text).not.toContain('CASCADE');
           state = Object.fromEntries(TABLES.map((table) => [table, []]));
@@ -105,6 +111,7 @@ function database(data: Rows = fixtureData(), source = true) {
             }
           }
           state[table].push(row);
+          await client.onInsert();
         }
         return [];
       };
@@ -116,7 +123,8 @@ function database(data: Rows = fixtureData(), source = true) {
           expect(text).not.toContain('private_key');
           expect(text).not.toContain('public_key');
           yield data[table].map((row) => {
-            const projected: Row = { ...row, __visible: true };
+            const parent = table === 'ticket_types' ? data.events.find((event) => event.id === row.event_id) : row;
+            const projected: Row = { ...row, __visible: parent ? isPublicEvent(parent) : false };
             if (table === 'events') {
               delete projected.private_key;
               delete projected.public_key;
@@ -304,6 +312,42 @@ describe('read-only source and guarded loader round trip', () => {
   it('detects an aliased source by server address, port and actual database', async () => {
     const { directory, manifest } = await exported();
     await expect(loadData(database(), { directory, env, manifest, commit: true }, logger())).rejects.toThrow('source server/database');
+  });
+  it('detects precision and collation drift, not just column names/types', async () => {
+    const { directory, manifest } = await exported();
+    const target = database(fixtureData(), false);
+    target.precisionDrift = true;
+    await expect(loadData(target, { directory, env, manifest, commit: true }, logger())).rejects.toThrow('fingerprint mismatch');
+    expect(target.backups).toHaveLength(0);
+  });
+  it('does not truncate or insert when snapshot creation fails', async () => {
+    const { directory, manifest } = await exported();
+    const target = database(fixtureData(), false);
+    target.failSnapshot = true;
+    await expect(loadData(target, { directory, env, manifest, commit: true }, logger())).rejects.toThrow('snapshot failure');
+    expect(target.unsafe.mock.calls.some(([text]) => /^(TRUNCATE|INSERT)/.test(text))).toBe(false);
+    expect(target.rows()).toEqual(fixtureData());
+  });
+  it('rolls back replacement if artifact bytes mutate after dry validation', async () => {
+    const { directory, manifest } = await exported();
+    const target = database(fixtureData(), false);
+    target.onInsert = async () => {
+      await appendFile(join(directory, 'tickets.jsonl'), ' ');
+      target.onInsert = async () => {};
+    };
+    await expect(loadData(target, { directory, env, manifest, commit: true }, logger())).rejects.toThrow();
+    expect(target.rows()).toEqual(fixtureData());
+    expect(target.backups).toHaveLength(1);
+  });
+  it.each(['draft', 'invite_only'])('scrubs nonpublic event and tier text in the streaming export: %s', async (mode) => {
+    const rows = fixtureData();
+    if (mode === 'draft') rows.events[0].status = 'draft';
+    else rows.events[0].access_mode = 'invite_only';
+    rows.ticket_types[0].name = 'Private fixture tier';
+    const directory = join(await mkdtemp(join(homedir(), 'soak-private-')), 'artifact');
+    await exportData(database(rows), { directory, sourceUrl }, logger());
+    expect(await readFile(join(directory, 'events.jsonl'), 'utf8')).not.toContain('Public fixture');
+    expect(await readFile(join(directory, 'ticket_types.jsonl'), 'utf8')).not.toContain('Private fixture tier');
   });
   it('refuses a connected database that differs from the checked URL before writes', async () => {
     const { directory, manifest } = await exported();
