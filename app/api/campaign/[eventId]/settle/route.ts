@@ -11,7 +11,7 @@
  *   charged: number,
  *   failed: number,
  *   total: number,
- *   results: Array<{ pledgeId: string, status: string, error?: string }>
+ *   results: Array<{ pledgeId: string, status: 'charged' | 'failed', code?: string }>
  * }
  */
 
@@ -21,7 +21,7 @@ import { eq, and } from 'drizzle-orm';
 import { corsHeaders } from '@ima-jin/config';
 import { authenticateDid, findEvent, jsonError, pathEventId, createPreflight, rateLimitResponse } from '@/lib/campaign-route';
 import { withLogger } from '@ima-jin/logger';
-import { payForbiddenMessage, postPayAsApp } from '@/lib/pay-app-request';
+import { chargeCampaignPledges, recordCampaignCharges } from '@/lib/campaign-charge';
 
 export const OPTIONS = createPreflight();
 
@@ -73,39 +73,11 @@ export const POST = withLogger('events', async (request: NextRequest, { log }) =
       );
     }
 
-    // Call pay service to charge pledges
-    const payRes = await postPayAsApp('/api/charge-pledges', {
-      eventId,
-      pledges: confirmedPledges.map((p) => ({
-        pledgeId: p.id,
-        setupIntentId: p.stripeSetupIntentId,
-      })),
-    });
-
-    if (!payRes.ok) {
-      const err = await payRes.json().catch(() => ({}));
-      log.error({ err: err.error || payRes.statusText }, 'Pay service charge-pledges failed');
-      const error = payRes.status === 403
-        ? `${payForbiddenMessage('pay:charge-pledges')}. ${err.error || 'Forbidden'}`
-        : err.error || 'Failed to charge pledges';
-      return NextResponse.json(
-        { error },
-        { status: payRes.status === 403 ? 403 : 500, headers: cors }
-      );
+    const chargeResult = await chargeCampaignPledges(eventId, event.creatorDid, confirmedPledges);
+    if ('error' in chargeResult) {
+      return jsonError(chargeResult.error, chargeResult.status, cors);
     }
-
-    const chargeResult = await payRes.json();
-
-    // Update pledge statuses based on results
-    await Promise.all(
-      (chargeResult.results || []).map((result: { status: string; pledgeId: string; error?: string }) => {
-        const update =
-          result.status === 'charged'
-            ? { status: 'charged', chargedAt: new Date() }
-            : { status: 'failed', failureReason: result.error || 'Charge failed' };
-        return db.update(pledges).set(update).where(eq(pledges.id, result.pledgeId));
-      })
-    );
+    await recordCampaignCharges(confirmedPledges, chargeResult.results);
 
     return NextResponse.json(chargeResult, { headers: cors });
   } catch (error) {
