@@ -9,7 +9,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@ima-jin/logger';
 import { db, orders } from '@/db';
 import { eq } from 'drizzle-orm';
-import { secretsMatch } from '@/lib/webhook-auth';
+import { verifyEventsKernelWebhook, kernelWebhookFailure } from '@/lib/kernel-webhook';
 
 const log = createLogger('events');
 
@@ -32,17 +32,19 @@ interface BusWebhookEnvelope<TPayload> {
 }
 
 export async function POST(request: NextRequest) {
+  let body: SettlementPayload | BusWebhookEnvelope<SettlementPayload>;
   try {
-    const secret = request.headers.get('x-webhook-secret');
-    const expected = process.env.WEBHOOK_SECRET;
-    if (!expected || !secretsMatch(secret, expected)) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const body = (await request.json()) as SettlementPayload | BusWebhookEnvelope<SettlementPayload>;
+    body = await verifyEventsKernelWebhook<SettlementPayload | BusWebhookEnvelope<SettlementPayload>>(request);
+  } catch (error) {
+    return kernelWebhookFailure(error);
+  }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return NextResponse.json({ error: 'Invalid settlement payload' }, { status: 400 });
+  }
+  try {
     const payload = ((body as BusWebhookEnvelope<SettlementPayload>).payload ?? body) as SettlementPayload;
 
-    if (!payload.orderId || typeof payload.orderId !== 'string') {
+    if (!payload?.orderId || typeof payload.orderId !== 'string') {
       return NextResponse.json({ error: 'Missing orderId' }, { status: 400 });
     }
 

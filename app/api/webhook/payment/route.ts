@@ -20,7 +20,7 @@ import { createOrderWithTickets } from '@/lib/checkout-common';
 import { eventRegisterUrl, eventMyTicketsUrl, buildPublicUrlAbsolute } from '@ima-jin/config';
 import * as bus from '@/lib/domain-events';
 import { isByoPayment, recordByoSettlement, settleCompletedOrder } from '@/lib/pay-settle';
-import { isBearerAuthorized } from '@/lib/webhook-auth';
+import { verifyEventsKernelWebhook, kernelWebhookFailure } from '@/lib/kernel-webhook';
 import {
   parseCartFromMetadata,
   syncBuyerToEventChat,
@@ -317,13 +317,16 @@ interface PaymentWebhookPayload {
 }
 
 export const POST = withLogger('events', async (request, { log }) => {
+  let payload: PaymentWebhookPayload;
   try {
-    // Constant-time compare; fails closed (401) when WEBHOOK_SECRET is not configured.
-    if (!isBearerAuthorized(request.headers.get('authorization'), process.env.WEBHOOK_SECRET)) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const payload: PaymentWebhookPayload = await request.json();
+    payload = await verifyEventsKernelWebhook<PaymentWebhookPayload>(request);
+  } catch (error) {
+    return kernelWebhookFailure(error);
+  }
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return NextResponse.json({ error: 'Invalid payment payload' }, { status: 400 });
+  }
+  try {
 
     log.info({ type: payload.type, sessionId: payload.sessionId }, 'Payment webhook received');
 

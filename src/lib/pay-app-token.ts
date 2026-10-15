@@ -1,5 +1,5 @@
 /**
- * Events' own app-service token for the pay service (imajin-ai#2739).
+ * Events' own app-service token for pay and notify (imajin-ai#2739, events#38).
  *
  * Events is a registered app. It authenticates checkout, settlement, refund
  * and charge-pledges calls as ITSELF with an app-service token minted from the
@@ -14,10 +14,10 @@
  * Operator prerequisites (see README.md and docs/REGISTRATION.md):
  *   - events registered as an app, signing key provisioned (`apps.provision`);
  *   - `pay:settle`, `pay:refund` and `pay:charge-pledges` approved for events'
- *     app DID via the operator's `apps:service-scopes` card.
+ *     app DID via the operator's `apps:service-scopes` card;
+ *   - `notify:broadcast` approved for organizer broadcasts.
  */
-import { loadAppSigningKey } from '@ima-jin/auth-client';
-import { createAppServiceTokenProvider, type AppServiceTokenProvider } from './app-service-token';
+import { createAppServiceTokenProvider, loadAppSigningKey, type AppServiceTokenProvider } from '@ima-jin/auth-client';
 
 // Held on `globalThis` (not a module-level `let`): Next can bundle this module into more than one
 // route chunk of the same server process; all copies should share one token provider.

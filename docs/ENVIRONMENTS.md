@@ -30,7 +30,7 @@ Validate privately with `node scripts/check-env.mjs dev` (or `prod`).
 | `APP_DB_SCHEMA` | build + runtime + migration | Exactly `events`; immutable. |
 | `IMAJIN_KERNEL_URL` | runtime | Target kernel base above, no path. Claim/bootstrap and app-service tokens. |
 | `IMAJIN_AUTH_URL` | runtime | Same kernel base; SDK sign-in redirect. |
-| `AUTH_SERVICE_URL` | runtime | Kernel base plus `/auth`; published auth SDK verification. |
+| `AUTH_SERVICE_URL` | runtime | Kernel base plus `/auth`; published auth SDK token/session verification and public webhook signing-key discovery. |
 | `NEXT_PUBLIC_IMAJIN_AUTH_URL` | build | Same kernel base; browser sign-in and public service links. |
 | `NEXT_PUBLIC_AUTH_URL` | build | Kernel base plus `/auth`; browser session calls. |
 | `NEXT_PUBLIC_APP_URL` | build + runtime | App public URL above; redirects/checkouts. |
@@ -38,7 +38,6 @@ Validate privately with `node scripts/check-env.mjs dev` (or `prod`).
 | `NEXT_PUBLIC_BASE_PATH` | build + boot | Exactly `/events`; Caddy preserves it. |
 | `IMAJIN_APP_DID` | boot + runtime | Kernel-minted DID, distinct for dev/prod; no placeholder. |
 | `IMAJIN_APP_KEYSTORE` | boot | Absolute target path above, persistent `0600` bootstrap file, parent `0700`. Not an app signing-key file. |
-| `WEBHOOK_SECRET` | runtime | Same size; target pay service's `EVENTS_WEBHOOK_SECRET`; Bearer authorization for payment/settlement webhooks. |
 
 `NEXT_PUBLIC_*` values and Next basePath are baked into the build; changing them requires
 rebuilding. Server variables are read at boot/per request. The deploy script clears inherited
@@ -57,7 +56,6 @@ the app goes live without an env edit or restart.
 | `NEXT_PUBLIC_SERVICE_PREFIX` | build | **`dev-` on dev**, unset on prod; SDK URL construction. |
 | `NEXT_PUBLIC_DOMAIN` | build | `imajin.ai` (default); paired with prefix. |
 | `IMAJIN_ENV` | runtime | **`dev` on dev**, unset on prod; selects `imajin_session_dev` versus `imajin_session`. |
-| `NOTIFY_WEBHOOK_SECRET` | runtime | Existing target notify broadcast credential if using organizer messages; no new internal-key minting. |
 | `CHECKIN_WEBHOOK_URL` | runtime | Optional external check-in callback URL; unset disables callback. Do not embed credentials in URLs. |
 | `DYKIL_URL` | runtime | Target kernel base plus `/dykil` for public survey API reads; unset yields no survey response. |
 | `IMAJIN_EVENTS_PUBLISH_PATH` | runtime | Optional approved public kernel app-auth publish route path; unset is a logged no-op. See KERNEL-GAPS.md. |
@@ -70,6 +68,19 @@ Pay checkout, settlement, refund and campaign charging use events' own app-servi
 The operator must approve `pay:settle`, `pay:refund` and `pay:charge-pledges` for that
 environment's events app DID on `apps:service-scopes`. Deploy kernel PR imajin-ai#2786 before
 this events release and remove the retired shared pay credential from the environment.
+Organizer messages use that same app-service token with operator-approved `notify:broadcast`.
+Reply-to email is optional via the public profile resolver; an unavailable or hidden email does
+not block delivery and never requires an internal contact credential.
+
+The kernel signs payment and settlement callbacks; events verifies through published SDK
+`@ima-jin/auth` **0.8.18**, using this environment's `IMAJIN_APP_DID` as recipient audience
+and `serviceUrl('auth')` for public discovery. No shared callback credential is generated,
+copied or configured. Keep both `data/kernel-webhook-pins/` (public keys) and
+`data/kernel-webhook-nonces/` (durable replay evidence) on persistent, writable local storage
+shared by every worker in the deployment. Trusted util-linux `/usr/bin/flock` is required.
+Multi-host replicas require a shared-store adapter with atomic nonce consumption and coordinated
+public-key pinning before scaling; separate host-local directories are not sufficient.
+See [DEPLOY.md](./DEPLOY.md#kernel-signed-callbacks) for rollout and trust requirements.
 
 | Variable | When | Contract |
 |---|---|---|

@@ -19,3 +19,5 @@ npm-debug.log*
 tsconfig.tsbuildinfo
 coverage/
 .vercel
+data/kernel-webhook-pins/
+data/kernel-webhook-nonces/

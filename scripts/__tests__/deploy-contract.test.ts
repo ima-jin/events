@@ -30,17 +30,16 @@ function validEnv(target = 'dev'): Record<string, string> {
     IMAJIN_ENV: target === 'dev' ? 'dev' : '',
     IMAJIN_APP_DID: 'did:imajin:fixture',
     IMAJIN_APP_KEYSTORE: `/fixture/events.${target}.keystore.json`,
-    WEBHOOK_SECRET: 'w'.repeat(64),
   };
 }
 
-function sourceFiles(directory: string): string[] {
+function sourceFiles(directory: string, extension = /\.(?:[cm]?js|tsx?)$/): string[] {
   const result: string[] = [];
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     const path = join(directory, entry.name);
     if (entry.name === '__tests__') continue;
-    if (entry.isDirectory()) result.push(...sourceFiles(path));
-    if (entry.isFile() && /\.(?:[cm]?js|tsx?)$/.test(entry.name) && !entry.name.endsWith('.d.ts')) {
+    if (entry.isDirectory()) result.push(...sourceFiles(path, extension));
+    if (entry.isFile() && extension.test(entry.name) && !entry.name.endsWith('.d.ts')) {
       result.push(path);
     }
   }
@@ -48,6 +47,18 @@ function sourceFiles(directory: string): string[] {
 }
 
 describe('blank-valued env contract', () => {
+  it('has no shared webhook credential or manual generation instructions in operational surfaces', () => {
+    const paths = [
+      '.env.example', '.env.dev.example', '.env.prod.example', 'scripts/check-env.mjs',
+      'README.md', 'api-spec/openapi.yaml',
+      ...sourceFiles(join(root, 'docs'), /\.md$/).map((path) => path.slice(root.length)),
+    ];
+    for (const name of ['WEBHOOK_SECRET', 'NOTIFY_WEBHOOK_SECRET']) {
+      expect(ENV_NAMES).not.toContain(name);
+      for (const path of paths) expect(read(path), path).not.toContain(name);
+    }
+    for (const path of paths) expect(read(path), path).not.toContain('openssl rand');
+  });
   it('removes IMAJIN_APP_CLAIM_CODE from supported configuration, runtime code and operator docs', () => {
     expect(ENV_NAMES).not.toContain('IMAJIN_APP_CLAIM_CODE');
     const paths = [
@@ -215,7 +226,7 @@ describe('deploy environment guard', () => {
       expect(result.stderr).toContain('claim at /events/claim after boot');
       expect(result.stderr).not.toMatch(/^error:/m);
       expect(result.stdout).toContain('Environment validated');
-      for (const secret of [env.WEBHOOK_SECRET, env.DATABASE_URL]) {
+      for (const secret of [env.DATABASE_URL]) {
         expect(result.stdout + result.stderr).not.toContain(secret);
       }
     } finally {
@@ -263,8 +274,7 @@ describe('deploy environment guard', () => {
     ['APP_DB_SCHEMA', 'other'], ['NEXT_PUBLIC_BASE_PATH', ''],
     ['NEXT_PUBLIC_DOMAIN', 'other'], ['NEXT_PUBLIC_SERVICE_PREFIX', ''],
     ['IMAJIN_ENV', ''], ['IMAJIN_APP_DID', 'invalid'],
-    ['IMAJIN_APP_AUD', 'jin.imajin.ai'],
-    ['WEBHOOK_SECRET', 'short'], ['ENABLE_TICKET_MIGRATION', 'true'],
+    ['IMAJIN_APP_AUD', 'jin.imajin.ai'], ['ENABLE_TICKET_MIGRATION', 'true'],
     ['IMAJIN_APP_KEYSTORE', './relative.json'],
   ])('refuses %s drift', (name, value) => {
     expect(validateEnvironment({ ...validEnv(), [name]: value }, 'dev', () => true).join('\n')).toContain(name);
@@ -287,7 +297,7 @@ describe('deploy environment guard', () => {
       expect(checkFile('dev', file)).toHaveLength(2);
       const rejected = cli('dev', file);
       expect(rejected.status).toBe(1);
-      expect(rejected.stdout + rejected.stderr).not.toContain(env.WEBHOOK_SECRET);
+      expect(rejected.stdout + rejected.stderr).not.toContain(env.DATABASE_URL);
       expect(cli('dev', file, 'extra').status).toBe(2);
       expect(cli('dev', join(dir, 'missing')).status).toBe(2);
     } finally {
@@ -297,6 +307,21 @@ describe('deploy environment guard', () => {
 });
 
 describe('standalone pm2 and deploy contract', () => {
+  it('keeps the vault upgrade prerequisite before deployment commands and retains signed callbacks', () => {
+    const deploy = read('docs/DEPLOY.md');
+    const prerequisite = deploy.indexOf('**Upgrade order (each environment separately):**');
+    expect(prerequisite).toBeGreaterThan(-1);
+    expect(prerequisite).toBeLessThan(deploy.indexOf('bash scripts/deploy.sh dev'));
+    expect(deploy).toContain('ima-jin/imajin-ai#2801');
+    expect(deploy).toContain('**Sync manifest secrets**');
+    expect(deploy).toContain('**before upgrading this app**');
+    expect(deploy).toContain('exit status 1');
+    expect(deploy).toContain('## Kernel-signed callbacks');
+    expect(deploy).toContain('imajin-ai#2800 / #2798');
+    const { dependencies } = JSON.parse(read('package.json'));
+    expect(dependencies['@ima-jin/auth']).toBe('0.8.18');
+    expect(dependencies['@ima-jin/auth-client']).toBe('0.8.18');
+  });
   it('documents fresh vault issuance and QR invalidation at cutover without reissue', () => {
     const deploy = read('docs/DEPLOY.md');
     expect(deploy.split('\n')).toContain('existing ticket QRs are invalidated at cutover; no reissue');

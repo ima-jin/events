@@ -14,8 +14,6 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@ima-jin/auth-client', () => ({
   loadAppSigningKey: mocks.loadAppSigningKey,
-}));
-vi.mock('@/lib/app-service-token', () => ({
   createAppServiceTokenProvider: mocks.createAppServiceTokenProvider,
 }));
 

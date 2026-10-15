@@ -1,8 +1,12 @@
 /**
  * Tests for app/api/webhook/settlement/route.ts: the receipt snapshot written to the order when a
- * settlement.completed event arrives — authenticated in constant time, failing closed.
+ * settlement.completed event arrives — authenticated by a kernel signature, failing closed.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { setupKernelWebhooks, signedRequest, discovery, foreignKey, type SignedRequestOptions } from '../../test/kernel-webhook';
+import { configureEventsWebhookNonceStore } from '@/lib/kernel-webhook';
+
+setupKernelWebhooks();
 
 const mocks = vi.hoisted(() => {
   const where = vi.fn().mockResolvedValue(undefined);
@@ -15,7 +19,6 @@ vi.mock('@/db', () => ({ db: { update: mocks.update }, orders: {} }));
 
 import { POST } from '../../app/api/webhook/settlement/route';
 
-const SECRET = 'receipt-secret';
 const PAYLOAD = {
   orderId: 'ord_1',
   totalAmount: 50,
@@ -25,9 +28,8 @@ const PAYLOAD = {
   chain: [{ did: 'did:imajin:organizer', amount: 48, role: 'seller' }],
 };
 
-function call(body: unknown, secret: string | null = SECRET) {
-  const headers = new Headers(secret === null ? {} : { 'x-webhook-secret': secret });
-  return POST({ headers, json: async () => body } as never);
+function call(body: unknown, options: SignedRequestOptions = {}) {
+  return POST(signedRequest('/api/webhook/settlement', body, options) as never);
 }
 
 /** The `fairSettlement` snapshot the route wrote to the order. */
@@ -37,7 +39,6 @@ function settlementWritten(): Record<string, unknown> {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  process.env.WEBHOOK_SECRET = SECRET;
 });
 
 describe('POST /api/webhook/settlement', () => {
@@ -61,20 +62,48 @@ describe('POST /api/webhook/settlement', () => {
   it('answers 400 without an orderId', async () => {
     expect((await call({ ...PAYLOAD, orderId: undefined })).status).toBe(400);
   });
-
-  it.each([
-    ['a wrong secret of the same length', 'x'.repeat(SECRET.length)],
-    ['a longer secret', `${SECRET}-extra`],
-    ['no header', null],
-  ])('answers 401 for %s and writes nothing', async (_label, secret) => {
-    expect((await call(PAYLOAD, secret)).status).toBe(401);
+  it.each(['audience', 'kid', 'timestamp', 'nonce', 'signature'])('rejects a missing x-kernel-%s header', async (header) => {
+    const request = signedRequest('/api/webhook/settlement', PAYLOAD);
+    request.headers.delete(`x-kernel-${header}`);
+    expect((await POST(request as never)).status).toBe(401);
     expect(mocks.update).not.toHaveBeenCalled();
   });
 
-  it('fails closed with 401 when WEBHOOK_SECRET is not configured', async () => {
-    delete process.env.WEBHOOK_SECRET;
+  it.each([
+    ['stale', { timestampOffsetSeconds: -301 }],
+    ['future', { timestampOffsetSeconds: 301 }],
+    ['tampered', { tampered: true }],
+    ['foreign signer', { privateKey: foreignKey.privateKey }],
+    ['wrong audience', { audience: 'did:imajin:another-app' }],
+    ['unsigned', { unsigned: true }],
+    ['legacy header', { unsigned: true, headers: { 'x-webhook-secret': 'fake-retired-credential' } }],
+  ])('rejects %s without updating the order', async (_label, options) => {
+    expect((await call(PAYLOAD, options)).status).toBe(401);
+    expect(mocks.update).not.toHaveBeenCalled();
+  });
 
-    expect((await call(PAYLOAD, 'undefined')).status).toBe(401);
+  it('rejects a replay, including after recreating the adapter', async () => {
+    const request = signedRequest('/api/webhook/settlement', PAYLOAD);
+    expect((await POST(request.clone() as never)).status).toBe(200);
+    delete (globalThis as Record<symbol, unknown>)[Symbol.for('@ima-jin/events:kernel-webhook-nonce-store')];
+    expect((await POST(request as never)).status).toBe(401);
+    expect(mocks.update).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['not-json', 'null', '[]'])('answers 400 for signed invalid payload %s', async (body) => {
+    expect((await call(body)).status).toBe(400);
+    expect(mocks.update).not.toHaveBeenCalled();
+  });
+
+  it('answers 503 when discovery fails', async () => {
+    discovery.mockRejectedValue(new Error('discovery down'));
+    expect((await call(PAYLOAD)).status).toBe(503);
+    expect(mocks.update).not.toHaveBeenCalled();
+  });
+
+  it('answers 503 when replay storage fails', async () => {
+    configureEventsWebhookNonceStore({ consume: () => { throw new Error('store down'); } });
+    expect((await call(PAYLOAD)).status).toBe(503);
     expect(mocks.update).not.toHaveBeenCalled();
   });
 

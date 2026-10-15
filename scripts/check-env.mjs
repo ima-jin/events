@@ -17,7 +17,7 @@ const REQUIRED = [
   'DATABASE_URL', 'APP_DB_SCHEMA', 'IMAJIN_KERNEL_URL', 'IMAJIN_AUTH_URL',
   'AUTH_SERVICE_URL', 'NEXT_PUBLIC_IMAJIN_AUTH_URL', 'NEXT_PUBLIC_AUTH_URL',
   'NEXT_PUBLIC_APP_URL', 'NEXT_PUBLIC_EVENTS_URL', 'NEXT_PUBLIC_BASE_PATH',
-  'IMAJIN_APP_DID', 'IMAJIN_APP_KEYSTORE', 'WEBHOOK_SECRET',
+  'IMAJIN_APP_DID', 'IMAJIN_APP_KEYSTORE',
 ];
 const FORBIDDEN = [
   'IMAJIN_APP_PRIVATE_KEY', 'AUTH_INTERNAL_API_KEY', 'PROFILE_INTERNAL_API_KEY',
@@ -73,9 +73,6 @@ function checkTargetSettings(env, target, problems) {
 function checkIdentityAndSecrets(env, target, problems) {
   if (!/^did:imajin:[a-zA-Z0-9_-]+$/.test(env.IMAJIN_APP_DID || '')) problems.push('IMAJIN_APP_DID: invalid DID');
   if (env.IMAJIN_APP_AUD && env.IMAJIN_APP_AUD !== 'events') problems.push('IMAJIN_APP_AUD: must be events (registry slug)');
-  for (const name of ['WEBHOOK_SECRET']) {
-    if ((env[name] || '').length < 64) problems.push(`${name}: requires at least 32 random bytes (64 hex characters)`);
-  }
   if (env.ENABLE_TICKET_MIGRATION && env.ENABLE_TICKET_MIGRATION !== 'false') {
     problems.push('ENABLE_TICKET_MIGRATION: leave unset/false until cutover soak sign-off');
   }
