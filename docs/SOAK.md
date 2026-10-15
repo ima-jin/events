@@ -254,8 +254,11 @@ dominated by install/build/migration/roll-forward. Health failure can take about
 208 seconds per endpoint (30 × 5 seconds + 29 × 2 seconds). Build timeout is 30 minutes.
 These are estimates, **not a claim of measured host rehearsal** or zero downtime.
 
-Rehearsal writes a private timestamped timing report under `~/.imajin/`, including
-step durations, status and recovery outcome, without pm2/env values. Attach only its
+Rehearsal writes `~/.imajin/events-rehearsal-dev-<UTC timestamp>.json` (0600) on
+success or failure. It includes `status`, `durationMs`, `steps` with safe labels/status/
+duration, and an optional structured build `decision`, without pm2/env values, raw
+errors, refs or paths. Recovery command outcomes appear in the step sequence.
+Rollback and rehearsal both print per-command elapsed times. Attach only the report's
 safe timing summary to #2529, with actual UTC window, kernel/standalone refs and the
 post-rehearsal flow pass. A missing kernel build is an operator decision, not a reason
 to change the kernel in this PR:

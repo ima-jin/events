@@ -383,7 +383,7 @@ export async function main(argv, dependencies = {}) {
     context.report = report;
     lock = acquireLock(context);
     await execute(context, action, {
-      run: timedCommand(dependencies.command ?? command, report), readTracking: dependencies.tracking ?? tracking,
+      run: timedCommand(dependencies.command ?? command, report, output), readTracking: dependencies.tracking ?? tracking,
       output, sleep: dependencies.sleep,
     });
     result = 0;

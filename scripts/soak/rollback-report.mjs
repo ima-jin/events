@@ -18,7 +18,7 @@ function step(report, label, started, status) {
 }
 
 /** Labels are caller-owned constants; never include arguments, output, or errors. */
-export function timedCommand(run, report) {
+export function timedCommand(run, report, output) {
   return (tool, args, options = {}) => {
     const started = performance.now();
     let status = 'fail';
@@ -27,7 +27,9 @@ export function timedCommand(run, report) {
       status = 'pass';
       return result;
     } finally {
-      step(report, options.step ?? 'Private subprocess', started, status);
+      const label = options.step ?? 'Private subprocess';
+      step(report, label, started, status);
+      output?.log(`${label}: ${status}; elapsed ${Math.round(performance.now() - started)}ms.`);
     }
   };
 }
