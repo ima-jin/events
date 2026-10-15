@@ -34,7 +34,7 @@ function parseOutcome(value: unknown): ChargeOutcome | null {
   if (!isRecord(value) || typeof value.pledgeId !== 'string') return null;
   if (value.status === 'charged') return { pledgeId: value.pledgeId, status: 'charged' };
   if (value.status === 'failed' && typeof value.code === 'string' &&
-      /^[A-Za-z][A-Za-z0-9_]{0,127}$/.test(value.code)) {
+      /^[A-Za-z]\w{0,127}$/.test(value.code)) {
     return { pledgeId: value.pledgeId, status: 'failed', code: value.code };
   }
   return null;
@@ -76,13 +76,13 @@ Promise<ChargeBatch | ChargeFailure> {
 /** A concurrent replay cannot overwrite terminal state or a changed payment binding. */
 export async function recordCampaignCharges(confirmed: Pledge[], results: ChargeOutcome[]): Promise<void> {
   const outcomes = new Map(results.map((result) => [result.pledgeId, result]));
-  for (const pledge of confirmed) {
+  await Promise.all(confirmed.map((pledge) => {
     const result = outcomes.get(pledge.id);
     if (!result) throw new Error('Missing validated pledge outcome');
     const update = result.status === 'charged'
       ? { status: 'charged', chargedAt: new Date() }
       : { status: 'failed', failureReason: result.code };
-    await db.update(pledges).set(update).where(and(
+    return db.update(pledges).set(update).where(and(
       eq(pledges.id, pledge.id),
       eq(pledges.eventId, pledge.eventId),
       eq(pledges.status, 'confirmed'),
@@ -94,5 +94,5 @@ export async function recordCampaignCharges(confirmed: Pledge[], results: Charge
       sql`${pledges.stripePaymentMethodId} is not distinct from ${pledge.stripePaymentMethodId}`,
       sql`${pledges.metadata} is not distinct from ${pledge.metadata === null ? null : JSON.stringify(pledge.metadata)}::jsonb`,
     ));
-  }
+  }));
 }
