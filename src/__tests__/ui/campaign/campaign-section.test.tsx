@@ -104,7 +104,6 @@ describe('pledge and card setup', () => {
     expect(requestBody(fetch, '/pledge')).toEqual({ eventId: 'evt_1', amount: 2500 });
     expect(loadStripeDouble).toHaveBeenCalledWith(sellerPublishableKey);
     expect(loadStripeDouble.mock.calls.every(([key]) => key === sellerPublishableKey)).toBe(true);
-    expect(loadStripeDouble).not.toHaveBeenCalledWith('pk_test_platform');
     expect(JSON.parse(globalThis.sessionStorage.getItem('events.campaign.setup')!)).toMatchObject({
       publishableKey: sellerPublishableKey,
     });
@@ -164,7 +163,7 @@ describe('pledge and card setup', () => {
   });
 
   it.each(['missing seller key', 'invalid seller key', 'failed loader'])(
-    'does not mount or confirm a card for %s, even with a platform env key',
+    'does not mount or confirm a card for %s',
     async (failure) => {
       const overrides: Parameters<typeof campaignRoutes>[2] = failure === 'failed loader' ? {} : {
         '/pledge': jsonResponse({

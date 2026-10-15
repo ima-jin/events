@@ -47,6 +47,20 @@ function sourceFiles(directory: string, extension = /\.(?:[cm]?js|tsx?)$/): stri
 }
 
 describe('blank-valued env contract', () => {
+  it('keeps the platform Stripe key out of app source, env inventory and operator docs', () => {
+    const name = 'NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY';
+    expect(ENV_NAMES).not.toContain(name);
+    const paths = [
+      ...readdirSync(root).filter((file) => file.startsWith('.env') && file.endsWith('.example')),
+      'README.md', 'instrumentation.ts', 'middleware.ts',
+      ...sourceFiles(join(root, 'docs'), /\.md$/),
+      ...sourceFiles(join(root, 'src')), ...sourceFiles(join(root, 'app')),
+    ];
+    for (const path of paths) {
+      const content = path.startsWith(root) ? readFileSync(path, 'utf8') : read(path);
+      expect(content, path).not.toContain(name);
+    }
+  });
   it('has no shared webhook credential or manual generation instructions in operational surfaces', () => {
     const paths = [
       '.env.example', '.env.dev.example', '.env.prod.example', 'scripts/check-env.mjs',
@@ -188,6 +202,21 @@ describe('deploy workflow with sandboxed command fixtures', () => {
 });
 
 describe('deploy environment guard', () => {
+  it.each(['dev', 'prod'])('only warns about a stale platform Stripe key on %s without leaking its value', (target) => {
+    const warnings: string[] = [];
+    expect(validateEnvironment({
+      ...validEnv(target), NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: 'never-print-stripe-fixture',
+    }, target, () => true, warnings)).toEqual([]);
+    expect(warnings).toEqual([
+      "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY is ignored; the seller's key comes from the kernel. Delete it from the env file.",
+    ]);
+    expect(warnings.join('\n')).not.toContain('never-print-stripe-fixture');
+    const blankWarnings: string[] = [];
+    expect(validateEnvironment({
+      ...validEnv(target), NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: '',
+    }, target, () => true, blankWarnings)).toEqual([]);
+    expect(blankWarnings).toEqual([]);
+  });
   it.each(['dev', 'prod'])('accepts the %s first-boot contract', (target) => {
     expect(validateEnvironment(validEnv(target), target, () => false)).toEqual([]);
   });
@@ -218,15 +247,17 @@ describe('deploy environment guard', () => {
     const file = join(dir, '.env.local');
     const env = validEnv();
     env.IMAJIN_APP_KEYSTORE = join(dir, 'events.dev.keystore.json');
+    env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY = 'never-print-stripe-fixture';
     try {
       writeFileSync(file, Object.entries(env).map(([key, value]) => `${key}=${value}`).join('\n'), { mode: 0o600 });
       const result = spawnSync(process.execPath, [join(root, 'scripts/check-env.mjs'), 'dev', file], { encoding: 'utf8' });
       expect(result.status).toBe(0);
       expect(result.stderr).toMatch(/^warning: No keystore found/m);
       expect(result.stderr).toContain('claim at /events/claim after boot');
+      expect(result.stderr).toContain("warning: NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY is ignored; the seller's key comes from the kernel. Delete it from the env file.");
       expect(result.stderr).not.toMatch(/^error:/m);
       expect(result.stdout).toContain('Environment validated');
-      for (const secret of [env.DATABASE_URL]) {
+      for (const secret of [env.DATABASE_URL, env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY]) {
         expect(result.stdout + result.stderr).not.toContain(secret);
       }
     } finally {
