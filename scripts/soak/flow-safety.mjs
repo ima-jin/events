@@ -35,7 +35,7 @@ export function options(argv) {
   if (!['dev', 'prod'].includes(result.env) || !result.authFile) throw new Error('env and auth-file are required.');
   const url = new URL(result.baseUrl);
   if (url.protocol !== 'https:' || url.username || url.password || url.port ||
-      url.search || url.hash || url.pathname.replaceAll(/\/+$/g, '') !== '/events') {
+      url.search || url.hash || !['/events', '/events/'].includes(url.pathname)) {
     throw new Error('Base URL must be HTTPS with /events and no credentials, port, query or fragment.');
   }
   if (!result.prodSmoke && (url.hostname !== DEV_HOST || result.env !== 'dev')) {
@@ -77,24 +77,35 @@ export function identifier(value) {
 
 export function transport(config, auth, fetcher = fetch) {
   const origin = new URL(config.baseUrl).origin;
-  return async (path, { method = 'GET', body, role, json = true, statuses = [200, 201] } = {}) => {
-    if (config.prodSmoke && !['GET', 'HEAD'].includes(method)) throw new Error('Prod smoke is read-only.');
+  function approvedUrl(path) {
     const url = new URL(path, `${config.baseUrl}/`);
     if (url.origin !== origin || url.username || url.password ||
         !(url.pathname === '/events' || url.pathname.startsWith('/events/') ||
           url.pathname === '/auth/.well-known/kernel-signing-key')) {
       throw new Error('Request escaped the approved origin/path.');
     }
+    return url;
+  }
+  return async (path, { method = 'GET', body, role, json = true, statuses = [200, 201] } = {}) => {
+    if (config.prodSmoke && !['GET', 'HEAD'].includes(method)) throw new Error('Prod smoke is read-only.');
+    const url = approvedUrl(path);
     const headers = new Headers();
     // Never send arbitrary fixture headers (Host, forwarding headers, etc.).
     for (const key of ['cookie', 'authorization', 'x-app-did', 'x-app-authorization']) {
       if (role && auth[role]?.[key]) headers.set(key, auth[role][key]);
     }
     if (body !== undefined) headers.set('content-type', 'application/json');
-    const response = await fetcher(url.href, {
-      method, headers, body: body === undefined ? undefined : JSON.stringify(body),
-      redirect: 'manual', signal: AbortSignal.timeout(15_000),
-    });
+    async function send(destination, attempt = 0) {
+      const response = await fetcher(destination.href, {
+        method, headers, body: body === undefined ? undefined : JSON.stringify(body),
+        redirect: 'manual', signal: AbortSignal.timeout(15_000),
+      });
+      if (!['GET', 'HEAD'].includes(method) || ![301, 302, 303, 307, 308].includes(response.status)) return response;
+      const location = response.headers.get('location');
+      if (!location || attempt === 5) throw new Error('Missing redirect location or redirect limit exceeded.');
+      return send(approvedUrl(new URL(location, destination).href), attempt + 1);
+    }
+    const response = await send(url);
     if (!statuses.includes(response.status)) throw new Error(`Unexpected HTTP ${response.status}.`);
     if (json) return response.json();
     const text = await response.text();
@@ -107,9 +118,9 @@ export function transport(config, auth, fetcher = fetch) {
 export function markdown(rows) {
   const cell = (value) => String(value)
     .replaceAll(/did:[^\s|]+/g, '[identity]')
-    .replaceAll(/[\w.+-]+@[\w.-]+/g, '[email]')
     .replaceAll(/(?:evt_|tkt_|ord_|plg_|cs_|seti_)[\w-]+/g, '[id]')
-    .replaceAll('|', '/').replaceAll('\n', ' ');
+    .replaceAll('|', '/').replaceAll('\n', ' ')
+    .split(' ').map((word) => word.includes('@') ? '[email]' : word).join(' ');
   return ['# Events flow pass', '', '| Step | Result | Duration | Note |',
     '| --- | --- | --- | --- |', ...rows.map((row) =>
       `| ${cell(row.name)} | ${row.result} | ${(row.ms / 1000).toFixed(2)}s | ${cell(row.note)} |`),

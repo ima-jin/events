@@ -115,7 +115,7 @@ describe('flow pass safety contract', () => {
     expect(() => identifier(undefined)).toThrow();
   });
   it('enforces GET/HEAD even when transport is called directly in prod smoke', async () => {
-    const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response('{}'));
+    const fetcher = vi.fn<typeof fetch>(async () => new Response('{}'));
     const request = transport({ ...options([...args(), '--prod-smoke']) }, {}, fetcher);
     for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) await expect(request('api/checkout', { method })).rejects.toThrow('read-only');
     expect(fetcher).not.toHaveBeenCalled();
@@ -133,6 +133,22 @@ describe('flow pass safety contract', () => {
     const report = markdown([{ name: 'evt_private did:imajin:private', result: 'pass', ms: 1, note: 'person@example.test | ord_private\nnote' }]);
     expect(report).not.toMatch(/person@|did:|evt_private|ord_private/);
     expect(report).toContain('[email]');
+  });
+  it('follows legacy redirects only within approved paths and never repeats writes', async () => {
+    const redirect = (location: string) => new Response('', { status: 302, headers: { location } });
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(redirect('/events/e/evt_fixture'))
+      .mockResolvedValueOnce(new Response('<html>fixture</html>'));
+    const request = transport(options([...args(), '--prod-smoke']), {}, fetcher);
+    expect(await request('/events/old', { json: false })).toContain('fixture');
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    for (const destination of ['https://evil.test/events', '/auth/api/session']) {
+      await expect(transport(options(args()), {}, async () => redirect(destination))('/events/old')).rejects.toThrow('escaped');
+    }
+    await expect(transport(options(args()), {}, async () => redirect('/events/loop'))('/events/loop')).rejects.toThrow('limit');
+    const write = vi.fn<typeof fetch>(async () => redirect('/events/api/checkout'));
+    await expect(transport(options(args()), {}, write)('api/checkout', { method: 'POST' })).rejects.toThrow('302');
+    expect(write).toHaveBeenCalledTimes(1);
   });
 });
 

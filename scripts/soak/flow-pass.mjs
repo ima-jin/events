@@ -29,20 +29,22 @@ export async function runFlows(config, auth, { fetcher = fetch, output = console
   }
   async function poll(read, matches) {
     const deadline = Date.now() + config.timeout;
-    do {
+    async function attempt() {
       const value = await read();
       if (matches(value)) return value;
+      if (Date.now() >= deadline) throw new Error('Timed out waiting for state transition.');
       await pause(2000);
-    } while (Date.now() < deadline);
-    throw new Error('Timed out waiting for state transition.');
+      return attempt();
+    }
+    return attempt();
   }
   function browser(name, url, instruction) {
     // Only validated Stripe checkout URLs or locally constructed public URLs reach operator output.
-    output.log(`${name}: ${url}\n${instruction}`);
+    output.log(`${name}: ${JSON.stringify(url)}\n${instruction}`);
   }
-  async function render(name, path) {
+  async function render(name, path, role) {
     return step(name, async () => {
-      const html = await request(path, { json: false });
+      const html = await request(path, { json: false, role });
       requireValue(html.includes('<html') || html.includes('<!DOCTYPE') || html.includes('<!doctype'));
       requireValue(!html.includes('This page could not be found'));
     }, 'HTML fetched; visual/browser behavior remains operator verification.');
@@ -55,9 +57,7 @@ export async function runFlows(config, auth, { fetcher = fetch, output = console
     manual('Embed render', 'No events embed HTTP route exists here; verify the real consuming iframe/registration embed in a browser.');
     const urls = config.legacySamples ?? auth.legacyUrls ?? [];
     if (urls.length === 0) manual('Legacy shared URLs', 'Supply private legacyUrls samples from loader rows or --legacy-urls.');
-    for (const [index, url] of urls.entries()) {
-      await render(`Legacy shared URL sample ${index + 1}`, url);
-    }
+    await Promise.all(urls.map((url, index) => render(`Legacy shared URL sample ${index + 1}`, url)));
   }
   await step('Health', async () => {
     const health = await request('api/health');
@@ -88,7 +88,7 @@ export async function runFlows(config, auth, { fetcher = fetch, output = console
   const created = await step('Create event', () => request('api/events', {
     method: 'POST', role: 'organizer', body: {
       title: 'Cutover soak fixture', description: 'Disposable dev soak fixture',
-      startsAt: new Date(Date.now() + 7 * 86400_000).toISOString(), chatEnabled: false,
+      startsAt: new Date(Date.now() + 7 * 86_400_000).toISOString(), chatEnabled: false,
       tickets: [
         { name: 'RSVP', price: 0, currency: 'CAD', quantity: 20 },
         { name: 'Standard', price: 100, currency: 'CAD', quantity: 20 },
@@ -222,20 +222,20 @@ export async function runFlows(config, auth, { fetcher = fetch, output = console
   }
 
   async function dashboards() {
-    for (const [name, path, json] of [
+    await Promise.all([
       ['Organizer events', 'api/events/mine', true],
       ['Organizer sales', `${eventPath}/sales`, true],
       ['Organizer guests', `${eventPath}/guests`, true],
       ['Sales export', `${eventPath}/sales/export`, false],
       ['Guest export', `${eventPath}/guests/export.csv`, false],
-    ]) await step(name, () => request(path, { role: 'organizer', json }), 'Fetched privately; response/export contents never recorded.');
-    await render('Organizer dashboard render', 'dashboard');
+    ].map(([name, path, json]) => step(name, () => request(path, { role: 'organizer', json }), 'Fetched privately; response/export contents never recorded.')));
+    await render('Organizer dashboard render', 'dashboard', 'organizer');
   }
 
   async function campaign() {
     const data = await step('Create campaign', () => request('api/events', {
       method: 'POST', role: 'organizer', body: {
-        title: 'Cutover soak campaign', startsAt: new Date(Date.now() + 7 * 86400_000).toISOString(),
+        title: 'Cutover soak campaign', startsAt: new Date(Date.now() + 7 * 86_400_000).toISOString(),
         eventType: 'campaign', targetAmount: 100, chatEnabled: false,
       },
     }));
