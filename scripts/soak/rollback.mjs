@@ -16,7 +16,7 @@ import { createReport, finishReport, timedCommand, timedPhase } from './rollback
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const HASH = /^[a-f0-9]{64}$/;
 const REF = /^[a-f0-9]{40,64}$/;
-const TAG = /^[0-9]{4}_[a-zA-Z0-9_-]+$/;
+const TAG = /^\d{4}_[a-zA-Z0-9_-]+$/;
 class Refusal extends Error {}
 const refuse = (message, decision) => {
   const error = new Refusal(message);
@@ -120,7 +120,7 @@ function publicHealth(env) {
 
 function readRecord(context) {
   const files = readdirSync(context.directory).filter((name) =>
-    new RegExp(`^events-rollback-${context.target}-[0-9T_Z-]+\\.json$`).test(name)).sort();
+    new RegExp(String.raw`^events-rollback-${context.target}-[0-9T_Z-]+\.json$`).test(name)).sort();
   if (files.length === 0) return undefined;
   const file = join(context.directory, files.at(-1));
   privateFile(file);
