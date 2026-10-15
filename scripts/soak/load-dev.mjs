@@ -6,7 +6,7 @@ import { createInterface } from 'node:readline';
 import postgres from 'postgres';
 import { generateEventKeypair } from '../../src/lib/event-keypair.mjs';
 import {
-  argumentsFor, artifactColumns, assertDirectory, assertTarget, catalog, connectionOptions, environment,
+  argumentsFor, artifactColumns, assertDirectory, assertTarget, catalog, connectionOptions, environment, inOrder,
   operatorPath, quote, readManifest, refuse, runCli, serverIdentity, tableList, tableSql, transaction,
 } from './common.mjs';
 import { POLICY, SCRUB_VERSION, TABLES } from './policy.mjs';
@@ -69,10 +69,10 @@ async function snapshot(sql, backup) {
     await tx.unsafe(`LOCK TABLE ${tableList()} IN ACCESS EXCLUSIVE MODE`);
     await tx.unsafe(`CREATE SCHEMA ${quote(backup)}`);
     await tx.unsafe(`REVOKE ALL ON SCHEMA ${quote(backup)} FROM PUBLIC`);
-    for await (const table of TABLES) {
+    await inOrder(TABLES, async (table) => {
       await tx.unsafe(`CREATE TABLE ${tableSql(table, backup)} AS TABLE ${tableSql(table)}`);
       await tx.unsafe(`REVOKE ALL ON TABLE ${tableSql(table, backup)} FROM PUBLIC`);
-    }
+    });
   });
 }
 
@@ -91,7 +91,7 @@ export async function loadData(sql, { directory, env, manifest, commit = false }
   validateManifest(manifest);
   assertTarget(env, manifest);
   await assertDirectory(directory);
-  for await (const table of TABLES) await visitRows(directory, table, manifest.tables[table]);
+  await inOrder(TABLES, (table) => visitRows(directory, table, manifest.tables[table]));
   await transaction(sql, true, (tx) => validateTarget(tx, env, manifest));
   for (const table of TABLES) output.log(`${table}: ${manifest.tables[table].count} rows planned`);
   if (!commit) {
@@ -109,10 +109,10 @@ export async function loadData(sql, { directory, env, manifest, commit = false }
       await tx.unsafe(`LOCK TABLE ${tableList()} IN ACCESS EXCLUSIVE MODE`);
       await validateTarget(tx, env, manifest); // Recheck catalog under exclusive locks.
       await tx.unsafe(`TRUNCATE TABLE ${tableList()} RESTART IDENTITY`);
-      for await (const table of TABLES) {
+      await inOrder(TABLES, (table) => {
         // Revalidate bytes on the loading pass; any mutation rolls the entire load back.
-        await visitRows(directory, table, manifest.tables[table], (row) => insertRow(tx, table, row));
-      }
+        return visitRows(directory, table, manifest.tables[table], (row) => insertRow(tx, table, row));
+      });
     });
     output.log('Committed: eight events tables replaced; snapshot retained.');
     return { committed: true, backup };

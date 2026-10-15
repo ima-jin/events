@@ -17,6 +17,8 @@ export const quote = (identifier) => `"${identifier.replaceAll('"', '""')}"`;
 export const tableSql = (table, schema = 'events') => `${quote(schema)}.${quote(table)}`;
 export const tableList = () => [...TABLES].reverse().map((table) => tableSql(table)).join(', ');
 export const artifactColumns = (table) => Object.keys(POLICY[table]).filter((name) => POLICY[table][name] !== 'regenerate');
+/** Only used for the fixed eight-table list: preserve FK order without concurrent transactions. */
+export const inOrder = (items, work) => items.reduce((pending, item) => pending.then(() => work(item)), Promise.resolve());
 /** Operator inputs stay beneath jin's home; canonicalize parents to reject symlink escapes. */
 export async function operatorPath(path) {
   const root = await realpath(homedir());
@@ -115,7 +117,8 @@ export async function catalog(sql) {
   for (const table of TABLES) {
     const actual = columns.filter((column) => column.table_name === table);
     const names = actual.map((column) => column.column_name).sort((a, b) => a.localeCompare(b));
-    refuse(JSON.stringify(names) !== JSON.stringify(Object.keys(POLICY[table]).sort()), 'Unclassified or missing schema columns.');
+    const expected = Object.keys(POLICY[table]).sort((a, b) => a.localeCompare(b));
+    refuse(JSON.stringify(names) !== JSON.stringify(expected), 'Unclassified or missing schema columns.');
     refuse(actual.some((column) => column.is_identity !== 'NO'
       || column.is_generated !== 'NEVER' || /nextval\s*\(/i.test(column.column_default || '')),
     'Sequence/generated-column schema drift is unsupported; no sequences exist in the classified schema.');
