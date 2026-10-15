@@ -76,6 +76,10 @@ Exit status is 1 for any automated failure/refusal, 0 otherwise; **manual is not
   hold/cancel an unconfirmed ticket, free RSVP, holder QR image retrieval, old QR rejection,
   organizer events/sales/guests and exports, authenticated dashboard HTML, event cancellation,
   campaign create/publish, test-mode checkout and SetupIntent evidence.
+- **Observable notification bookkeeping:** request a confirmation resend for the newly
+  created RSVP and poll its guest-list `lastEmailSentAt`. The buyer test account must
+  have a resolvable DEV inbox. This timestamp records the request; publishing is best-effort
+  and it does **not** prove provider acceptance, inbox delivery or notification UI delivery.
 - **Browser-assisted automated (`--interactive`):** scan the newly issued QR into the private
   file; script submits check-in and asserts `usedAt`. Complete the **printed** hosted Stripe
   checkout with card **4242 4242 4242 4242**, a future expiry and any CVC. Script polls for a

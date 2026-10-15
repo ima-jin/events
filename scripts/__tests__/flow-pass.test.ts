@@ -44,6 +44,8 @@ function fixture({ live = false, createFail = false, settleFail = false, setupLi
     if (path.endsWith('/checkout/free')) return json({ success: true, ticketId: 'tkt_fixture' });
     if (path.endsWith('/hold')) return json({ ticket: { id: 'held_fixture', status: 'held' } });
     if (path.endsWith('/cancel')) return json({ ticket: { id: 'held_fixture', status: 'cancelled' } });
+    if (path.endsWith('/resend-email')) return json({ success: true, email: 'private@example.test', lastEmailSentAt: '2026-10-15' });
+    if (path.endsWith('/guests')) return json({ guests: [{ id: 'tkt_fixture', lastEmailSentAt: '2026-10-15' }] });
     if (path.endsWith('/qr')) return json({ qrCodeDataUri: 'data:image/png;base64,fixture' });
     if (path.includes('/old/check-in')) return json({ error: 'Invalid or expired ticket QR token' }, 400);
     if (path.endsWith('/check-in')) return json({ ticket: { id: 'tkt_fixture', usedAt: '2026-10-15' } });
@@ -181,7 +183,8 @@ describe('scripted HTTP flows', () => {
       legacyUrls: ['/events/e/evt_legacy'],
     }, { fetcher, output: quiet, readAuth: () => ({ newTicketTokens: { tkt_fixture: 'scanned-private-token' } }) });
     expect(rows.filter((row) => row.result === 'fail')).toEqual([]);
-    for (const name of ['New QR check-in', 'Paid order refund', 'Campaign settle', 'Settlement callback effect', 'Old QR rejected cleanly (ruling b)']) {
+    for (const name of ['New QR check-in', 'Paid order refund', 'Campaign settle', 'Settlement callback effect',
+      'Old QR rejected cleanly (ruling b)', 'Confirmation notification bookkeeping']) {
       expect(rows.find((row) => row.name === name)?.result).toBe('pass');
     }
     expect(calls.some((call) => call.path.endsWith('/settle'))).toBe(true);

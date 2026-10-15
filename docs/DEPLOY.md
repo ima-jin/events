@@ -144,10 +144,12 @@ replace the real authorized dev rehearsal or Ryan's sign-off.
 Per Ryan's 2026-10-14 ruling on ima-jin/imajin-ai#2516, the kernel vault issues a new
 ticket QR secret at cutover. Never copy the old secret or carry it over into the vault.
 
-The kernel deploy configs currently still declare monorepo events entries
-([gap(kernel) #2784](https://github.com/ima-jin/imajin-ai/issues/2784), Refs #2518). Their ownership
-must be removed/reconciled by the kernel cutover work **before** a standalone entry is started,
-otherwise a subsequent kernel deploy can re-point it. This PR makes no kernel changes.
+Kernel dev process ownership was released in ima-jin/imajin-ai#2804. Confirm the
+target environment's kernel deploy config no longer declares the monorepo events entry
+**before** starting standalone, so a later kernel deploy cannot re-point it. Ownership
+release does not preserve a buildable `apps/events`: retain/prepare the compatible
+kernel rollback build separately as described in [SOAK.md](./SOAK.md). This PR makes
+no kernel changes.
 
 At Ryan's authorized dev window (prod only after dev soak sign-off):
 

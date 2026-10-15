@@ -151,7 +151,17 @@ export async function runFlows(config, auth, { fetcher = fetch, output = console
     requireValue(data.success && data.ticketId);
     return data;
   });
-  if (rsvp) await newTicketCheckin(rsvp.ticketId);
+  if (rsvp) {
+    await step('Confirmation notification bookkeeping', async () => {
+      const response = await request(`${eventPath}/tickets/${identifier(rsvp.ticketId)}/resend-email`, {
+        method: 'POST', role: 'organizer', body: {},
+      });
+      requireValue(response.success && response.lastEmailSentAt);
+      await poll(() => request(`${eventPath}/guests`, { role: 'organizer' }),
+        (value) => value.guests?.some((guest) => guest.id === rsvp.ticketId && guest.lastEmailSentAt));
+    }, 'Resend request and guest send timestamp observed. Publish is best-effort; this is NOT proof of inbox delivery.');
+    await newTicketCheckin(rsvp.ticketId);
+  }
   if (auth.oldTicket) {
     await step('Old QR rejected cleanly (ruling b)', async () => {
       const old = auth.oldTicket;
