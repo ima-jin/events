@@ -137,6 +137,9 @@ repair, no migration SQL rewrite, no force flag.
 ## One-time cutover — deferred to #2529 / #2516
 existing ticket QRs are invalidated at cutover; no reissue
 
+Use [SOAK.md](./SOAK.md) for the #2529 scripted flow pass, private test inputs,
+manual evidence gates and rollback rehearsal/results template. Tooling tests do not
+replace the real authorized dev rehearsal or Ryan's sign-off.
 For #2529's loader-only production-shaped dev dataset, follow
 [SOAK-DATA.md](./SOAK-DATA.md): Ryan-operated read-only export, guarded dev dry run/commit,
 retained snapshot and restore. This is not production cutover or permission to run it.
@@ -144,10 +147,12 @@ retained snapshot and restore. This is not production cutover or permission to r
 Per Ryan's 2026-10-14 ruling on ima-jin/imajin-ai#2516, the kernel vault issues a new
 ticket QR secret at cutover. Never copy the old secret or carry it over into the vault.
 
-The kernel deploy configs currently still declare monorepo events entries
-([gap(kernel) #2784](https://github.com/ima-jin/imajin-ai/issues/2784), Refs #2518). Their ownership
-must be removed/reconciled by the kernel cutover work **before** a standalone entry is started,
-otherwise a subsequent kernel deploy can re-point it. This PR makes no kernel changes.
+Kernel dev process ownership was released in ima-jin/imajin-ai#2804. Confirm the
+target environment's kernel deploy config no longer declares the monorepo events entry
+**before** starting standalone, so a later kernel deploy cannot re-point it. Ownership
+release does not preserve a buildable `apps/events`: retain/prepare the compatible
+kernel rollback build separately as described in [SOAK.md](./SOAK.md). This PR makes
+no kernel changes.
 
 At Ryan's authorized dev window (prod only after dev soak sign-off):
 
@@ -188,6 +193,10 @@ Public checks: `https://dev-jin.imajin.ai/events/api/health` and
 `https://jin.imajin.ai/events/api/health`.
 
 ## Rollback and refusal
+
+See [SOAK.md](./SOAK.md) for `scripts/soak/rollback.sh <dev|prod> <record|rollback|rehearse>`,
+safe pre-cutover recording, migration/build refusal paths, timings and dev roll-forward.
+Caddy stays unchanged: first-cutover rollback re-points only the events pm2 process.
 
 `bash scripts/deploy.sh <env> <previous-tag-or-sha>` rebuilds and restarts the prior standalone
 release. Migrations are forward-only; do not roll code back across an incompatible migration.
