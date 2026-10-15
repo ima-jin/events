@@ -100,6 +100,13 @@ IDs are pseudonymized consistently within an export, preserving local foreign-ke
 email/URL/token/payment/external identifiers are neutralized according to the versioned
 [`policy.mjs`](../scripts/soak/policy.mjs). Arbitrary metadata and settlement JSON keys are
 neutralized as well as values, so external registration and settlement bindings do not survive.
+Scrub version **2** trims and lowercases emails before the per-export HMAC, preserving
+case-insensitive email equality. Version-1 artifacts are refused: export fresh data after this change.
+Retained timezone text must be a supported IANA timezone or `UTC`; currencies must be three
+uppercase ASCII letters, matching the app's uppercase storage convention. Enum-like text is
+bounded to lowercase letters/underscores (1–32 characters); name-display and access policies
+use their known app values. Unexpected retained text aborts the export without rewriting it;
+the refusal identifies only the table and column, never the rejected value.
 Registration configuration is restricted to its reviewed safe allowlist. Public display content
 may be retained by policy; this is production-shaped test data, not a guarantee that every
 visible field is anonymous. Do not publish artifacts or treat external pseudonyms as valid
@@ -140,78 +147,22 @@ writers/webhooks and all side effects paused as above. This restores **previous 
 their dev keys**, not production keys or a new scrubbed export. It does not restore schema DDL,
 sequence state, migration history or changes made after the snapshot.
 
-From `/home/jin/dev/events`, replace only the non-secret `backup` literal below with the exact
-retained name printed by the loader, and `directory` with the original artifact directory.
-The guard refuses the placeholder or any name outside the loader's naming pattern. The command
-loads env privately through Node, then reads/validates the same `0600` file with common helpers;
-it does not use inherited connection values. No database URL appears on the command line.
+From `/home/jin/dev/events`, pass the exact retained schema name printed by the loader
+as `--backup-schema-name` (the angle-bracket placeholder below must be replaced).
+Use the original private artifact directory and dev env file, with no inherited connection
+values or inline database URL. Inputs retain the loader's private-file and symlink guards.
+The schema name must match `^events_soak_backup_[A-Za-z0-9_]+$`, fit a Postgres identifier,
+and not be the old documentation placeholder.
 
 ```bash
-node --env-file=/home/jin/dev/events/.env.local --input-type=module <<'NODE'
-import postgres from 'postgres';
-import {
-  assertDirectory, assertTarget, connectionOptions, environment, quote, readManifest, refuse,
-  tableList, tableSql, transaction,
-} from './scripts/soak/common.mjs';
-import { validateManifest, validateTarget } from './scripts/soak/load-dev.mjs';
-import { POLICY, TABLES } from './scripts/soak/policy.mjs';
-
-const backup = 'events_soak_backup_REPLACE_WITH_RETAINED_NAME';
-const directory = '/home/jin/soak/events-NEW';
-
-async function restore() {
-  refuse(!/^events_soak_backup_\d{13}_[a-f0-9]{8}$/.test(backup),
-    'Invalid retained backup schema name.');
-  await assertDirectory(directory);
-  const manifest = await readManifest(`${directory}/manifest.json`);
-  validateManifest(manifest);
-  const env = await environment('/home/jin/dev/events/.env.local');
-  assertTarget(env, manifest); // Exact dev + imajin_dev + events; no prod markers/source endpoint.
-  const client = postgres(env.DATABASE_URL, connectionOptions(env.DATABASE_URL));
-  try {
-    const sql = await client.reserve();
-    try {
-      await transaction(sql, true, (tx) => validateTarget(tx, env, manifest));
-      await sql.unsafe("SELECT pg_advisory_lock(hashtext('events-soak-loader'))");
-      try {
-        await transaction(sql, false, async (tx) => {
-          await tx.unsafe(`LOCK TABLE ${tableList()} IN ACCESS EXCLUSIVE MODE`);
-          await validateTarget(tx, env, manifest); // Resolved source exclusion + fingerprint.
-          const backupTables = TABLES.map((table) => tableSql(table, backup)).join(', ');
-          await tx.unsafe(`LOCK TABLE ${backupTables} IN ACCESS EXCLUSIVE MODE`);
-          // Check every retained table is readable before any destructive operation.
-          for (const table of TABLES) {
-            const columns = Object.keys(POLICY[table]).map(quote).join(', ');
-            await tx.unsafe(`SELECT ${columns} FROM ${tableSql(table, backup)} LIMIT 0`);
-          }
-          await tx.unsafe(`TRUNCATE TABLE ${tableList()} RESTART IDENTITY`);
-          // POLICY supplies explicit columns (including previous dev keys), never SELECT *.
-          // TABLES is parent-first: events, ticket_types, orders, tickets,
-          // ticket_transfers, ticket_queue, event_invites, pledges.
-          for (const table of TABLES) {
-            const columns = Object.keys(POLICY[table]).map(quote).join(', ');
-            await tx.unsafe(`INSERT INTO ${tableSql(table)} (${columns})
-              SELECT ${columns} FROM ${tableSql(table, backup)}`);
-          }
-        });
-        console.log('Restored previous dev rows; retained backup unchanged.');
-      } finally {
-        await sql.unsafe("SELECT pg_advisory_unlock(hashtext('events-soak-loader'))");
-      }
-    } finally {
-      sql.release();
-    }
-  } finally {
-    await client.end({ timeout: 5 });
-  }
-}
-
-await restore().catch(() => {
-  console.error('Restore failed; details withheld. Keep dev paused and review with Ryan/DBA.');
-  process.exitCode = 1;
-});
-NODE
+node scripts/soak/restore-dev.mjs --target-env-file /home/jin/dev/events/.env.local --in /home/jin/soak/events-NEW --backup-schema-name '<retained-backup-schema>'
 ```
+
+This is a **read-only dry run by default**: it validates the manifest version, source exclusion,
+dev target, catalog fingerprint and every explicit retained table/column without changing rows.
+After successful review, repeat the same command with **`--commit`** appended. The restore
+shares the loader advisory lock and rechecks the target catalog under exclusive table locks.
+It never regenerates or scrubs the previous dev rows/keys, and never modifies the retained backup.
 
 All eight table locks, truncation and explicit-column `INSERT … SELECT` operations run in one
 transaction. Failure rolls back that transaction; the backup is neither changed nor dropped.

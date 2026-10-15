@@ -7,11 +7,9 @@ import { parseArgs, parseEnv } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import postgres from 'postgres';
 import { POLICY, TABLES } from './policy.mjs';
+import { Refusal, refuse } from './refusal.mjs';
 
-export class Refusal extends Error {}
-export const refuse = (condition, message) => {
-  if (condition) throw new Refusal(message);
-};
+export { Refusal, refuse } from './refusal.mjs';
 export const hash = (value) => createHash('sha256').update(value).digest('hex');
 export const quote = (identifier) => `"${identifier.replaceAll('"', '""')}"`;
 export const tableSql = (table, schema = 'events') => `${quote(schema)}.${quote(table)}`;
