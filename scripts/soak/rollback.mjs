@@ -129,12 +129,22 @@ function readRecord(context) {
       !REF.test(record.standaloneRef) || !Array.isArray(record.migrations) ||
       record.migrations.some((item) => !HASH.test(item.hash) ||
         (item.name !== null && !TAG.test(item.name)))) refuse('Invalid saved rollback record.');
+  const source = recordSource(record, context);
   const saved = record.process;
   const checked = definition([{ name: saved?.name, pm2_env: {
     pm_cwd: saved?.cwd, pm_exec_path: saved?.exec, args: saved?.args, node_args: saved?.node_args,
   } }], context, context.kernel);
   if (JSON.stringify(saved) !== JSON.stringify(checked)) refuse('Invalid saved events definition.');
+  if (source === 'post-cutover-synthesized' &&
+      JSON.stringify(saved) !== JSON.stringify(canonicalProcess(context, context.kernel))) {
+    refuse('Invalid synthesized kernel destination; canonical fields are required.');
+  }
   return record;
+}
+function recordSource(record, context) {
+  const source = record.source ?? 'observed';
+  if (source === 'observed' || (source === 'post-cutover-synthesized' && context.target === 'dev')) return source;
+  refuse('Invalid rollback record source; synthesized records are dev-only.');
 }
 
 function current(context, run) {
@@ -240,8 +250,33 @@ async function restoreStandalone(context, record, run, output, sleep) {
   await health(context, run, output, sleep);
 }
 
-async function saveRecord(context, run, readTracking, output) {
-  const process = definition(JSON.parse(run('pm2', ['jlist'], { step: 'Private PM2 inspection' })), context, context.kernel);
+function canonicalProcess(context, cwd) {
+  const envFile = join(cwd, '.env.local');
+  return {
+    name: context.name, cwd, exec: join(cwd, 'node_modules/next/dist/bin/next'),
+    args: ['start', '-p', String(context.port)], node_args: [`--env-file=${envFile}`],
+    envFile, port: context.port,
+  };
+}
+
+function recordDefinition(context, run, postCutover) {
+  const processes = JSON.parse(run('pm2', ['jlist'], { step: 'Private PM2 inspection' }));
+  if (postCutover) {
+    const observed = definition(processes, context, context.root);
+    if (JSON.stringify(observed) !== JSON.stringify(canonicalProcess(context, context.root))) {
+      refuse('Post-cutover recording requires the exact standalone events definition.');
+    }
+    preflightKernelBuild(context);
+    const destination = canonicalProcess(context, context.kernel);
+    if (!existsSync(destination.exec)) refuse('Canonical kernel events executable missing; restore dependencies before recording.');
+    privateFile(destination.envFile); // Metadata only: never read the kernel env values.
+    return destination;
+  }
+  return definition(processes, context, context.kernel);
+}
+
+async function saveRecord(context, run, readTracking, output, postCutover = false) {
+  const process = recordDefinition(context, run, postCutover);
   privateFile(process.envFile);
   if (run('git', ['status', '--porcelain', '--untracked-files=no'], { cwd: context.root }).trim()) {
     refuse('Tracked standalone files must be clean before recording a reproducible ref.');
@@ -252,22 +287,26 @@ async function saveRecord(context, run, readTracking, output) {
   const hashes = await readTracking(context.env);
   const migrations = hashes.map((hash) => ({ hash, name: known.find((item) => item.hash === hash)?.name ?? null }));
   const createdAt = new Date().toISOString();
-  const record = { version: 1, target: context.target, createdAt, standaloneRef, process, migrations };
+  const source = postCutover ? 'post-cutover-synthesized' : 'observed';
+  const record = { version: 1, target: context.target, createdAt, standaloneRef, process, migrations, source };
   const timestamp = createdAt.replaceAll(':', '-').replaceAll('.', '_');
   writeFileSync(join(context.directory, `events-rollback-${context.target}-${timestamp}.json`),
     `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600, flag: 'wx' });
-  output.log(`Private pre-cutover events record saved (0600); ${migrations.length} tracking hashes.`);
+  output.log(`Private ${source} events record saved (0600); ${migrations.length} tracking hashes.`);
   return record;
 }
 
 function invocation(argv) {
-  const [target, action] = argv;
-  if (argv.length !== 2 || !['dev', 'prod'].includes(target) || !['record', 'rollback', 'rehearse'].includes(action)) {
-    refuse('Usage: bash scripts/soak/rollback.sh <dev|prod> <record|rollback|rehearse>');
+  const [target, action, flag] = argv;
+  const postCutover = flag === '--post-cutover';
+  const validLength = argv.length === 2 || (argv.length === 3 && postCutover && action === 'record');
+  if (!validLength || !['dev', 'prod'].includes(target) || !['record', 'rollback', 'rehearse'].includes(action)) {
+    refuse('Usage: bash scripts/soak/rollback.sh <dev|prod> <record|rollback|rehearse> [--post-cutover (dev record only)]');
   }
+  if (postCutover && target !== 'dev') refuse('Post-cutover recording is dev-only; prod must record before cutover. No force bypass.');
   if (target === 'prod' && action === 'rehearse') refuse('Rehearsal is dev-only; prod rehearsal is refused.');
   if (Number(process.versions.node.split('.')[0]) < 22) refuse('Node 22+ required.');
-  return { target, action };
+  return { target, action, postCutover };
 }
 
 function createContext(target, dependencies) {
@@ -325,15 +364,16 @@ async function transition(context, record, action, dependencies) {
   }
 }
 
-async function execute(context, action, dependencies) {
+async function execute(context, action, dependencies, postCutover) {
   const { run, readTracking, output } = dependencies;
   if (action === 'record') {
-    await saveRecord(context, run, readTracking, output);
+    await saveRecord(context, run, readTracking, output, postCutover);
     return;
   }
   let record = readRecord(context);
   if (!record && action === 'rehearse') record = await saveRecord(context, run, readTracking, output);
   if (!record) refuse('No pre-cutover rollback record. Record the current kernel events definition before cutover; no force bypass.');
+  if (context.report) context.report.data.source = recordSource(record, context);
   for (const tool of ['pm2', 'curl']) {
     run('bash', ['-c', 'command -v "$1" >/dev/null', '--', tool], { step: 'Rollback tool preflight' });
   }
@@ -377,7 +417,7 @@ export async function main(argv, dependencies = {}) {
   let decision;
   let result = 1;
   try {
-    const { target, action } = invocation(argv);
+    const { target, action, postCutover } = invocation(argv);
     const context = createContext(target, dependencies);
     if (action === 'rehearse') report = createReport(context.directory);
     context.report = report;
@@ -385,7 +425,7 @@ export async function main(argv, dependencies = {}) {
     await execute(context, action, {
       run: timedCommand(dependencies.command ?? command, report, output), readTracking: dependencies.tracking ?? tracking,
       output, sleep: dependencies.sleep,
-    });
+    }, postCutover);
     result = 0;
   } catch (error) {
     if (error instanceof Refusal) decision = error.decision;

@@ -188,10 +188,56 @@ and only these pm2 fields: name, canonical cwd, executable, listener args,
 allowlisted node args, env-file **path** and port. No env values or other process
 definitions are saved. Unknown arguments/duplicate processes/noncanonical paths refuse.
 
-`record` will not snapshot standalone as the rollback destination. Preserve this
-pre-cutover record; latest validly named record for the selected environment is used.
+Normal `record` is observed-only: it will not snapshot standalone as the rollback
+destination. New normal records carry `source: "observed"`; older records without
+that field are treated as observed. Preserve this pre-cutover record; the latest
+validly named record for the selected environment is used.
 Do not hand-edit it, overwrite it after cutover, or reuse another environment's record.
 The script does not back up data: keep the operator's reviewed backup independently.
+### Already cut over on dev, with no prior record
+
+Dev was cut over before this tooling existed. Rather than hand-editing pm2, an operator
+can explicitly record a synthesized kernel destination while the standalone app remains
+running:
+
+```bash
+bash scripts/soak/rollback.sh dev record --post-cutover
+bash scripts/soak/rollback.sh dev rehearse
+```
+
+This opt-in is **dev record only**. Prod refuses `--post-cutover` before any process
+inspection and must still record the observed kernel definition **before** cutover.
+The flag is not accepted for rollback/rehearse, takes no destination arguments, and is
+not a force bypass.
+
+Before saving, exactly one current `dev-events` must match the standalone definition:
+cwd `~/dev/events`, executable `<cwd>/node_modules/next/dist/bin/next`,
+args `start -p 3006`, and node args `--env-file=<cwd>/.env.local`. Missing, duplicated,
+unknown, already-kernel, or mismatched definitions refuse without process changes.
+The kernel destination is constructed **only** from canonical paths and the validated
+dev context: `dev-events`, cwd `~/dev/imajin-ai/apps/events`, its Next executable,
+args `start -p 3006`, and node args `--env-file=<kernel cwd>/.env.local`.
+No destination value comes from pm2's arbitrary env fields or operator-supplied paths.
+
+The kernel `.next/BUILD_ID` and executable must exist. Its `.env.local` must be an
+operator-owned regular 0600 file, not a symlink; **only metadata is inspected, never
+its values**. A missing build uses the same #2804 DECISION refusal. No secrets are
+copied, and recording performs no pm2 mutations or database writes.
+
+The private record carries `source: "post-cutover-synthesized"`, the current clean
+standalone SHA, and the current read-only `events.__drizzle_migrations` snapshot.
+This is an explicit **new recording boundary**, not evidence of pre-cutover state or
+proof that the historical kernel supports every earlier migration. The operator must
+approve compatibility of the retained kernel build before rehearsing. Migration
+history shrinkage and unknown migrations applied **after** this record still refuse.
+Synthesized records are also rejected on prod when read, and their destination fields
+must remain exactly canonical.
+
+`dev rehearse` then reuses this record, verifies rollback health, deploys the saved
+standalone SHA through `scripts/deploy.sh dev <saved-SHA>`, and verifies that dev is
+back on standalone. The timing report carries only the safe `source` label, not any
+extra paths or env values. Keep the synthesized provenance in #2529's evidence; do
+not describe it as an observed pre-cutover record.
 
 ### Roll back to the saved kernel copy
 
@@ -226,8 +272,10 @@ bash scripts/soak/rollback.sh dev rehearse
 ```
 
 Prod rehearsal is always refused. Before cutover this performs record → rollback →
-roll forward; after cutover it **reuses the saved pre-cutover record**, never replaces
-it with a standalone definition. No prior record after cutover means refusal.
+roll forward; after cutover it **reuses the saved record**, either observed before
+cutover or explicitly synthesized using the dev-only command above. It never replaces
+the destination with a standalone definition or silently synthesizes one. No prior
+record after cutover still means refusal: first run the explicit dev recording command.
 Rehearsal preflights the clean standalone tree, tools, private env, saved SHA containing
 `scripts/deploy.sh`, kernel build and migration history before the first deletion.
 
@@ -255,7 +303,7 @@ dominated by install/build/migration/roll-forward. Health failure can take about
 These are estimates, **not a claim of measured host rehearsal** or zero downtime.
 
 Rehearsal writes `~/.imajin/events-rehearsal-dev-<UTC timestamp>.json` (0600) on
-success or failure. It includes `status`, `durationMs`, `steps` with safe labels/status/
+success or failure. It includes the validated record `source`, `status`, `durationMs`, `steps` with safe labels/status/
 duration, and an optional structured build `decision`, without pm2/env values, raw
 errors, refs or paths. Recovery command outcomes appear in the step sequence.
 Rollback and rehearsal both print per-command elapsed times. Attach only the report's
@@ -278,6 +326,7 @@ Paste the generated markdown table, then complete:
 - Actual legacy shared URLs resolve to correct events (omit private URLs): …
 - Embed and registration UI checked: …
 - Real rollback/rehearsal record timestamp and measured per-step timings: …
+- Record provenance (`observed` or `post-cutover-synthesized`): …
 - Standalone restored, public health, post-rehearsal purchase/check-in: …
 - Data continuity checked before/after (counts/state only, no personal data): …
 - Ryan sign-off: pending.

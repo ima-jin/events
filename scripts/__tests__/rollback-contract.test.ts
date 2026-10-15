@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync,
-  rmSync, statSync, writeFileSync,
+  rmSync, statSync, symlinkSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -47,13 +47,12 @@ function fixture(target = 'dev') {
   const calls: { tool: string; args: string[] }[] = [];
   const logs: string[] = [];
   const name = `${target}-events`;
-  const nodeArgs = [`--env-file=${join(kernel, '.env.local')}`];
   const pm2 = () => cwd ? [{
     name,
     pm2_env: {
       pm_cwd: cwd, pm_exec_path: join(cwd, 'node_modules/next/dist/bin/next'),
       args: ['start', '-p', target === 'dev' ? '3006' : '7006'],
-      node_args: cwd === kernel ? nodeArgs : [],
+      node_args: [`--env-file=${join(cwd, '.env.local')}`],
       DATABASE_URL: privateMarker, env: { SIGNING_KEY: privateMarker },
       arbitrary: privateMarker,
     },
@@ -64,7 +63,7 @@ function fixture(target = 'dev') {
     if (args[0] === 'start') cwd = kernel;
     return '';
   };
-  const run = async (action: string) => main([target, action], {
+  const run = async (action: string, ...flags: string[]) => main([target, action, ...flags], {
     home, root: checkout, output: { log: (line: string) => logs.push(line), error: (line: string) => logs.push(line) },
     tracking: async () => hashes,
     sleep: async () => {},
@@ -91,7 +90,7 @@ function fixture(target = 'dev') {
     ? readdirSync(join(home, '.imajin')).filter((file) => file.startsWith('events-rehearsal-') && file.endsWith('.json'))
     : [];
   return {
-    home, checkout, kernel, known, calls, logs, run, recordFiles, reportFiles,
+    home, checkout, kernel, known, calls, logs, run, recordFiles, reportFiles, processes: pm2,
     record: () => readFileSync(join(home, '.imajin', recordFiles()[0]), 'utf8'),
     report: () => readFileSync(join(home, '.imajin', reportFiles()[0]), 'utf8'),
     setHashes: (value: string[]) => { hashes = value; },
@@ -145,6 +144,7 @@ describe('rollback operator contract with sandboxed process fixtures', () => {
       expect(record.process.cwd).toBe(f.kernel);
       expect(record.process.envFile).toBe(join(f.kernel, '.env.local'));
       expect(record.standaloneRef).toBe(ref);
+      expect(record.source).toBe('observed');
       expect(record.migrations).toEqual([{ hash: f.known, name: '0001_fixture' }]);
       expect(text + f.logs.join('\n')).not.toContain(privateMarker);
       expect(text).not.toContain('DATABASE_URL');
@@ -392,6 +392,160 @@ describe('rollback operator contract with sandboxed process fixtures', () => {
   });
 });
 
+describe('explicit dev post-cutover recording', () => {
+  it('synthesizes only the canonical kernel destination and rehearses back to standalone', async () => {
+    const f = fixture();
+    try {
+      f.setCwd(f.checkout);
+      f.setHashes([f.known, baseline]);
+      expect(await f.run('record', '--post-cutover')).toBe(0);
+      const original = f.record();
+      const record = JSON.parse(original);
+      expect(record.source).toBe('post-cutover-synthesized');
+      expect(record.process).toEqual({
+        name: 'dev-events', cwd: f.kernel, exec: join(f.kernel, 'node_modules/next/dist/bin/next'),
+        args: ['start', '-p', '3006'], node_args: [`--env-file=${join(f.kernel, '.env.local')}`],
+        envFile: join(f.kernel, '.env.local'), port: 3006,
+      });
+      expect(record.standaloneRef).toBe(ref);
+      expect(record.migrations).toEqual([{ hash: f.known, name: '0001_fixture' }, { hash: baseline, name: null }]);
+      expect(statSync(join(f.home, '.imajin', f.recordFiles()[0])).mode & 0o777).toBe(0o600);
+      expect(mutations(f.calls)).toEqual([]);
+      f.clear();
+      expect(await f.run('rehearse')).toBe(0);
+      expect(f.record()).toBe(original);
+      expect(f.getCwd()).toBe(f.checkout);
+      expect(mutations(f.calls)).toEqual([
+        'pm2 delete dev-events',
+        `pm2 start ${f.kernel}/node_modules/next/dist/bin/next --name dev-events --cwd ${f.kernel} --interpreter node --node-args --env-file=${f.kernel}/.env.local -- start -p 3006`,
+        'pm2 save', 'pm2 delete dev-events', 'pm2 save', `bash scripts/deploy.sh dev ${ref}`,
+      ]);
+      expect(f.calls.filter((call) => call.tool === 'curl').map((call) => call.args.at(-1))).toEqual([
+        'http://127.0.0.1:3006/events/api/health', 'https://fixture.example/events/api/health',
+        'http://127.0.0.1:3006/events/api/health', 'https://fixture.example/events/api/health',
+      ]);
+      expect(JSON.parse(f.report())).toMatchObject({ source: 'post-cutover-synthesized', status: 'pass' });
+      expect(original + f.report() + f.logs.join('\n')).not.toContain(privateMarker);
+      for (const forbidden of [f.home, '.env.local', ref]) expect(f.report()).not.toContain(forbidden);
+    } finally { f.dispose(); }
+  });
+
+  it('refuses synthesized recording for prod before inspection and keeps normal prod observed-only', async () => {
+    const f = fixture('prod');
+    try {
+      f.setCwd(f.checkout);
+      expect(await f.run('record', '--post-cutover')).toBe(1);
+      expect(f.logs.join('\n')).toContain('prod must record before cutover');
+      expect(f.calls).toEqual([]);
+      expect(await f.run('record')).toBe(1);
+      expect(f.recordFiles()).toEqual([]);
+      f.setCwd(f.kernel);
+      expect(await f.run('record')).toBe(0);
+      expect(JSON.parse(f.record()).source).toBe('observed');
+      expect(mutations(f.calls)).toEqual([]);
+    } finally { f.dispose(); }
+  });
+
+  it.each(['unknown', 'duplicated', 'kernel', 'absent', 'wrong-exec', 'wrong-args', 'missing-node-args', 'wrong-node-args'])(
+    'refuses post-cutover recording when current events is %s', async (state) => {
+      const f = fixture();
+      try {
+        f.setCwd(f.checkout);
+        const processes = f.processes();
+        const pm = processes[0].pm2_env;
+        if (state === 'unknown') pm.pm_cwd = join(f.home, 'unknown');
+        if (state === 'duplicated') processes.push(processes[0]);
+        if (state === 'kernel') f.setCwd(f.kernel);
+        if (state === 'absent') f.setCwd(undefined);
+        if (state === 'wrong-exec') pm.pm_exec_path = '/unapproved/executable';
+        if (state === 'wrong-args') pm.args = ['start', '-p', '7006'];
+        if (state === 'missing-node-args') pm.node_args = [];
+        if (state === 'wrong-node-args') pm.node_args = [`--env-file=${join(f.kernel, '.env.local')}`];
+        if (!['kernel', 'absent'].includes(state)) f.setPm2Output(JSON.stringify(processes));
+        expect(await f.run('record', '--post-cutover')).toBe(1);
+        expect(f.recordFiles()).toEqual([]);
+        expect(mutations(f.calls)).toEqual([]);
+        expect(f.logs.join('\n')).not.toContain(privateMarker);
+      } finally { f.dispose(); }
+    },
+  );
+
+  it.each(['build', 'executable', 'env-missing', 'env-readable', 'env-symlink', 'env-directory'])(
+    'refuses a missing or unsafe kernel prerequisite: %s', async (prerequisite) => {
+      const f = fixture();
+      try {
+        f.setCwd(f.checkout);
+        const envFile = join(f.kernel, '.env.local');
+        if (prerequisite === 'build') rmSync(join(f.kernel, '.next/BUILD_ID'));
+        if (prerequisite === 'executable') rmSync(join(f.kernel, 'node_modules/next/dist/bin/next'));
+        if (prerequisite === 'env-missing') rmSync(envFile);
+        if (prerequisite === 'env-readable') chmodSync(envFile, 0o640);
+        if (prerequisite === 'env-symlink') {
+          rmSync(envFile);
+          symlinkSync(join(f.checkout, '.env.local'), envFile);
+        }
+        if (prerequisite === 'env-directory') {
+          rmSync(envFile);
+          mkdirSync(envFile, { mode: 0o600 });
+        }
+        expect(await f.run('record', '--post-cutover')).toBe(1);
+        expect(f.recordFiles()).toEqual([]);
+        expect(mutations(f.calls)).toEqual([]);
+        if (prerequisite === 'build') expect(f.logs.join('\n')).toContain('DECISION #2804');
+        expect(f.logs.join('\n')).not.toContain(privateMarker);
+      } finally { f.dispose(); }
+    },
+  );
+
+  it.each(['rollback', 'rehearse'])('allows the post-cutover flag only with record, not %s', async (action) => {
+    const f = fixture();
+    try {
+      expect(await f.run(action, '--post-cutover')).toBe(1);
+      expect(f.calls).toEqual([]);
+      expect(f.recordFiles()).toEqual([]);
+    } finally { f.dispose(); }
+  });
+
+  it('retains migration refusal after the synthesized recording boundary', async () => {
+    const f = fixture();
+    try {
+      f.setCwd(f.checkout);
+      expect(await f.run('record', '--post-cutover')).toBe(0);
+      f.setHashes([baseline, unknown]);
+      f.clear();
+      expect(await f.run('rehearse')).toBe(1);
+      expect(mutations(f.calls)).toEqual([]);
+      expect(JSON.parse(f.report())).toMatchObject({ source: 'post-cutover-synthesized', status: 'fail' });
+      expect(f.logs.join('\n')).toContain('Post-record migrations unknown');
+    } finally { f.dispose(); }
+  });
+
+  it.each(['invalid-source', 'noncanonical-destination', 'synthesized-prod'])('rejects tampered saved provenance: %s', async (state) => {
+    const f = fixture(state === 'synthesized-prod' ? 'prod' : 'dev');
+    try {
+      expect(await f.run('record')).toBe(0);
+      const record = JSON.parse(f.record());
+      record.source = state === 'invalid-source' ? 'unapproved' : 'post-cutover-synthesized';
+      if (state === 'noncanonical-destination') record.process.node_args = [];
+      writeFileSync(join(f.home, '.imajin', f.recordFiles()[0]), JSON.stringify(record));
+      f.clear();
+      expect(await f.run('rollback')).toBe(1);
+      expect(mutations(f.calls)).toEqual([]);
+    } finally { f.dispose(); }
+  });
+
+  it('accepts legacy observed records without a source label and reports observed provenance', async () => {
+    const f = fixture();
+    try {
+      expect(await f.run('record')).toBe(0);
+      const record = JSON.parse(f.record());
+      delete record.source;
+      writeFileSync(join(f.home, '.imajin', f.recordFiles()[0]), JSON.stringify(record));
+      expect(await f.run('rehearse')).toBe(0);
+      expect(JSON.parse(f.report()).source).toBe('observed');
+    } finally { f.dispose(); }
+  });
+});
 describe('private subprocess and events-only migration readers', () => {
   it('suppresses raw subprocess stdout/stderr even on failures', () => {
     try {
