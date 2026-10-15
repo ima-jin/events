@@ -1,18 +1,20 @@
 import { appendFile, chmod, mkdtemp, readFile, stat, symlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import { getTableColumns, is } from 'drizzle-orm';
 import { getTableConfig, PgTable } from 'drizzle-orm/pg-core';
 import { describe, expect, it, vi } from 'vitest';
 import * as schema from '../../src/db/schema';
 import { generateEventKeypair } from '../../src/lib/event-keypair.mjs';
-import { createScrubber, isPublicEvent, POLICY, TABLES } from '../soak/policy.mjs';
+import { createScrubber, isPublicEvent, POLICY, SCRUB_VERSION, TABLES } from '../soak/policy.mjs';
 import {
   argumentsFor, assertDirectory, assertTarget, catalog, connectionOptions, didMapping, endpoint,
-  environment, operatorPath, privateRead, runCli, transaction,
+  environment, operatorPath, privateRead, Refusal, runCli, transaction,
 } from '../soak/common.mjs';
 import { exportData } from '../soak/export-prod-shaped.mjs';
 import { loadData, validateManifest, visitRows } from '../soak/load-dev.mjs';
+import { main as restoreMain, restoreArguments, restoreData, validateBackup } from '../soak/restore-dev.mjs';
 
 type Row = Record<string, unknown>;
 type Rows = Record<string, Row[]>;
@@ -26,6 +28,7 @@ const columns = tables.flatMap((table) => Object.values(getTableColumns(table)).
 const logger = () => ({ ...console, log: vi.fn(), error: vi.fn() });
 const sourceUrl = 'postgres://fixture@source.invalid:5432/fixture_source';
 const env = { DATABASE_URL: 'postgres://fixture@dev.invalid:5432/imajin_dev', APP_DB_SCHEMA: 'events', IMAJIN_ENV: 'dev' };
+const backup = 'events_soak_backup_fixture';
 
 function fixtureRow(table: string): Row {
   const row = Object.fromEntries(Object.values(getTableColumns(byName[table])).map((column) => {
@@ -44,6 +47,11 @@ function fixtureRow(table: string): Row {
     const ref = fk.reference();
     row[ref.columns[0].name] = `fixture_${getTableConfig(ref.foreignTable).name}`;
   }
+  for (const name of ['status', 'event_type', 'registration_status']) {
+    if (row[name] !== undefined) row[name] = 'pending';
+  }
+  if (row.currency !== undefined) row.currency = 'CAD';
+  if (table === 'events') Object.assign(row, { event_type: 'event', name_display_policy: 'attendee_choice' });
   return row;
 }
 
@@ -73,6 +81,8 @@ function database(data: Rows = fixtureData(), source = true) {
     source, readOnly: 'on', drift: false, extraColumn: false, sequence: false, failInsert: '',
     actualDatabase: source ? 'fixture_source' : 'imajin_dev', behavior: '', precisionDrift: false,
     failSnapshot: false, onInsert: async () => {},
+    retained: structuredClone(data), missingBackup: false, missingBackupColumn: false,
+    batches: [] as number[], onLock: () => {},
     unsafe: vi.fn((text: string, params: string[] = []) => {
       const execute = async () => {
         if (text.startsWith('BEGIN')) before = structuredClone(state);
@@ -95,6 +105,10 @@ function database(data: Rows = fixtureData(), source = true) {
         }));
         if (text.startsWith('CREATE SCHEMA')) backups.push(structuredClone(state));
         if (text.startsWith('CREATE TABLE') && client.failSnapshot) throw new Error('fixture snapshot failure');
+        if (text.startsWith('LOCK TABLE')) client.onLock();
+        if (text.startsWith('SELECT') && text.includes(`FROM "${backup}".`)) {
+          if (client.missingBackup || client.missingBackupColumn) throw new Error('Retained snapshot unavailable.');
+        }
         if (text.startsWith('TRUNCATE')) {
           expect(text).not.toContain('CASCADE');
           state = Object.fromEntries(TABLES.map((table) => [table, []]));
@@ -102,16 +116,19 @@ function database(data: Rows = fixtureData(), source = true) {
         if (text.startsWith('INSERT')) {
           const table = /INSERT INTO "events"\."(\w+)"/.exec(text)![1];
           if (client.failInsert === table) throw new Error('fixture database error with values');
-          const row = JSON.parse(params[0]);
-          for (const fk of getTableConfig(byName[table]).foreignKeys) {
-            const ref = fk.reference();
-            const value = row[ref.columns[0].name];
-            if (value !== null) {
-              expect(state[getTableConfig(ref.foreignTable).name].some((parent) => parent[ref.foreignColumns[0].name] === value)).toBe(true);
+          const restored = text.includes(`FROM "${backup}".`);
+          const rows = restored ? structuredClone(client.retained[table]) : [JSON.parse(params[0])];
+          for (const row of rows) {
+            for (const fk of getTableConfig(byName[table]).foreignKeys) {
+              const ref = fk.reference();
+              const value = row[ref.columns[0].name];
+              if (value !== null) {
+                expect(state[getTableConfig(ref.foreignTable).name].some((parent) => parent[ref.foreignColumns[0].name] === value)).toBe(true);
+              }
             }
+            state[table].push(row);
+            await client.onInsert();
           }
-          state[table].push(row);
-          await client.onInsert();
         }
         return [];
       };
@@ -122,7 +139,7 @@ function database(data: Rows = fixtureData(), source = true) {
           // Simulate SELECT projection: key material is never even fetched.
           expect(text).not.toContain('private_key');
           expect(text).not.toContain('public_key');
-          yield data[table].map((row) => {
+          const projectedRows = data[table].map((row) => {
             const parent = table === 'ticket_types' ? data.events.find((event) => event.id === row.event_id) : row;
             const projected: Row = { ...row, __visible: parent ? isPublicEvent(parent) : false };
             if (table === 'events') {
@@ -131,6 +148,11 @@ function database(data: Rows = fixtureData(), source = true) {
             }
             return projected;
           });
+          for (let offset = 0; offset < projectedRows.length; offset += size) {
+            const batch = projectedRows.slice(offset, offset + size);
+            client.batches.push(batch.length);
+            yield batch;
+          }
         },
       });
     }),
@@ -149,6 +171,70 @@ async function exported() {
 }
 
 describe('exhaustive scrub classification', () => {
+  const checkedColumns = [
+    ['events', 'timezone', 'America/Toronto'], ['events', 'location_type', 'hybrid'],
+    ['events', 'status', 'published'], ['events', 'event_type', 'campaign'],
+    ['events', 'name_display_policy', 'attendee_choice'], ['events', 'access_mode', 'public'],
+    ['events', 'currency', 'CAD'], ['ticket_types', 'currency', 'USD'],
+    ['orders', 'currency', 'CAD'], ['orders', 'payment_method', 'stripe'], ['orders', 'status', 'pending'],
+    ['tickets', 'currency', 'CAD'], ['tickets', 'payment_method', 'etransfer'],
+    ['tickets', 'status', 'used'], ['tickets', 'registration_status', 'not_required'],
+    ['ticket_queue', 'status', 'waiting'], ['pledges', 'status', 'confirmed'], ['pledges', 'currency', 'CAD'],
+  ];
+
+  it.each(checkedColumns)('preserves checked operational text in %s.%s', (table, column, value) => {
+    const row = { ...fixtureData()[table][0], [column]: value };
+    expect(createScrubber()(table, row)[column] === value).toBe(true);
+    expect(createScrubber()(table, { ...row, [column]: null })[column]).toBeNull();
+  });
+
+  it.each(checkedColumns)('aborts export without exposing rejected text in %s.%s', async (table, column) => {
+    const rows = fixtureData();
+    const rejected = 'fixture sensitive rejected text';
+    rows[table][0][column] = rejected;
+    const source = database(rows);
+    const directory = join(await mkdtemp(join(homedir(), 'soak-refusal-')), 'artifact');
+    const output = logger();
+    const failure = await exportData(source, { directory, sourceUrl }, output).catch((error: unknown) => error);
+    expect(failure instanceof Refusal).toBe(true);
+    expect((failure as Error).message).toBe(`Unexpected keep value: ${table}.${column}.`);
+    expect((failure as Error).message.includes(rejected)).toBe(false);
+    expect(JSON.stringify(output.log.mock.calls).includes(rejected)).toBe(false);
+    expect(source.unsafe.mock.calls.at(-1)![0]).toBe('ROLLBACK');
+    await expect(stat(join(directory, 'manifest.json'))).rejects.toThrow();
+  });
+
+  it('rejects malformed operational values without coercion or silent rewriting', () => {
+    const scrub = createScrubber();
+    const badValues: Record<string, unknown[]> = {
+      timezone: ['Invalid/Zone', '', '+01:00', 42],
+      currency: ['cad', ' CAD', 'CAD\n', 'US', 'USDD', 123],
+      status: ['', 'UPPER', 'a'.repeat(33), 'pending\n', {}, 42],
+      name_display_policy: ['unknown_policy'],
+    };
+    for (const [column, values] of Object.entries(badValues)) {
+      for (const value of values) {
+        expect(() => scrub('events', { ...fixtureData().events[0], [column]: value })).toThrow(Refusal);
+      }
+    }
+    expect(scrub('events', { ...fixtureData().events[0], timezone: 'UTC' }).timezone === 'UTC').toBe(true);
+  });
+
+  it('normalizes email case and surrounding whitespace within one versioned export', async () => {
+    const scrub = createScrubber();
+    const row = fixtureData().orders[0];
+    const normalized = scrub('orders', row).buyer_email;
+    const variant = String(row.buyer_email).toUpperCase();
+    expect(scrub('orders', { ...row, buyer_email: ` \t${variant}\n` }).buyer_email === normalized).toBe(true);
+    const { directory, manifest } = await exported();
+    expect(SCRUB_VERSION).toBe(2);
+    expect(manifest.scrubMapVersion).toBe(SCRUB_VERSION);
+    const target = database(fixtureData(), false);
+    await expect(loadData(target, {
+      directory, env, manifest: { ...manifest, scrubMapVersion: 1 }, commit: true,
+    }, logger())).rejects.toThrow('scrub version');
+    expect(target.unsafe).not.toHaveBeenCalled();
+  });
   it('classifies exactly every real Drizzle table/column and fails closed on schema drift', async () => {
     expect(Object.keys(byName).sort()).toEqual([...TABLES].sort());
     for (const table of TABLES) {
@@ -224,6 +310,30 @@ describe('exhaustive scrub classification', () => {
 });
 
 describe('read-only source and guarded loader round trip', () => {
+  it('writes all 250 distinct rows exactly once across cursor batches with matching manifest bytes', async () => {
+    const rows = fixtureData();
+    rows.event_invites = Array.from({ length: 250 }, (_, index) => ({
+      ...rows.event_invites[0], id: `fixture_invite_${index}`, token: `fixture_token_${index}`, used_count: index,
+    }));
+    const source = database(rows);
+    const directory = join(await mkdtemp(join(homedir(), 'soak-batches-')), 'artifact');
+    const manifest = await exportData(source, { directory, sourceUrl }, logger());
+    expect(source.batches.filter((size) => size > 1)).toEqual([100, 100, 50]);
+    const contents = await readFile(join(directory, 'event_invites.jsonl'), 'utf8');
+    const written = contents.trimEnd().split('\n').map((line) => JSON.parse(line));
+    expect(written).toHaveLength(250);
+    expect(new Set(written.map((row) => row.id)).size).toBe(250);
+    expect(new Set(written.map((row) => row.token)).size).toBe(250);
+    expect(written.map((row) => row.used_count).every((value, index) => value === index)).toBe(true);
+    expect(manifest.tables.event_invites).toEqual({
+      count: 250, sha256: createHash('sha256').update(contents).digest('hex'),
+    });
+    await expect(visitRows(directory, 'event_invites', manifest.tables.event_invites)).resolves.toBeUndefined();
+    const target = database(fixtureData(), false);
+    await loadData(target, { directory, env, manifest, commit: true }, logger());
+    expect(target.rows().event_invites.length).toBe(250);
+    expect(new Set(target.rows().event_invites.map((row) => row.id)).size).toBe(250);
+  });
   it('streams only scrubbed rows to private files and logs only counts', async () => {
     const result = await exported();
     expect((await stat(result.directory)).mode & 0o777).toBe(0o700);
@@ -360,6 +470,174 @@ describe('read-only source and guarded loader round trip', () => {
     const source = database();
     source.behavior = behavior;
     await expect(catalog(source)).rejects.toThrow('Unsupported table behavior');
+  });
+});
+
+describe('guarded dev snapshot restore', () => {
+  it('requires explicit options and a safe retained backup schema name', () => {
+    const args = ['--target-env-file', 'file', '--in', 'directory', '--backup-schema-name', backup];
+    expect(restoreArguments(args).commit).toBeUndefined();
+    expect(restoreArguments([...args, '--commit']).commit).toBe(true);
+    for (const invalid of ['', 'events', 'events_soak_backup_', `${backup}\n`, `${backup};DROP`, `${backup}"`, 'events_soak_backup_REPLACE_WITH_RETAINED_NAME', `events_soak_backup_${'x'.repeat(64)}`]) {
+      expect(() => validateBackup(invalid)).toThrow('Invalid retained');
+    }
+    for (const invalid of [[], args.slice(0, 4), [...args, '--force'], [...args, '--url', sourceUrl]]) {
+      expect(() => restoreArguments(invalid)).toThrow();
+    }
+  });
+
+  it('defaults to a read-only dry run without advisory locks or writes', async () => {
+    const { directory, manifest } = await exported();
+    const target = database(fixtureData(), false);
+    const output = logger();
+    expect(await restoreData(target, { directory, env, manifest, backup }, output)).toEqual({ committed: false });
+    expect(target.unsafe.mock.calls.every(([text]) => /^(SELECT|BEGIN TRANSACTION READ ONLY|COMMIT)/.test(text))).toBe(true);
+    expect(target.unsafe.mock.calls.some(([text]) => text.includes('pg_advisory'))).toBe(false);
+    expect(target.unsafe.mock.calls.filter(([text]) => text.includes('LIMIT 0'))).toHaveLength(TABLES.length);
+    expect(JSON.stringify(output.log.mock.calls).includes('fixture')).toBe(false);
+  });
+
+  it('atomically restores exact previous dev rows and keys, retaining the backup unchanged', async () => {
+    const { directory, manifest } = await exported();
+    const target = database(fixtureData(), false);
+    target.retained.events[0].title = 'Retained fixture';
+    target.retained.events[0].private_key = 'retained-key-marker';
+    const retained = structuredClone(target.retained);
+    const output = logger();
+    expect(await restoreData(target, { directory, env, manifest, backup, commit: true }, output)).toEqual({ committed: true });
+    expect(JSON.stringify(target.rows()) === JSON.stringify(retained)).toBe(true);
+    expect(JSON.stringify(target.retained) === JSON.stringify(retained)).toBe(true);
+    const queries = target.unsafe.mock.calls.map(([text]) => text);
+    expect(queries[0]).toBe('BEGIN TRANSACTION READ ONLY ISOLATION LEVEL REPEATABLE READ');
+    expect(queries.at(-1)).toContain('pg_advisory_unlock');
+    expect(queries.filter((text) => text.startsWith('BEGIN'))).toEqual([
+      'BEGIN TRANSACTION READ ONLY ISOLATION LEVEL REPEATABLE READ',
+      'BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ',
+    ]);
+    expect(queries.filter((text) => text === 'COMMIT')).toHaveLength(2);
+    expect(queries.some((text) => text.includes('pg_advisory_lock'))).toBe(true);
+    const truncate = queries.findIndex((text) => text.startsWith('TRUNCATE'));
+    expect(queries.slice(0, truncate).filter((text) => text.includes('LIMIT 0'))).toHaveLength(TABLES.length * 2);
+    expect(queries.slice(0, truncate).filter((text) => text.startsWith('LOCK TABLE'))).toHaveLength(2);
+    const inserts = queries.filter((text) => text.startsWith('INSERT'));
+    expect(inserts.map((text) => /INSERT INTO "events"\."(\w+)"/.exec(text)![1])).toEqual(TABLES);
+    for (const [index, table] of TABLES.entries()) {
+      for (const column of Object.keys(POLICY[table as keyof typeof POLICY])) {
+        expect(inserts[index].includes(`"${column}"`)).toBe(true);
+      }
+    }
+    expect(queries.join('\n')).not.toMatch(/CASCADE|SELECT \*|DROP|CREATE|__drizzle/);
+    expect(JSON.stringify(output.log.mock.calls).includes('fixture')).toBe(false);
+  });
+
+  it('rolls back a partial restore and always releases the shared advisory lock', async () => {
+    const { directory, manifest } = await exported();
+    const target = database(fixtureData(), false);
+    target.retained.events[0].title = 'Different retained fixture';
+    const retained = structuredClone(target.retained);
+    target.failInsert = 'tickets';
+    await expect(restoreData(target, { directory, env, manifest, backup, commit: true }, logger())).rejects.toThrow();
+    expect(JSON.stringify(target.rows()) === JSON.stringify(fixtureData())).toBe(true);
+    expect(JSON.stringify(target.retained) === JSON.stringify(retained)).toBe(true);
+    expect(target.unsafe.mock.calls.some(([text]) => text === 'ROLLBACK')).toBe(true);
+    expect(target.unsafe.mock.calls.at(-1)![0]).toContain('pg_advisory_unlock');
+  });
+
+  it.each(['missingBackup', 'missingBackupColumn'] as const)('refuses %s before truncation in both modes', async (failure) => {
+    const { directory, manifest } = await exported();
+    for (const commit of [false, true]) {
+      const target = database(fixtureData(), false);
+      target[failure] = true;
+      await expect(restoreData(target, { directory, env, manifest, backup, commit }, logger())).rejects.toThrow();
+      expect(target.unsafe.mock.calls.some(([text]) => /^(TRUNCATE|INSERT)/.test(text))).toBe(false);
+      expect(JSON.stringify(target.rows()) === JSON.stringify(fixtureData())).toBe(true);
+    }
+  });
+
+  it('revalidates target catalog under exclusive locks before destructive SQL', async () => {
+    const { directory, manifest } = await exported();
+    const target = database(fixtureData(), false);
+    target.onLock = () => { target.drift = true; };
+    await expect(restoreData(target, { directory, env, manifest, backup, commit: true }, logger())).rejects.toThrow('fingerprint');
+    expect(target.unsafe.mock.calls.some(([text]) => /^(TRUNCATE|INSERT)/.test(text))).toBe(false);
+    expect(target.unsafe.mock.calls.at(-1)![0]).toContain('pg_advisory_unlock');
+  });
+
+  it('rejects source aliases, wrong actual databases, schema drift and non-read-only validation', async () => {
+    const { directory, manifest } = await exported();
+    const source = database();
+    const wrong = database(fixtureData(), false);
+    wrong.actualDatabase = 'wrong';
+    const drift = database(fixtureData(), false);
+    drift.drift = true;
+    const writable = database(fixtureData(), false);
+    writable.readOnly = 'off';
+    for (const target of [source, wrong, drift, writable]) {
+      await expect(restoreData(target, { directory, env, manifest, backup }, logger())).rejects.toThrow();
+      expect(target.unsafe.mock.calls.some(([text]) => /^(TRUNCATE|INSERT)/.test(text))).toBe(false);
+    }
+  });
+
+  it('checks private files, versions, paths and prod markers before connecting, and closes fixture clients', async () => {
+    const { directory } = await exported();
+    const file = join(await mkdtemp(join(homedir(), 'soak-restore-env-')), 'env');
+    const devEnv = 'DATABASE_URL=postgres://fixture@dev.invalid/imajin_dev\nAPP_DB_SCHEMA=events\nIMAJIN_ENV=dev';
+    await writeFile(file, devEnv, { mode: 0o600 });
+    const target = database(fixtureData(), false);
+    const release = vi.fn();
+    const end = vi.fn();
+    const reserve = vi.fn(async () => ({ ...target, release }));
+    const connect = vi.fn(() => ({ reserve, end }));
+    const args = ['--target-env-file', file, '--in', directory, '--backup-schema-name', backup];
+    await restoreMain(args, logger(), connect);
+    expect(release).toHaveBeenCalledOnce();
+    expect(end).toHaveBeenCalledOnce();
+    connect.mockClear();
+    await chmod(file, 0o644);
+    await expect(restoreMain(args, logger(), connect)).rejects.toThrow('0600');
+    await chmod(file, 0o600);
+    const link = `${file}-link`;
+    await symlink(file, link);
+    await expect(restoreMain(['--target-env-file', link, ...args.slice(2)], logger(), connect)).rejects.toThrow();
+    for (const marker of ['IMAJIN_ENV', 'NODE_ENV', 'APP_ENV', 'ENVIRONMENT', 'DEPLOY_ENV', 'NEXT_PUBLIC_IMAJIN_ENV']) {
+      await writeFile(file, `${devEnv}\n${marker}=production`);
+      await expect(restoreMain(args, logger(), connect)).rejects.toThrow('production marker');
+    }
+    await writeFile(file, devEnv.replace('imajin_dev', 'imajin_prod'));
+    await expect(restoreMain(args, logger(), connect)).rejects.toThrow('contains prod');
+    await writeFile(file, devEnv.replace('IMAJIN_ENV=dev', 'IMAJIN_ENV='));
+    await expect(restoreMain(args, logger(), connect)).rejects.toThrow('explicit dev');
+    await writeFile(file, devEnv);
+    const manifestFile = join(directory, 'manifest.json');
+    const originalManifest = await readFile(manifestFile, 'utf8');
+    await chmod(manifestFile, 0o644);
+    await expect(restoreMain(args, logger(), connect)).rejects.toThrow('0600');
+    await chmod(manifestFile, 0o600);
+    await writeFile(manifestFile, JSON.stringify({ ...JSON.parse(originalManifest), scrubMapVersion: 1 }));
+    await expect(restoreMain(args, logger(), connect)).rejects.toThrow('scrub version');
+    await writeFile(manifestFile, originalManifest);
+    await chmod(directory, 0o755);
+    await expect(restoreMain(args, logger(), connect)).rejects.toThrow('0700');
+    expect(connect).not.toHaveBeenCalled();
+  });
+
+  it('closes fixture clients on validation and reservation failure', async () => {
+    const { directory } = await exported();
+    const file = join(await mkdtemp(join(homedir(), 'soak-restore-close-')), 'env');
+    await writeFile(file, 'DATABASE_URL=postgres://fixture@dev.invalid/imajin_dev\nAPP_DB_SCHEMA=events\nIMAJIN_ENV=dev', { mode: 0o600 });
+    const args = ['--target-env-file', file, '--in', directory, '--backup-schema-name', backup];
+    const target = database(fixtureData(), false);
+    target.drift = true;
+    const release = vi.fn();
+    const end = vi.fn();
+    const reserve = vi.fn(async () => ({ ...target, release }));
+    const connect = () => ({ reserve, end });
+    await expect(restoreMain(args, logger(), connect)).rejects.toThrow('fingerprint');
+    expect(release).toHaveBeenCalledOnce();
+    expect(end).toHaveBeenCalledOnce();
+    reserve.mockRejectedValueOnce(new Error('Fixture connection unavailable.'));
+    await expect(restoreMain(args, logger(), connect)).rejects.toThrow();
+    expect(end).toHaveBeenCalledTimes(2);
   });
 });
 

@@ -1,6 +1,7 @@
 import { createHmac, randomBytes } from 'node:crypto';
+import { refuse } from './refusal.mjs';
 
-export const SCRUB_VERSION = 1;
+export const SCRUB_VERSION = 2;
 export const POLICY = {
   events: {
     id: 'scrub:id', did: 'scrub:did', public_key: 'regenerate', private_key: 'regenerate',
@@ -57,6 +58,29 @@ export const POLICY = {
 
 // Parents before children; reverse order is used for restore/truncate documentation.
 export const TABLES = Object.keys(POLICY);
+const timezones = new Set([...Intl.supportedValuesOf('timeZone'), 'UTC']);
+const enumShape = (value) => /^[a-z_]{1,32}$/.test(value);
+const currencyShape = (value) => /^[A-Z]{3}$/.test(value);
+// Keep app enum validation where defined; other unconstrained enum-like text
+// is bounded by shape so legacy operational states are not silently rewritten.
+const keepChecks = {
+  timezone: (value) => timezones.has(value),
+  currency: currencyShape,
+  location_type: enumShape,
+  status: enumShape,
+  event_type: enumShape,
+  name_display_policy: (value) => ['real_name', 'handle', 'anonymous', 'attendee_choice'].includes(value),
+  payment_method: enumShape,
+  registration_status: enumShape,
+  access_mode: (value) => ['public', 'invite_only'].includes(value),
+};
+
+function checkedKeep(table, column, value) {
+  const check = keepChecks[column];
+  refuse(check && (typeof value !== 'string' || value.trim() !== value || !check(value)),
+    `Unexpected keep value: ${table}.${column}.`);
+  return value;
+}
 
 export function isPublicEvent(row) {
   return row.access_mode === 'public' && ['published', 'completed'].includes(row.status);
@@ -95,7 +119,7 @@ export function createScrubber(didMap = {}) {
   const digest = (value) => createHmac('sha256', salt).update(String(value)).digest('hex');
   const rules = {
     'scrub:did': (value) => Object.hasOwn(didMap, value) ? didMap[value] : `did:imajin:scrubbed-${digest(value)}`,
-    'scrub:email': (value) => `scrubbed+${digest(value)}@example.invalid`,
+    'scrub:email': (value) => `scrubbed+${digest(value.trim().toLowerCase())}@example.invalid`,
     'scrub:id': (value) => `scrubbed_${digest(value)}`,
     'scrub:text': neutralText,
     'scrub:signature': neutralText,
@@ -113,7 +137,8 @@ export function createScrubber(didMap = {}) {
       if (rule === 'regenerate') continue; // Key material never enters the artifact.
       const value = row[column];
       if (value === undefined) throw new Error('Missing classified column');
-      if (value === null || rule === 'keep') result[column] = value;
+      if (value === null) result[column] = null;
+      else if (rule === 'keep') result[column] = checkedKeep(table, column, value);
       else result[column] = rules[rule](value, visible);
     }
     return result;
