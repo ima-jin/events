@@ -1,5 +1,5 @@
-import { serviceUrl } from './kernel';
-import { getPayAppToken, invalidatePayAppToken } from './pay-app-token';
+import { postPayAsApp } from './pay-app-request';
+import { isStripePublishableKey } from './stripe-publishable-key';
 
 /** No Stripe credential lives in events: these calls use its own app-service token. */
 export interface PledgePaymentBinding {
@@ -34,24 +34,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-async function callPay(path: string, body: PledgePaymentBinding, retry = true):
+async function callPay(path: string, body: PledgePaymentBinding):
 Promise<{ data: Record<string, unknown> } | PaymentFailure> {
-  const url = serviceUrl('pay');
-  if (!url) return UNAVAILABLE;
   try {
-    const token = await getPayAppToken();
-    const res = await fetch(`${url}/api/setup-intent${path}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify(body),
-      cache: 'no-store',
-      redirect: 'error',
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (res.status === 401 && retry) {
-      await invalidatePayAppToken();
-      return callPay(path, body, false);
-    }
+    const res = await postPayAsApp(`/api/setup-intent${path}`, body);
     const data: unknown = await res.json();
     if (!isRecord(data)) return UNAVAILABLE;
     if (!res.ok) {
@@ -72,14 +58,15 @@ Promise<{ data: Record<string, unknown> } | PaymentFailure> {
 }
 
 export async function createPledgePayment(binding: PledgePaymentBinding):
-Promise<{ clientSecret: string; setupIntentId: string; customerId: string } | PaymentFailure> {
+Promise<{ clientSecret: string; setupIntentId: string; customerId: string; publishableKey: string } | PaymentFailure> {
   const result = await callPay('', binding);
   if ('error' in result) return result;
-  const { clientSecret, setupIntentId, customerId } = result.data;
+  const { clientSecret, setupIntentId, customerId, publishableKey } = result.data;
   if (typeof clientSecret !== 'string' || !clientSecret
     || typeof setupIntentId !== 'string' || !setupIntentId.startsWith('seti_')
-    || typeof customerId !== 'string' || !customerId.startsWith('cus_')) return UNAVAILABLE;
-  return { clientSecret, setupIntentId, customerId };
+    || typeof customerId !== 'string' || !customerId.startsWith('cus_')
+    || !isStripePublishableKey(publishableKey)) return UNAVAILABLE;
+  return { clientSecret, setupIntentId, customerId, publishableKey };
 }
 
 /** Validate every binding echoed by the kernel before any pledge write, not just HTTP 200. */

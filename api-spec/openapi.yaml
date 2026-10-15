@@ -2339,6 +2339,9 @@ paths:
       tags: [campaign]
       operationId: createPledge
       summary: Start a pledge (creates a Stripe SetupIntent via the pay service)
+      description: >
+        Uses the app's pay:setup-intent service token and the event's seller BYO account.
+        Stripe.js must use the returned seller publishableKey, never a platform env key.
       security:
         - appToken: [events:write]
         - cookieAuth: []
@@ -2362,6 +2365,7 @@ paths:
                 properties:
                   pledgeId: { type: string }
                   clientSecret: { type: string }
+                  publishableKey: { type: string, description: Sealed seller account public key for Stripe.js }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -2381,7 +2385,7 @@ paths:
     post:
       tags: [campaign]
       operationId: confirmPledge
-      summary: Confirm a pledge after Stripe.js confirmed the SetupIntent
+      summary: Confirm only after the kernel verifies the seller's SetupIntent and pledge/buyer binding
       security:
         - appToken: [events:write]
         - cookieAuth: []
@@ -2410,7 +2414,7 @@ paths:
                     properties:
                       id: { type: string }
                       amount: { type: integer }
-                      status: { type: string, enum: [confirmed] }
+                      status: { type: string, enum: [confirmed, charged], description: Replay preserves charged status }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -2537,6 +2541,11 @@ paths:
       tags: [campaign]
       operationId: settleCampaign
       summary: Charge all confirmed pledges once the target is met (campaign creator only)
+      description: >
+        Sends sellerDid from each recorded pledge binding (or the server event creator),
+        never request input. Validates all per-pledge outcomes before applying each row's
+        own confirmed-state compare-and-set update. Terminal pledge replays do not charge
+        or rewrite rows. No batch-wide status is inferred from a single outcome.
       security:
         - appToken: [events:write]
         - cookieAuth: []
@@ -2557,8 +2566,8 @@ paths:
                       type: object
                       properties:
                         pledgeId: { type: string }
-                        status: { type: string }
-                        error: { type: string }
+                        status: { type: string, enum: [charged, failed] }
+                        code: { type: string, description: Required machine-readable code for a failed pledge }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }

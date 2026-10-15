@@ -30,7 +30,8 @@ import { pledges } from '@/db';
 import { SETUP_INTENT_CONTRACT } from '@/lib/pledge-payment';
 
 const tokenMock = vi.hoisted(() => vi.fn());
-vi.mock('@/lib/pay-app-token', () => ({ getPayAppToken: tokenMock, invalidatePayAppToken: vi.fn() }));
+const invalidateTokenMock = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/pay-app-token', () => ({ getPayAppToken: tokenMock, invalidatePayAppToken: invalidateTokenMock }));
 import { OPTIONS as pledgeOptions, POST as postPledge } from '../../app/api/campaign/pledge/route';
 import { OPTIONS as confirmOptions, POST as postConfirm } from '../../app/api/campaign/pledge/confirm/route';
 
@@ -40,7 +41,10 @@ const COOKIE = 'session=abc';
 const ERR_PLEDGE_FAILED = 'Failed to create pledge';
 const ERR_CONFIRM_FAILED = 'Failed to confirm pledge';
 const ERR_AMOUNT = 'amount must be an integer >= 100 (minimum $1.00)';
-const SETUP_INTENT = { clientSecret: 'seti_secret', setupIntentId: 'seti_new', customerId: 'cus_new' };
+const SETUP_INTENT = {
+  clientSecret: 'seti_secret', setupIntentId: 'seti_new', customerId: 'cus_new',
+  publishableKey: 'pk_test_seller',
+};
 const VERIFY_RESULT = {
   verified: true, setupIntentId: 'seti_1', customerId: 'cus_1', paymentMethodId: 'pm_new',
   pledgeId: 'plg_1', eventId: EVENT_ID, buyerDid: BACKER_DID, sellerDid: CREATOR_DID,
@@ -68,6 +72,7 @@ beforeEach(() => {
   resetCampaignMocks();
   signInAs(BACKER_DID);
   tokenMock.mockReset().mockResolvedValue('app-token');
+  invalidateTokenMock.mockReset().mockResolvedValue(undefined);
 });
 
 describe('POST /api/campaign/pledge', () => {
@@ -171,7 +176,10 @@ describe('POST /api/campaign/pledge', () => {
 
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body).toEqual({ pledgeId: expect.stringMatching(/^plg_[0-9a-f]{24}$/), clientSecret: 'seti_secret' });
+    expect(body).toEqual({
+      pledgeId: expect.stringMatching(/^plg_[0-9a-f]{24}$/), clientSecret: 'seti_secret',
+      publishableKey: SETUP_INTENT.publishableKey,
+    });
     expectCors(res);
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
@@ -216,7 +224,9 @@ describe('POST /api/campaign/pledge', () => {
     const res = await pledge({ eventId: EVENT_ID, amount: 4000 });
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ pledgeId: 'plg_old', clientSecret: 'seti_secret' });
+    expect(await res.json()).toEqual({
+      pledgeId: 'plg_old', clientSecret: 'seti_secret', publishableKey: SETUP_INTENT.publishableKey,
+    });
     expect(insertMock).not.toHaveBeenCalled();
     expect(updatedTables()).toEqual([pledges]);
     expect(setValues()).toEqual([
@@ -292,6 +302,35 @@ describe('POST /api/campaign/pledge', () => {
 });
 
 describe('server-verified pledge confirmation', () => {
+  it.each([undefined, null, '', 'pk_test_', 'sk_test_invalid', 'rk_test_invalid'])(
+    'fails closed before storing a pledge when the seller key is missing/invalid (%j)',
+    async (publishableKey) => {
+      nextSelect([makeEvent()]);
+      nextSelect([]);
+      fetchMock.mockResolvedValue(jsonResponse(200, { ...SETUP_INTENT, publishableKey }));
+      const response = await pledge();
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({ code: 'payment_verification_unavailable' });
+      expect(insertMock).not.toHaveBeenCalled();
+      expect(updatedTables()).toEqual([]);
+      expect(mockLog.error).toHaveBeenCalledWith(
+        { code: 'payment_verification_unavailable' }, 'Pay service SetupIntent failed',
+      );
+    },
+  );
+
+  it('reuses the shared app transport for one 401 refresh without changing the setup body', async () => {
+    nextSelect([makeEvent()]);
+    nextSelect([]);
+    tokenMock.mockResolvedValueOnce('expired').mockResolvedValueOnce('fresh');
+    fetchMock.mockResolvedValueOnce(jsonResponse(401))
+      .mockResolvedValueOnce(jsonResponse(200, SETUP_INTENT));
+    expect((await pledge()).status).toBe(200);
+    expect(invalidateTokenMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[1][1].headers.Authorization).toBe('Bearer fresh');
+    expect(fetchMock.mock.calls[0][1].body).toBe(fetchMock.mock.calls[1][1].body);
+    expect(fetchMock.mock.calls[1][1]).toMatchObject({ cache: 'no-store', redirect: 'error' });
+  });
   it('queries only the authenticated buyer and verifies canonical row values, ignoring posted bindings', async () => {
     nextSelect([boundPledge()]);
     nextUpdate([boundPledge({ status: 'confirmed', stripePaymentMethodId: 'pm_new' })]);

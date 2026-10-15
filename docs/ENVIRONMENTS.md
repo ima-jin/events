@@ -59,7 +59,7 @@ the app goes live without an env edit or restart.
 | `CHECKIN_WEBHOOK_URL` | runtime | Optional external check-in callback URL; unset disables callback. Do not embed credentials in URLs. |
 | `DYKIL_URL` | runtime | Target kernel base plus `/dykil` for public survey API reads; unset yields no survey response. |
 | `IMAJIN_EVENTS_PUBLISH_PATH` | runtime | Optional approved public kernel app-auth publish route path; unset is a logged no-op. See KERNEL-GAPS.md. |
-| `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | build | Public key for campaign Payment Element card setup, matching the pay service's Stripe account/environment. Unset disables card setup with a clear error before a pledge is created. Never use a Stripe secret key. |
+| `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | legacy | Not read by campaign payments. Setup returns the seller's sealed public key for Stripe.js; a missing key fails closed. Removal of the legacy env entry is tracked in imajin-ai#2789. |
 | `ENABLE_TICKET_MIGRATION` | runtime | Unset or `false` until #2529 soak sign-off; only literal `true` enables the live-ticket rewrite. Prepared deploy refuses enabled gate. |
 
 ## Optional overrides and attribution

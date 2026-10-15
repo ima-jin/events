@@ -117,6 +117,7 @@ the approved vault/tool flow and `/jin` re-sync to register the signer, callback
 Preserve the public pin and durable replay directories on shared persistent local storage;
 trusted util-linux `flock` and a multi-host shared-store adapter before scaling are required.
 See [DEPLOY.md](./DEPLOY.md#kernel-signed-callbacks) for discovery, rollout and failure handling.
+
 ## Campaign payment setup
 
 Campaign creation and confirmation require the separate operator-approved `pay:setup-intent`

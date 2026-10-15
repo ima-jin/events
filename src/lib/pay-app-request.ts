@@ -14,6 +14,9 @@ export async function postPayAsApp(path: string, body: unknown): Promise<Respons
       Authorization: `Bearer ${await getPayAppToken()}`,
     },
     body: serializedBody,
+    cache: 'no-store',
+    redirect: 'error',
+    signal: AbortSignal.timeout(15_000),
   });
   const response = await send();
   if (response.status !== 401) return response;

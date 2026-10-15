@@ -13,7 +13,8 @@
  * Response:
  * {
  *   pledgeId: string,
- *   clientSecret: string
+ *   clientSecret: string,
+ *   publishableKey: string
  * }
  */
 
@@ -96,7 +97,7 @@ export const POST = withLogger('events', async (request: NextRequest, { log }) =
       );
     }
 
-    const { clientSecret, setupIntentId, customerId } = payment;
+    const { clientSecret, setupIntentId, customerId, publishableKey } = payment;
     const bindingMetadata = { sellerDid: event.creatorDid, setupIntentContract: SETUP_INTENT_CONTRACT };
 
     // Create or update pledge record
@@ -142,7 +143,7 @@ export const POST = withLogger('events', async (request: NextRequest, { log }) =
     }
 
     return NextResponse.json(
-      { pledgeId, clientSecret },
+      { pledgeId, clientSecret, publishableKey },
       { headers: cors }
     );
   } catch (error) {
