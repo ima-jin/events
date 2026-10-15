@@ -140,6 +140,9 @@ existing ticket QRs are invalidated at cutover; no reissue
 Use [SOAK.md](./SOAK.md) for the #2529 scripted flow pass, private test inputs,
 manual evidence gates and rollback rehearsal/results template. Tooling tests do not
 replace the real authorized dev rehearsal or Ryan's sign-off.
+For #2529's loader-only production-shaped dev dataset, follow
+[SOAK-DATA.md](./SOAK-DATA.md): Ryan-operated read-only export, guarded dev dry run/commit,
+retained snapshot and restore. This is not production cutover or permission to run it.
 
 Per Ryan's 2026-10-14 ruling on ima-jin/imajin-ai#2516, the kernel vault issues a new
 ticket QR secret at cutover. Never copy the old secret or carry it over into the vault.
