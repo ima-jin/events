@@ -297,6 +297,19 @@ describe('deploy environment guard', () => {
 });
 
 describe('standalone pm2 and deploy contract', () => {
+  it('documents fresh vault issuance and QR invalidation at cutover without reissue', () => {
+    const deploy = read('docs/DEPLOY.md');
+    expect(deploy.split('\n')).toContain('existing ticket QRs are invalidated at cutover; no reissue');
+    for (const file of ['docs/DEPLOY.md', 'docs/TICKET-QR.md', 'docs/REGISTRATION.md']) {
+      const content = read(file);
+      expect(content).toContain('no reissue');
+      expect(content).toContain('Never copy the old secret');
+      expect(content).not.toContain('reissue through the holder/email paths');
+      expect(content).not.toContain('reissue QRs through the same holder/email paths');
+      expect(content).not.toContain('holders sign in and load their ticket QR again');
+      expect(content).not.toContain('organizers resend ticket emails');
+    }
+  });
   it('uses canonical standalone paths and original listener ports', () => {
     const { apps } = require('../../ecosystem.config.cjs');
     expect(apps.map((app: { name: string }) => app.name)).toEqual(['dev-events', 'prod-events']);

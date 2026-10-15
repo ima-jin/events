@@ -137,6 +137,10 @@ This validates without recording history. A refusal is a hard stop; no destructi
 repair, no migration SQL rewrite, no force flag.
 
 ## One-time cutover — deferred to #2529 / #2516
+existing ticket QRs are invalidated at cutover; no reissue
+
+Per Ryan's 2026-10-14 ruling on ima-jin/imajin-ai#2516, the kernel vault issues a new
+ticket QR secret at cutover. Never copy the old secret or carry it over into the vault.
 
 The kernel deploy configs currently still declare monorepo events entries
 ([gap(kernel) #2784](https://github.com/ima-jin/imajin-ai/issues/2784), Refs #2518). Their ownership

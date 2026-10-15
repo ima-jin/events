@@ -84,7 +84,9 @@ vault problem through `/jin` and restart rather than redeeming the spent code ag
 To rotate, select **Rotate** on `/jin`, countersign, then restart events through the
 operator's deployment tool. The next boot fetches the current generation with no file edit.
 Session rotation signs users out; QR rotation invalidates previous tokens after restart
-(reissue through the holder/email paths). Ticket-v1 semantics are otherwise unchanged.
+with no old-secret fallback. At cutover the kernel vault issues a new ticket QR secret;
+existing QRs are invalidated with no reissue or carry-over. Never copy the old secret.
+Ticket-v1 semantics are otherwise unchanged.
 
 ## Scoped authority
 

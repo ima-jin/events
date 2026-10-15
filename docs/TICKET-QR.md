@@ -13,15 +13,16 @@ on `/jin` and countersign, then restart. No env credential or env fallback exist
 QR issuance fails closed before vault loading completes. All instances using the same
 app DID fetch that app's current generation.
 
-**Old raw-ID QRs are rejected, with no organizer override.** Before deployment,
-notify organizers and holders: holders sign in and load their ticket QR again,
-or organizers resend ticket emails (the existing resend cooldown still applies).
-All email issuance paths now use the same signed format. Updating the check-in
-client to submit the scanned token is required in the same deployment window.
+**Old raw-ID QRs are rejected, with no organizer override.** All email issuance
+paths use the same signed format; the check-in client submits the scanned token.
 There is no database migration. Rotating the secret invalidates all existing
-tokens after restart; reissue QRs through the same holder/email paths after rotation.
+tokens after restart.
 Use **Rotate** on `/jin`, countersign, then restart through the operator's deployment tool;
 no file edit, credential reveal or copying step is needed.
+At cutover the kernel vault issues a new ticket QR secret. Existing ticket QRs
+are invalidated; no reissue or carry-over is performed. Never copy the old secret.
+This follows Ryan's 2026-10-14 ruling on ima-jin/imajin-ai#2516: events is pre-1.0,
+and production has zero upcoming events and zero tickets for those events.
 
 Default emailed/API tokens have no expiry, to support saved and printed tickets.
 The signing helper accepts an optional expiry for bounded-lifetime issuance.
