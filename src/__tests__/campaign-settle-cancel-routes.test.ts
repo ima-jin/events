@@ -6,6 +6,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   EVENT_ID,
+  BACKER_DID,
+  CREATOR_DID,
   campaignRequest,
   expectCors,
   itAnswers500WhenHandlerThrows,
@@ -45,6 +47,13 @@ function queueSettleable(targetAmount: number | null = 5000): void {
   nextSelect(confirmedPledges());
 }
 
+const chargedResults = () => ({
+  results: [
+    { pledgeId: 'plg_1', status: 'charged' },
+    { pledgeId: 'plg_2', status: 'charged' },
+  ],
+});
+
 describe('POST /api/campaign/{eventId}/settle', () => {
   beforeEach(() => {
     resetCampaignMocks();
@@ -55,7 +64,7 @@ describe('POST /api/campaign/{eventId}/settle', () => {
     queueSettleable();
     getPayAppTokenMock.mockResolvedValueOnce('expired').mockResolvedValueOnce('fresh');
     fetchMock.mockResolvedValueOnce(jsonResponse(401))
-      .mockResolvedValueOnce(jsonResponse(200, { results: [] }));
+      .mockResolvedValueOnce(jsonResponse(200, chargedResults()));
     expect((await settle()).status).toBe(200);
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(invalidatePayAppTokenMock).toHaveBeenCalledOnce();
@@ -67,7 +76,7 @@ describe('POST /api/campaign/{eventId}/settle', () => {
     queueSettleable();
     fetchMock.mockImplementation(async () => jsonResponse(status, { error: 'scope or ownership refused' }));
     const res = await settle();
-    expect(res.status).toBe(status === 403 ? 403 : 500);
+    expect(res.status).toBe(status === 403 ? 403 : 503);
     if (status === 403) {
       expect(await res.json()).toEqual({ error: expect.stringContaining('approve pay:charge-pledges') });
       expect(invalidatePayAppTokenMock).not.toHaveBeenCalled();
@@ -79,7 +88,7 @@ describe('POST /api/campaign/{eventId}/settle', () => {
   it('does not charge or mutate pledges when the app token is unavailable', async () => {
     queueSettleable();
     getPayAppTokenMock.mockRejectedValue(new Error('not provisioned'));
-    expect((await settle()).status).toBe(500);
+    expect((await settle()).status).toBe(503);
     expect(fetchMock).not.toHaveBeenCalled();
     expect(updateMock).not.toHaveBeenCalled();
   });
@@ -126,7 +135,7 @@ describe('POST /api/campaign/{eventId}/settle', () => {
       total: 2,
       results: [
         { pledgeId: 'plg_1', status: 'charged' },
-        { pledgeId: 'plg_2', status: 'failed', error: 'card_declined' },
+        { pledgeId: 'plg_2', status: 'failed', code: 'PLEDGE_BINDING_MISMATCH' },
       ],
     };
     queueSettleable(6000);
@@ -145,32 +154,31 @@ describe('POST /api/campaign/{eventId}/settle', () => {
     expect(JSON.parse(init.body as string)).toEqual({
       eventId: EVENT_ID,
       pledges: [
-        { pledgeId: 'plg_1', setupIntentId: 'seti_1' },
-        { pledgeId: 'plg_2', setupIntentId: 'seti_2' },
+        { pledgeId: 'plg_1', setupIntentId: 'seti_1', sellerDid: CREATOR_DID },
+        { pledgeId: 'plg_2', setupIntentId: 'seti_2', sellerDid: CREATOR_DID },
       ],
     });
 
     expect(updatedTables()).toEqual([pledges, pledges]);
     expect(setValues()).toEqual([
       { status: 'charged', chargedAt: expect.any(Date) },
-      { status: 'failed', failureReason: 'card_declined' },
+      { status: 'failed', failureReason: 'PLEDGE_BINDING_MISMATCH' },
     ]);
-    expect(whereParams(2)).toEqual(['plg_1']);
-    expect(whereParams(3)).toEqual(['plg_2']);
+    expect(whereParams(2)).toEqual(['plg_1', EVENT_ID, 'confirmed', BACKER_DID, 4000, 'CAD', 'seti_1', 'cus_1', 'pm_1', '{}']);
+    expect(whereParams(3)).toEqual(['plg_2', EVENT_ID, 'confirmed', BACKER_DID, 2000, 'CAD', 'seti_2', 'cus_2', 'pm_1', '{}']);
   });
 
-  it('records a default failure reason when the pay service gives none', async () => {
+  it('rejects missing failure codes before any mutation', async () => {
     queueSettleable();
     fetchMock.mockResolvedValue(jsonResponse(200, { results: [{ pledgeId: 'plg_2', status: 'failed' }] }));
 
-    await settle();
-
-    expect(setValues()).toEqual([{ status: 'failed', failureReason: 'Charge failed' }]);
+    expect((await settle()).status).toBe(503);
+    expect(updateMock).not.toHaveBeenCalled();
   });
 
   it('settles a campaign that has no target once anything is confirmed', async () => {
     queueSettleable(null);
-    fetchMock.mockResolvedValue(jsonResponse(200, { charged: 2, failed: 0, total: 2, results: [] }));
+    fetchMock.mockResolvedValue(jsonResponse(200, chargedResults()));
 
     const res = await settle();
 
@@ -178,26 +186,26 @@ describe('POST /api/campaign/{eventId}/settle', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it('passes the pay response through untouched when it has no per-pledge results', async () => {
+  it('rejects a pay response with no per-pledge results', async () => {
     queueSettleable();
     fetchMock.mockResolvedValue(jsonResponse(200, { charged: 2 }));
 
     const res = await settle();
 
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ charged: 2 });
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: ERR_CHARGE_FAILED });
     expect(updateMock).not.toHaveBeenCalled();
   });
 
-  it('surfaces the pay service error message with a 500', async () => {
+  it('returns a generic 503 without logging upstream error prose', async () => {
     queueSettleable();
     fetchMock.mockResolvedValue(jsonResponse(503, { error: 'stripe_unavailable' }));
 
     const res = await settle();
 
-    expect(res.status).toBe(500);
-    expect(await res.json()).toEqual({ error: 'stripe_unavailable' });
-    expect(mockLog.error).toHaveBeenCalledWith({ err: 'stripe_unavailable' }, 'Pay service charge-pledges failed');
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: ERR_CHARGE_FAILED });
+    expect(mockLog.error).not.toHaveBeenCalled();
     expect(updateMock).not.toHaveBeenCalled();
   });
 
@@ -207,24 +215,26 @@ describe('POST /api/campaign/{eventId}/settle', () => {
 
     const res = await settle();
 
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(503);
     expect(await res.json()).toEqual({ error: ERR_CHARGE_FAILED });
-    expect(mockLog.error).toHaveBeenCalledWith({ err: 'Bad Gateway' }, 'Pay service charge-pledges failed');
+    expect(mockLog.error).not.toHaveBeenCalled();
   });
 
-  it('answers 500 when the pay service cannot be reached', async () => {
+  it('answers 503 when the pay service cannot be reached', async () => {
     queueSettleable();
     fetchMock.mockRejectedValue(new Error('boom'));
 
     const res = await settle();
 
-    expect(res.status).toBe(500);
-    expect(await res.json()).toEqual({ error: ERR_SETTLE_FAILED });
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: ERR_CHARGE_FAILED });
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(updateMock).not.toHaveBeenCalled();
   });
 
   it('answers 500 when a pledge status update fails after charging', async () => {
     queueSettleable();
-    fetchMock.mockResolvedValue(jsonResponse(200, { results: [{ pledgeId: 'plg_1', status: 'charged' }] }));
+    fetchMock.mockResolvedValue(jsonResponse(200, chargedResults()));
     nextUpdate(new Error('boom'));
 
     const res = await settle();

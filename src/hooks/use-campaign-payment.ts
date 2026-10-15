@@ -66,14 +66,14 @@ export function useCampaignPayment(
     setBusy(true);
     setError('');
     try {
-      const stripe = await campaignStripe();
-      if (!stripe) throw new Error('Unavailable Stripe');
       const result = await campaignRequest<CampaignSetup>('/api/campaign/pledge', { eventId, amount });
       if (!result.pledgeId || !result.clientSecret) throw new Error('Invalid setup');
+      const stripe = await campaignStripe(result.publishableKey);
+      if (!stripe) throw new Error('Unavailable seller Stripe account');
       // Persist only Stripe's public intent identifier, never a substring of the secret.
       const retrieved = await stripe.retrieveSetupIntent(result.clientSecret);
       if (retrieved.error || !retrieved.setupIntent?.id) throw new Error('Invalid setup');
-      rememberCampaignSetup(eventId, result.pledgeId, retrieved.setupIntent.id);
+      rememberCampaignSetup(eventId, result.pledgeId, retrieved.setupIntent.id, result.publishableKey);
       setSetup(result);
     } catch {
       setError('Could not start card setup. Check payment configuration and try again.');

@@ -33,6 +33,9 @@ describe('requestPayRefund', () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${APP_TOKEN}` },
       body: JSON.stringify({ paymentId: 'pi_1', amount: 500 }),
+      cache: 'no-store',
+      redirect: 'error',
+      signal: expect.any(AbortSignal),
     });
   });
 

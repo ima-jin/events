@@ -1,16 +1,17 @@
 import { loadStripe, type SetupIntent } from '@stripe/stripe-js';
 import type { CampaignPledge } from './campaign-api';
+import { isStripePublishableKey } from '@/lib/stripe-publishable-key';
 
 export const CAMPAIGN_RETURN_KEY = 'events.campaign.setup';
 
-export function campaignStripe() {
-  const key = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
-  return key ? loadStripe(key) : null;
+export function campaignStripe(publishableKey: unknown) {
+  return isStripePublishableKey(publishableKey) ? loadStripe(publishableKey) : null;
 }
 
 export interface CampaignSetup {
   pledgeId: string;
   clientSecret: string;
+  publishableKey: string;
 }
 
 export interface CampaignConfirmation {
@@ -28,10 +29,10 @@ export function confirmationFor(pledgeId: string, intent: SetupIntent): Campaign
   return { pledgeId, setupIntentId: intent.id, paymentMethodId };
 }
 
-export function rememberCampaignSetup(eventId: string, pledgeId: string, setupIntentId: string) {
-  // Only non-secret binding information is persisted for a possible Stripe redirect.
+export function rememberCampaignSetup(eventId: string, pledgeId: string, setupIntentId: string, publishableKey: string) {
+  // Bind the account's public key for redirect retrieval; never persist a client secret.
   globalThis.sessionStorage.setItem(CAMPAIGN_RETURN_KEY, JSON.stringify({
-    eventId, pledgeId, setupIntentId, createdAt: Date.now(),
+    eventId, pledgeId, setupIntentId, publishableKey, createdAt: Date.now(),
   }));
 }
 
@@ -54,15 +55,16 @@ function validateReturnBinding(eventId: string, pledge: CampaignPledge | null, s
   if (!setupIntentId || binding.setupIntentId !== setupIntentId) throw new Error('Unmatched setup');
   const age = Date.now() - binding.createdAt;
   if (!Number.isFinite(binding.createdAt) || age < 0 || age > 3_600_000) throw new Error('Expired binding');
-  return pledge.id;
+  if (!isStripePublishableKey(binding.publishableKey)) throw new Error('Missing seller account');
+  return { pledgeId: pledge.id, publishableKey: binding.publishableKey };
 }
 
 export async function reconcileCampaignReturn(
   eventId: string, pledge: CampaignPledge | null, returned: NonNullable<ReturnType<typeof readCampaignReturn>>,
 ) {
-  const pledgeId = validateReturnBinding(eventId, pledge, returned.setupIntentId);
+  const { pledgeId, publishableKey } = validateReturnBinding(eventId, pledge, returned.setupIntentId);
   if (!returned.secret?.startsWith(`${returned.setupIntentId}_secret_`)) throw new Error('Unmatched secret');
-  const stripe = await campaignStripe();
+  const stripe = await campaignStripe(publishableKey);
   if (!stripe) throw new Error('Unavailable Stripe');
   const result = await stripe.retrieveSetupIntent(returned.secret);
   if (result.error || result.setupIntent?.id !== returned.setupIntentId) {

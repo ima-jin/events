@@ -4,7 +4,8 @@ import { screen, waitFor } from '@testing-library/react';
 import { CampaignSection, type CampaignSectionProps } from '@/components/campaign/campaign-section';
 import {
   campaignRoutes, elementsDouble, givenReturn, jsonResponse, loadStripeDouble,
-  renderCampaign as renderCampaignComponent, requestBody, resetCampaign, stripeDouble, successIntent, startSetup,
+  renderCampaign as renderCampaignComponent, requestBody, resetCampaign, sellerPublishableKey,
+  stripeDouble, successIntent, startSetup,
 } from '../../support/campaign-ui-support';
 
 vi.mock('@stripe/stripe-js', async () => ({
@@ -101,6 +102,12 @@ describe('pledge and card setup', () => {
     const { user } = renderCampaign();
     await startSetup(user);
     expect(requestBody(fetch, '/pledge')).toEqual({ eventId: 'evt_1', amount: 2500 });
+    expect(loadStripeDouble).toHaveBeenCalledWith(sellerPublishableKey);
+    expect(loadStripeDouble.mock.calls.every(([key]) => key === sellerPublishableKey)).toBe(true);
+    expect(loadStripeDouble).not.toHaveBeenCalledWith('pk_test_platform');
+    expect(JSON.parse(globalThis.sessionStorage.getItem('events.campaign.setup')!)).toMatchObject({
+      publishableKey: sellerPublishableKey,
+    });
     expect(globalThis.sessionStorage.getItem('events.campaign.setup')).not.toContain('secret');
     await user.click(screen.getByRole('button', { name: 'Save card and confirm pledge' }));
     expect(await screen.findByText(/Your card is saved/)).toBeTruthy();
@@ -156,16 +163,26 @@ describe('pledge and card setup', () => {
     expect(screen.queryByText(/private-secret/)).toBeNull();
   });
 
-  it.each(['missing config', 'failed loader'])('does not create a pledge for %s', async (failure) => {
-    if (failure === 'missing config') vi.stubEnv('NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY', '');
-    else loadStripeDouble.mockResolvedValue(null);
-    const fetch = campaignRoutes();
-    const { user } = renderCampaign();
-    await user.click(await screen.findByRole('button', { name: '$25' }));
-    await user.click(screen.getByRole('button', { name: 'Continue to card setup' }));
-    expect(await screen.findByRole('alert')).toBeTruthy();
-    expect(fetch.mock.calls.some(([url]) => String(url) === '/api/campaign/pledge')).toBe(false);
-  });
+  it.each(['missing seller key', 'invalid seller key', 'failed loader'])(
+    'does not mount or confirm a card for %s, even with a platform env key',
+    async (failure) => {
+      const overrides: Parameters<typeof campaignRoutes>[2] = failure === 'failed loader' ? {} : {
+        '/pledge': jsonResponse({
+          pledgeId: 'plg_1', clientSecret: 'seti_1_secret_example',
+          publishableKey: failure === 'invalid seller key' ? 'sk_test_invalid' : undefined,
+        }),
+      };
+      if (failure === 'failed loader') loadStripeDouble.mockResolvedValue(null);
+      const fetch = campaignRoutes({}, null, overrides);
+      const { user } = renderCampaign();
+      await user.click(await screen.findByRole('button', { name: '$25' }));
+      await user.click(screen.getByRole('button', { name: 'Continue to card setup' }));
+      expect(await screen.findByRole('alert')).toBeTruthy();
+      expect(screen.queryByLabelText('Secure card form')).toBeNull();
+      expect(fetch.mock.calls.some(([url]) => String(url).includes('/pledge/confirm'))).toBe(false);
+      if (failure !== 'failed loader') expect(loadStripeDouble).not.toHaveBeenCalled();
+    },
+  );
 
   it.each(['stripe error', 'stripe throws', 'validation error', 'processing', 'missing payment method'])(
     'does not confirm after %s', async (failure) => {
@@ -211,6 +228,7 @@ describe('Stripe redirect return', () => {
     renderCampaign();
     expect(await screen.findByText(/Your card is saved/)).toBeTruthy();
     expect(stripeDouble.retrieveSetupIntent).toHaveBeenCalledWith('seti_1_secret_example');
+    expect(loadStripeDouble).toHaveBeenCalledWith(sellerPublishableKey);
     expect(requestBody(fetch, '/pledge/confirm').pledgeId).toBe('plg_1');
     expect(globalThis.location.search).toBe('?keep=yes');
     expect(stripeDouble.confirmSetup).not.toHaveBeenCalled();
@@ -219,6 +237,7 @@ describe('Stripe redirect return', () => {
   it.each([
     { pledgeId: 'other_pledge' }, { eventId: 'other_event' },
     { setupIntentId: 'seti_other' }, { createdAt: 1 },
+    { publishableKey: undefined }, { publishableKey: 'sk_test_invalid' },
   ])('rejects unrelated or expired redirect binding %j', async (binding) => {
     givenReturn(binding);
     campaignRoutes({}, { id: 'plg_1', amount: 2500, status: 'pending' });

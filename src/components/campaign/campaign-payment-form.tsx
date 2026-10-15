@@ -57,7 +57,7 @@ export function CampaignPaymentForm({ setup, busy, onComplete }: Readonly<{
   busy: boolean;
   onComplete: (intent: SetupIntent) => Promise<void>;
 }>) {
-  const stripe = useMemo(() => campaignStripe(), []);
+  const stripe = useMemo(() => campaignStripe(setup.publishableKey), [setup.publishableKey]);
   return (
     <Elements stripe={stripe} options={{ clientSecret: setup.clientSecret }}>
       <CardSetup busy={busy} onComplete={onComplete} />

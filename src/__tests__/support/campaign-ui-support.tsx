@@ -15,6 +15,7 @@ export const stripeDouble = {
 export const elementsDouble = { submit: vi.fn() };
 export const loadStripeDouble = vi.fn();
 export const successIntent = { id: 'seti_1', status: 'succeeded', payment_method: 'pm_1' };
+export const sellerPublishableKey = 'pk_test_seller';
 
 export const stripeReactDouble = {
   Elements: ({ children }: Readonly<{ children: ReactNode }>) => children,
@@ -27,7 +28,8 @@ export const stripeReactDouble = {
 };
 
 export function resetCampaign() {
-  vi.stubEnv('NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY', 'pk_test_example');
+  // A stale platform value must never select the campaign's Stripe account.
+  vi.stubEnv('NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY', 'pk_test_platform');
   vi.stubEnv('NEXT_PUBLIC_BASE_PATH', '');
   globalThis.history.replaceState(null, '', '/evt_1');
   globalThis.sessionStorage.clear();
@@ -49,7 +51,9 @@ export function campaignRoutes(
     }),
     '/my-pledge': jsonResponse({ pledge }),
     '/pledge/confirm': jsonResponse({ success: true, pledge: { id: 'plg_1', amount: 2500, status: 'confirmed' } }),
-    '/pledge': jsonResponse({ pledgeId: 'plg_1', clientSecret: 'seti_1_secret_example' }),
+    '/pledge': jsonResponse({
+      pledgeId: 'plg_1', clientSecret: 'seti_1_secret_example', publishableKey: sellerPublishableKey,
+    }),
     ...overrides,
   });
 }
@@ -63,7 +67,8 @@ export function renderCampaign(Component: typeof CampaignSection, props: Partial
 
 export function givenReturn(binding: Record<string, unknown> = {}) {
   globalThis.sessionStorage.setItem('events.campaign.setup', JSON.stringify({
-    eventId: 'evt_1', pledgeId: 'plg_1', setupIntentId: 'seti_1', createdAt: Date.now(), ...binding,
+    eventId: 'evt_1', pledgeId: 'plg_1', setupIntentId: 'seti_1',
+    publishableKey: sellerPublishableKey, createdAt: Date.now(), ...binding,
   }));
   globalThis.history.replaceState(null, '',
     '/evt_1?setup_intent=seti_1&setup_intent_client_secret=seti_1_secret_example&redirect_status=succeeded&keep=yes');
