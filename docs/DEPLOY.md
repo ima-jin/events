@@ -192,6 +192,33 @@ prefix intact. All other kernel routes stay unchanged.
 Public checks: `https://dev-jin.imajin.ai/events/api/health` and
 `https://jin.imajin.ai/events/api/health`.
 
+## Prod cutover quick reference
+
+Run only in Ryan's approved prod cutover window, as the existing process-manager user.
+Complete [SOAK.md — Record, rollback, rehearse](./SOAK.md#record-rollback-rehearse)
+prerequisites first, including the retained compatible kernel build and baseline adoption.
+Record **before** cutover, while pm2 still points at the kernel events app:
+
+```bash
+cd ~/prod/events
+pnpm install --frozen-lockfile
+bash scripts/soak/rollback.sh prod record
+```
+
+If an authorized rollback is needed after cutover:
+
+```bash
+cd ~/prod/events
+bash scripts/soak/rollback.sh prod rollback
+```
+
+Rehearsal is **dev only**; `prod rehearse` is always refused:
+
+```bash
+cd ~/dev/events
+bash scripts/soak/rollback.sh dev rehearse
+```
+
 ## Rollback and refusal
 
 See [SOAK.md](./SOAK.md) for `scripts/soak/rollback.sh <dev|prod> <record|rollback|rehearse>`,
