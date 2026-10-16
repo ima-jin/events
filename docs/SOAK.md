@@ -122,8 +122,46 @@ pass, plus provider delivery latency. These are **planning estimates, not measur
 Fixtures intentionally remain in dev for audit; no automatic database cleanup occurs.
 
 ## Read-only prod smoke
+### Obtain the holder auth file
+
+`--auth-file` is required and must contain a **signed-in production ticket-holder
+session**, not an empty JSON file, an organizer-only session, an app identity/keystore,
+or a dev session. Obtain it only through the normal, working standalone sign-in flow:
+
+1. In a private browser session, sign in to the production events app as the approved
+   holder of an existing ticket. Open that ticket's event and confirm the holder can
+   see their ticket. Do not buy a ticket just to prepare automated smoke.
+2. In the browser's Network panel, inspect the authenticated
+   `/events/api/events/<eventId>/my-ticket` request. Privately copy its request
+   `Cookie` header into the auth JSON's `buyer.cookie` field using an editor, never
+   a shell command or exported HAR. Use the actual cookie names/values sent by the
+   browser, not a guessed cookie name or a fabricated session.
+3. Set `existingTicket` to `{ "eventId": "<existing-event-id>",
+   "ticketId": "<ticket-owned-by-that-holder>" }` from that holder's ticket response.
+   The file shape is `{ "buyer": { "cookie": "<private Cookie header>" },
+   "existingTicket": { "eventId": "...", "ticketId": "..." } }`; these are placeholders,
+   not usable credentials. Optional `publicEventId` and `legacyUrls` are described above.
+4. Save outside the checkout as an operator-owned regular **0600** JSON file in a
+   private directory (no symlink). Use its absolute path below. Keep both session and
+   ticket identifiers out of logs, reports and issues; never copy app self-secrets.
+   If the session expires or sign-in redirects recur, sign in again and refresh the
+   file privately. No organizer session is needed for this read-only mode.
+
+**Sign-in prerequisite / known blocker:** the 2026-10-16 cutover hit the standalone
+login loop tracked in [imajin-ai#2825](https://github.com/ima-jin/imajin-ai/issues/2825).
+The SDK fix is in `@ima-jin/auth-client` 0.8.21; app wiring is tracked separately in
+[events#54](https://github.com/ima-jin/events/issues/54). This docs change does not
+upgrade SDK pins or implement that wiring. Until working sign-in is deployed and a
+holder session is obtained, authenticated prod smoke is **blocked**, not passed.
+Do not bypass sign-in or omit `existingTicket` to claim success: without it, the
+runner marks the ticket lookup **manual**, and exit 0 alone is not full smoke evidence.
+
+### Run authenticated smoke after cutover
+
+From `~/prod/events`, with the private holder file prepared above and a new report path:
 
 ```bash
+cd ~/prod/events
 node scripts/soak/flow-pass.mjs --env prod --prod-smoke \
   --base-url https://jin.imajin.ai/events \
   --auth-file /private/path/events-prod-smoke-auth.json \
@@ -138,6 +176,24 @@ settles anything; `--interactive` cannot enable writes.
 
 It prints the operator-only checklist: buy one real/comped ticket, refund it, validate
 its QR. Those are separate approved human actions, not automated smoke actions.
+### Public-read fallback when sign-in is blocked
+
+Only unauthenticated public GET checks are available while the holder session cannot
+be obtained. Set the public origin for the approved target (not from an env-file read):
+
+```bash
+EVENTS_PUBLIC_ORIGIN=https://jin.imajin.ai
+curl --fail --silent --show-error --max-time 15 --output /dev/null \
+  --write-out '/events: %{http_code}\n' "${EVENTS_PUBLIC_ORIGIN}/events"
+curl --fail --silent --show-error --max-time 15 --output /dev/null \
+  --write-out '/events/api/events: %{http_code}\n' "${EVENTS_PUBLIC_ORIGIN}/events/api/events"
+```
+
+Require **200 for both**; a redirect, error or timeout is not a pass. These commands
+send no auth, do not follow redirects, discard response bodies and perform no writes.
+Record only status codes/time and the sign-in blocker. Public reachability is **not**
+holder-ticket authorization, authenticated prod smoke, or cutover/soak sign-off.
+Rerun authenticated smoke once sign-in works; keep the holder lookup pending until then.
 
 ## Ruling b: QR cutover behavior
 
@@ -152,8 +208,25 @@ ticket's scanned token must check in successfully. Keep both results in #2529 ev
 ## Record, rollback, rehearse
 
 Run as the host's existing process-manager user from canonical `~/dev/events`
-or `~/prod/events`. Node 22+, git, pnpm, pm2 and curl are required. A per-environment
-private lock prevents overlapping rollback operations; also prevent concurrent deploys.
+or `~/prod/events`. Node 22+, git, pnpm 9.15.0, pm2 and curl are required.
+**Install the standalone checkout's dependencies before `record`, even before its
+first deploy:** `rollback.mjs` imports installed packages (including `postgres`) at
+startup, so the deploy script's later install is too late if `node_modules` is absent.
+From the selected clean standalone checkout, run:
+
+```bash
+cd ~/prod/events
+pnpm install --frozen-lockfile
+# For dev, use cd ~/dev/events and the same install command instead.
+```
+
+This installs dependencies only; it does not deploy, start pm2 or run migrations.
+Do not run `record` until installation succeeds. Follow
+[Before cutover: prepare and record](#before-cutover-prepare-and-record) for the
+remaining prerequisites before recording.
+
+A per-environment private lock prevents overlapping rollback operations; also prevent
+concurrent deploys.
 Never share `pm2 jlist`, `pm2 env` or pm2 dumps. The helper privately captures stdout/stderr
 and never forwards raw subprocess/database errors. No tracing is enabled.
 
