@@ -13,8 +13,13 @@ const manifest = { chain: [
   { did: 'did:imajin:fixture-a', role: 'creator', share: 0.5 },
   { did: 'did:imajin:fixture-b', role: 'contributor', share: 0.5 },
 ] };
+// Captured from Next 15.5.26 `pnpm build`: claim.html and _not-found.html.
+// Kept as inert text, including the real flight notFound template (not executable test scripts).
+const appRouter200 = readFileSync(new URL('../../test/fixtures/soak/app-router-200.html.txt', import.meta.url), 'utf8');
+const appRouter404 = readFileSync(new URL('../../test/fixtures/soak/app-router-404.html.txt', import.meta.url), 'utf8');
 
-function fixture({ live = false, createFail = false, settleFail = false, setupLive = false } = {}) {
+function fixture({ live = false, createFail = false, settleFail = false, setupLive = false,
+  html = '<!doctype html><html>Fixture</html>', htmlStatus = 200 } = {}) {
   const calls: { path: string; method: string; headers: Headers; body: unknown }[] = [];
   let buyerReads = 0;
   let refunded = false;
@@ -66,7 +71,7 @@ function fixture({ live = false, createFail = false, settleFail = false, setupLi
     if (path.endsWith('/settle')) { charged = true; return json({ charged: settleFail ? 0 : 1, failed: settleFail ? 1 : 0 }); }
     if (path.endsWith('/export') || path.endsWith('.csv')) return new Response('column\nprivate@example.test');
     if (path.includes('/api/')) return json({ success: true });
-    return new Response('<!doctype html><html>Fixture</html>');
+    return new Response(html, { status: htmlStatus });
   });
   return { fetcher, calls };
 }
@@ -157,6 +162,32 @@ describe('flow pass safety contract', () => {
 });
 
 describe('scripted HTTP flows', () => {
+  it('passes captured App Router 200 HTML with a flight-only notFound template', async () => {
+    expect(appRouter200).toContain('self.__next_f.push');
+    expect(appRouter200).toContain('This page could not be found');
+    expect(appRouter200.split('<script>')[0]).not.toContain('This page could not be found');
+    const { fetcher } = fixture({ html: appRouter200 });
+    const rows = await runFlows(options([...args(), '--prod-smoke']), {
+      legacyUrls: ['/events/e/evt_legacy'],
+    }, { fetcher, output: quiet });
+    for (const name of ['Public event list render', 'Public event page render', 'Legacy shared URL sample 1']) {
+      expect(rows.find((row) => row.name === name)?.result).toBe('pass');
+    }
+  });
+  it.each([
+    [404, appRouter404],
+    [404, '<!doctype html><html><body>Missing event</body></html>'],
+    [200, '{"error":"not HTML"}'],
+  ])('fails render contracts for HTTP %s and invalid HTML', async (htmlStatus, html) => {
+    const { fetcher } = fixture({ html, htmlStatus });
+    const rows = await runFlows(options([...args(), '--prod-smoke']), {
+      legacyUrls: ['/events/e/evt_legacy'],
+    }, { fetcher, output: quiet });
+    for (const name of ['Public event list render', 'Public event page render', 'Legacy shared URL sample 1']) {
+      expect(rows.find((row) => row.name === name)?.result).toBe('fail');
+    }
+    expect(markdown(rows)).not.toContain(html);
+  });
   it('runs prod smoke read-only with malicious write fixtures ignored', async () => {
     const { fetcher, calls } = fixture();
     const rows = await runFlows(options([...args('https://jin.imajin.ai/events'), '--prod-smoke']), {

@@ -5,6 +5,7 @@ import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres from 'postgres';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { BASELINE_HASH, BASELINE_WHEN, compareSchema, introspectSchema, runBaseline } from '../../lib/migrate-baseline-core.mjs';
+import { insertRow } from '../../soak/load-dev.mjs';
 
 // The ordinary setup-env DATABASE_URL is a dummy and must never enable this suite.
 const testUrl = process.env.EVENTS_BASELINE_TEST_DATABASE_URL;
@@ -18,6 +19,31 @@ describe.skipIf(!testUrl)('baseline real Postgres (dedicated disposable test dat
   const migrateApp = () => migrate(drizzle(sql), { migrationsFolder: folder, migrationsSchema: 'events' });
   beforeEach(async () => { await sql.unsafe('DROP SCHEMA IF EXISTS events CASCADE'); });
   afterAll(async () => { await sql.end(); });
+  it('inserts soak JSON through postgres.js as a composite, preserving typed values', async () => {
+    await apply();
+    const row = {
+      id: 'soak_event', did: 'did:imajin:soak-event', creator_did: 'did:imajin:soak-organizer',
+      title: 'Soak "quoted" title', starts_at: '2026-10-15T12:34:56.000Z',
+      ends_at: null, status: 'published', event_type: 'event', access_mode: 'public',
+      registration_config: { enforce_unique_emails: true }, name_display_policy: 'attendee_choice',
+      chat_enabled: false, currency: 'CAD', target_amount: 123,
+      tags: ['soak', 'fixture'], metadata: { nested: { text: 'quoted "value"', list: [1, false, null] } },
+    };
+    await insertRow(sql, 'events', row);
+    const [stored] = await sql.unsafe('SELECT * FROM events.events WHERE id = $1', [row.id]);
+    expect(stored).toMatchObject({ ...row, starts_at: new Date(row.starts_at) });
+    expect(stored.public_key).toMatch(/^[a-f0-9]{64}$/);
+    expect(stored.private_key).toMatch(/^[a-f0-9]{64}$/);
+
+    await insertRow(sql, 'ticket_types', {
+      id: 'soak_type', event_id: row.id, name: 'Standard', price: 100,
+      currency: 'CAD', quantity: null, sort_order: 0, requires_registration: false,
+      perks: ['Entry'], metadata: { nested: [true, null] },
+    });
+    expect(await sql.unsafe('SELECT event_id, price, quantity, perks, metadata FROM events.ticket_types')).toEqual([{
+      event_id: row.id, price: 100, quantity: null, perks: ['Entry'], metadata: { nested: [true, null] },
+    }]);
+  });
 
   it('fresh database is untouched, then drizzle creates and revalidates the exact baseline', async () => {
     expect(await run()).toMatchObject({ status: 'fresh-database' });
