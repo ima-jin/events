@@ -192,6 +192,51 @@ prefix intact. All other kernel routes stay unchanged.
 Public checks: `https://dev-jin.imajin.ai/events/api/health` and
 `https://jin.imajin.ai/events/api/health`.
 
+## Prod cutover quick reference
+
+Run only in Ryan's approved prod cutover window, as the existing process-manager user.
+Complete [SOAK.md — Record, rollback, rehearse](./SOAK.md#record-rollback-rehearse)
+prerequisites first, including the retained compatible kernel build and baseline adoption.
+Record **before** cutover, while pm2 still points at the kernel events app:
+
+```bash
+cd ~/prod/events
+pnpm install --frozen-lockfile
+bash scripts/soak/rollback.sh prod record
+```
+
+Then follow [One-time cutover](#one-time-cutover--deferred-to-2529--2516):
+confirm the kernel config has released events ownership and the inspected `prod-events`
+cwd/executable still match the retained kernel copy. **Only after those checks and a
+successful record**, remove that old entry and deploy the same approved standalone HEAD:
+
+```bash
+cd ~/prod/events
+pm2 delete prod-events && pm2 save && \
+bash scripts/deploy.sh prod "$(git rev-parse HEAD)"
+```
+
+Keep the selected HEAD unchanged between record and deploy. Stop on any failure; do not
+delete a mismatched or duplicate process. Verify public health and pm2 persistence, then
+run [SOAK.md — Read-only prod smoke](./SOAK.md#read-only-prod-smoke) with its private
+signed-in **ticket-holder** auth file and `existingTicket`. That section covers obtaining
+the file, the sign-in blocker (events#54 / imajin-ai#2825), and public GET-only fallback.
+Public checks alone are not an authenticated smoke pass or cutover sign-off.
+
+If an authorized rollback is needed after cutover:
+
+```bash
+cd ~/prod/events
+bash scripts/soak/rollback.sh prod rollback
+```
+
+Rehearsal is **dev only**; `prod rehearse` is always refused:
+
+```bash
+cd ~/dev/events
+bash scripts/soak/rollback.sh dev rehearse
+```
+
 ## Rollback and refusal
 
 See [SOAK.md](./SOAK.md) for `scripts/soak/rollback.sh <dev|prod> <record|rollback|rehearse>`,
