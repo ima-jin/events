@@ -76,15 +76,16 @@ async function snapshot(sql, backup) {
   });
 }
 
-async function insertRow(sql, table, row) {
+export async function insertRow(sql, table, row) {
   if (table === 'events') {
     const pair = await generateEventKeypair();
     row = { ...row, private_key: pair.privateKey, public_key: pair.publicKey };
   }
   const columns = Object.keys(POLICY[table]).map(quote).join(', ');
+  // Bind serialized JSON as text so postgres.js does not JSON-encode it again.
   // PostgreSQL handles JSONB, timestamps and nullable typed columns, without string interpolation.
   await sql.unsafe(`INSERT INTO ${tableSql(table)} (${columns})
-    SELECT ${columns} FROM jsonb_populate_record(NULL::${tableSql(table)}, $1::jsonb)`, [JSON.stringify(row)]);
+    SELECT ${columns} FROM jsonb_populate_record(NULL::${tableSql(table)}, $1::text::jsonb)`, [JSON.stringify(row)]);
 }
 
 export async function loadData(sql, { directory, env, manifest, commit = false }, output = console) {

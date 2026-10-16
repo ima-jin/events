@@ -45,9 +45,9 @@ export async function runFlows(config, auth, { fetcher = fetch, output = console
   }
   async function render(name, path, role) {
     return step(name, async () => {
-      const html = await request(path, { json: false, role });
+      // Reject real HTTP 404s, not the unused notFound template in App Router flight scripts.
+      const html = await request(path, { json: false, role, statuses: [200] });
       requireValue(html.includes('<html') || html.includes('<!DOCTYPE') || html.includes('<!doctype'));
-      requireValue(!html.includes('This page could not be found'));
     }, 'HTML fetched; visual/browser behavior remains operator verification.');
   }
   async function publicChecks(eventId) {
