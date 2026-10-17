@@ -1,14 +1,16 @@
 // @vitest-environment jsdom
 import { screen, waitFor } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { PaymentReadiness } from '@/components/organizer/payment-readiness';
 import { EventStatusControls } from '@/components/organizer/event-status-controls';
 import { organizerError, safeSetupUrl } from '@/components/organizer/request-error';
-import { body, change, eventFixture, jsonResponse, mockFetch, push, renderForm, renderPanel, tierFixture } from '../support/organizer-ui-support';
+import { body, change, eventFixture, jsonResponse, mockFetch, push, refresh, renderForm, renderPanel, tierFixture } from '../support/organizer-ui-support';
 
 const setupUrl = 'https://kernel.example/auth/connectors/stripe';
 const unavailable = { cardEnabled: null, setupUrl };
 const disconnected = { cardEnabled: false, setupUrl };
+
+vi.mock('next/navigation', () => ({ useRouter: () => ({ push, refresh }) }));
 
 describe('organizer payment guidance', () => {
   it('shows setup in the publish control and tier editor without blocking free forms', async () => {
@@ -71,6 +73,35 @@ describe('organizer payment guidance', () => {
     await user.click(screen.getByRole('button', { name: 'Publish' }));
     expect((await screen.findByRole('alert')).textContent).toContain('Please retry');
     expect((screen.getByRole('button', { name: 'Publish' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('supersedes a stale negative snapshot after connecting and publishing, then requests fresh server props', async () => {
+    let refused = true;
+    mockFetch({ '/api/events': () => refused
+      ? jsonResponse({ code: 'SELLER_NO_CARD_RAIL', setupUrl }, 409)
+      : jsonResponse({ event: { status: 'published' } }) });
+    const { user, rerender } = renderPanel(<EventStatusControls eventId="evt_1" currentStatus="draft" isCreator hasPaidTiers cardRailReadiness={disconnected} />);
+    await user.click(screen.getByRole('button', { name: 'Publish' }));
+    expect(await screen.findByRole('alert')).toBeTruthy();
+    expect(refresh).not.toHaveBeenCalled();
+    refused = false;
+    await user.click(screen.getByRole('button', { name: 'Publish' }));
+    await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+    expect(screen.queryByText(/It remains published/)).toBeNull();
+    expect(screen.queryByLabelText('Payment readiness')).toBeNull();
+    rerender(<EventStatusControls eventId="evt_1" currentStatus="published" isCreator hasPaidTiers cardRailReadiness={{ cardEnabled: true, setupUrl }} />);
+    expect(screen.queryByLabelText('Payment readiness')).toBeNull();
+  });
+
+  it.each([{ paid: false, emtEnabled: false }, { paid: true, emtEnabled: true }])('does not infer card readiness from free/e-Transfer publication (%j)', async ({ paid, emtEnabled }) => {
+    mockFetch({ '/api/events': jsonResponse({ event: { status: 'published' } }) });
+    const { user, rerender } = renderPanel(<EventStatusControls eventId="evt_1" currentStatus="draft" isCreator hasPaidTiers={paid} emtEnabled={emtEnabled} cardRailReadiness={disconnected} />);
+    await user.click(screen.getByRole('button', { name: 'Publish' }));
+    await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+    expect(screen.queryByLabelText('Payment readiness')).toBeNull();
+    rerender(<EventStatusControls eventId="evt_1" currentStatus="published" isCreator hasPaidTiers={paid} emtEnabled={emtEnabled} cardRailReadiness={{ cardEnabled: false, setupUrl }} />);
+    expect(screen.getByRole('link', { name: 'Set up card payments' })).toBeTruthy();
+    expect(screen.queryByText(/It remains published/)).toBeNull();
   });
 
   it('keeps draft and tier IDs after refused publication and retries without duplicate POSTs', async () => {

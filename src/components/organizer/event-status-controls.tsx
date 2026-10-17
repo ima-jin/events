@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { organizerPath, organizerRequest, PANEL_CLASS } from './organizer-data';
 import type { CardRailReadiness } from '@/lib/card-rail';
 import { PaymentReadiness } from './payment-readiness';
@@ -22,11 +23,13 @@ export function EventStatusControls({ eventId, currentStatus, isCreator, cardRai
   hasPaidTiers?: boolean;
   emtEnabled?: boolean;
 }>) {
+  const router = useRouter();
   const [status, setStatus] = useState(currentStatus);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<string | null>(null);
   const [setupUrl, setSetupUrl] = useState<string | null>(null);
+  const [supersededReadiness, setSupersededReadiness] = useState<CardRailReadiness>();
 
   async function transition(next: string) {
     setBusy(true);
@@ -38,6 +41,12 @@ export function EventStatusControls({ eventId, currentStatus, isCreator, cardRai
       });
       setStatus(result.event.status);
       setConfirmation(null);
+      if (result.event.status === 'published') {
+        // The gated mutation supersedes this snapshot, but does not prove card readiness:
+        // free and e-Transfer publication can succeed without a card check.
+        setSupersededReadiness(cardRailReadiness);
+        router.refresh();
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Unable to update event status.');
       if (cause instanceof OrganizerRequestError) setSetupUrl(cause.setupUrl);
@@ -56,7 +65,8 @@ export function EventStatusControls({ eventId, currentStatus, isCreator, cardRai
 
   return <section className={PANEL_CLASS} aria-label="Event status">
     <p>Event status: <strong>{status}</strong></p>
-    <PaymentReadiness readiness={cardRailReadiness} hasPaidTiers={hasPaidTiers} emtEnabled={emtEnabled} published={status === 'published'} />
+    <PaymentReadiness readiness={cardRailReadiness === supersededReadiness ? undefined : cardRailReadiness}
+      hasPaidTiers={hasPaidTiers} emtEnabled={emtEnabled} published={status === 'published'} />
     {isCreator && <div className="mt-3 flex flex-wrap gap-3">{(TRANSITIONS[status] ?? []).map((next) => {
       const label = status === 'paused' && next === 'published' ? 'Resume' : LABELS[next];
       return <button type="button" key={next} disabled={busy} onClick={() => requestTransition(next)}>{busy ? 'Updating…' : label}</button>;

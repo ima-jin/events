@@ -17,12 +17,16 @@ export function mockFetch(routes: Parameters<typeof baseMockFetch>[0]) {
 export const EVENT_ID = 'evt_1';
 export const CREATOR_DID = 'did:imajin:creator';
 export const push = vi.fn();
+export const refresh = vi.fn();
 
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push, refresh: vi.fn() }),
+  useRouter: () => ({ push, refresh }),
   notFound: () => { throw new Error('NEXT_HTTP_ERROR_FALLBACK;404'); },
 }));
-beforeEach(() => push.mockReset());
+beforeEach(() => {
+  push.mockReset();
+  refresh.mockReset();
+});
 afterEach(() => vi.unstubAllEnvs());
 
 export function eventFixture(overrides: Partial<EventFormEvent> = {}): EventFormEvent {

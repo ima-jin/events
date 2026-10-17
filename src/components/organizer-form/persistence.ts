@@ -1,5 +1,5 @@
 import { withBasePath } from '@/lib/base-path';
-import { eventPayload, tierPayload } from './model';
+import { eventPayload, minorUnits, tierPayload } from './model';
 import type { FormDetails, TierDraft } from './types';
 import { organizerError } from '../organizer/request-error';
 
@@ -62,6 +62,20 @@ async function saveTier(path: string, tier: TierDraft, index: number, progress: 
   }
 }
 
+async function saveFreeConversions(path: string, details: FormDetails, tiers: readonly TierDraft[], progress: SaveProgress): Promise<Set<string>> {
+  const saved = new Set<string>();
+  if (progress.status !== 'published' || details.emtEnabled || !tiers.every((tier) => minorUnits(tier.price) === 0)) return saved;
+  // Keep the current payment rail until all persisted paid tiers are confirmed free.
+  // Newly added free tiers can still be created after the details update.
+  for (const [index, tier] of tiers.entries()) {
+    if (tier.id || progress.tierIds.has(tier.key)) {
+      await saveTier(path, tier, index, progress);
+      saved.add(tier.key);
+    }
+  }
+  return saved;
+}
+
 export async function saveForm(details: FormDetails, tiers: readonly TierDraft[], progress: SaveProgress): Promise<string> {
   if (progress.uncertain) throw new Error(AMBIGUOUS);
   const payload = eventPayload(details);
@@ -73,13 +87,16 @@ export async function saveForm(details: FormDetails, tiers: readonly TierDraft[]
   }
   const eventId = progress.eventId;
   const path = `/api/events/${encodeURIComponent(eventId)}`;
+  const savedTiers = await saveFreeConversions(path, details, tiers, progress);
   // Never unpublish an existing live event just to edit it. Publication is the last write.
   const { status, ...detailsPayload } = payload;
   const updatePayload = status === 'published' ? detailsPayload : payload;
   await write(path, 'PUT', updatePayload, progress);
   if (status !== 'published') progress.status = status;
   // Serialize writes so a refusal stops the chain and confirmed IDs remain retryable.
-  await tiers.reduce((pending, tier, index) => pending.then(() => saveTier(path, tier, index, progress)), Promise.resolve());
+  for (const [index, tier] of tiers.entries()) {
+    if (!savedTiers.has(tier.key)) await saveTier(path, tier, index, progress);
+  }
   if (status === 'published' && progress.status !== 'published') {
     await write(path, 'PUT', { status }, progress);
     progress.status = status;
