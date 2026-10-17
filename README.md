@@ -99,8 +99,14 @@ Operator prerequisites before ticket checkout works: (1) register events and pro
 `apps:service-scopes` card; (3) deploy the kernel contract (imajin-ai#2695) and the kernel build that adds `transactionId` to the pay
 `checkout.completed` webhook (imajin-ai#2741; it looks the `pay.transactions` row up by the Stripe session and sends
 its id — the key `/pay/api/settle` needs). If a webhook arrives without it, events logs
-`Pay webhook carried no transactionId — order NOT settled` and skips settlement. Without 1–2, checkout for an event
-with a `.fair` chain fails closed (503). See also [`docs/KERNEL-GAPS.md`](./docs/KERNEL-GAPS.md).
+`Pay webhook carried no transactionId — order NOT settled` and skips settlement. Every seller checkout, including
+an event without a `.fair` chain, requires events' app-service token. Mint failures return a retryable 503 before
+calling pay; no unauthenticated fallback is allowed. Only events with a chain declare `payeeManifest`.
+See also [`docs/KERNEL-GAPS.md`](./docs/KERNEL-GAPS.md).
+
+**Checkout authentication deploy order (events#68):** merge and deploy this caller fix before kernel
+PR #2873 reaches the node in the v0.8.19 drain release. The Bearer header works with both the existing
+kernel and the token-required seller checkout contract.
 
 **Deploy order:** deploy [kernel PR #2786](https://github.com/ima-jin/imajin-ai/pull/2786)
 first, then this events release. Remove the retired shared pay credential from the deployment

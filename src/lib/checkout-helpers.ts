@@ -142,11 +142,10 @@ export interface RequestPayCheckoutSessionParams {
   sellerDid: string;
   metadata: Record<string, unknown>;
   /**
-   * Events' own app-service token + the payee manifest it declares (imajin-ai#2739). When present
-   * the checkout is authenticated as the events app, so the pay service binds the payment to it and
-   * events can later settle it via `/api/settle`. Absent for an event with no `.fair` chain.
+   * Events' own app-service token is required for every seller checkout (events#68).
+   * A payee manifest is declared only when the event has a `.fair` chain.
    */
-  appAuth?: AppCheckoutAuth | null;
+  appAuth: AppCheckoutAuth;
   log: Logger;
 }
 
@@ -177,9 +176,9 @@ export async function requestPayCheckoutSession(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      ...(appAuth && { Authorization: `Bearer ${appAuth.bearer}` }),
+      Authorization: `Bearer ${appAuth.bearer}`,
     },
-    body: JSON.stringify(appAuth ? { ...body, payeeManifest: appAuth.payeeManifest } : body),
+    body: JSON.stringify(appAuth.payeeManifest ? { ...body, payeeManifest: appAuth.payeeManifest } : body),
   });
 
   if (!payResponse.ok) {
