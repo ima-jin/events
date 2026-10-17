@@ -26,6 +26,7 @@ import {
   normalizeCheckoutCart,
   validateCheckoutCartLimits,
   buildStripeCheckoutItems,
+  totalStripeCheckoutItems,
   requestPayCheckoutSession,
 } from '@/lib/checkout-helpers';
 
@@ -135,7 +136,7 @@ export const POST = withLogger('events', async (request, { log, correlationId })
     // is bound to events and events can settle it itself on order completion (imajin-ai#2739).
     const appCheckout = await prepareAppCheckout({
       fairManifest,
-      amountCents: stripeItems.reduce((sum, item) => sum + item.amount * item.quantity, 0),
+      amountCents: totalStripeCheckoutItems(stripeItems),
       buyerDid,
       email: customerEmail,
       resolveSoftDid: createSoftDidFromEmail,

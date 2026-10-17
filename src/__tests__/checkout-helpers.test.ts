@@ -4,7 +4,7 @@
  * cleanup (#2067) — covers the new buildStripeCheckoutItems() lookup/mapping helper.
  */
 import { describe, it, expect } from 'vitest';
-import { buildStripeCheckoutItems } from '../lib/checkout-helpers';
+import { buildStripeCheckoutItems, totalStripeCheckoutItems } from '../lib/checkout-helpers';
 
 describe('buildStripeCheckoutItems', () => {
   const typesById = new Map([
@@ -46,5 +46,15 @@ describe('buildStripeCheckoutItems', () => {
 
     expect(items.map((i) => i.name)).toEqual(['Summer Fair — General Admission', 'Summer Fair — VIP']);
     expect(items.map((i) => i.quantity)).toEqual([3, 1]);
+  });
+
+  it('totals all priced cart lines and any additional tax line', () => {
+    const items = buildStripeCheckoutItems(
+      [{ ticketTypeId: 'tt_ga', quantity: 3 }, { ticketTypeId: 'tt_vip', quantity: 1 }],
+      typesById,
+      'Summer Fair',
+    );
+    expect(totalStripeCheckoutItems(items)).toBe(17500);
+    expect(totalStripeCheckoutItems([...items, { name: 'Tax', amount: 2275, quantity: 1 }])).toBe(19775);
   });
 });
