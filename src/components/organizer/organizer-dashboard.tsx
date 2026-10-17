@@ -8,6 +8,7 @@ import { GuestList } from './guest-list';
 import { formatMoney, PANEL_CLASS } from './organizer-data';
 import { SalesTab } from './sales-tab';
 import { EventOverviewStats } from './event-overview-stats';
+import type { CardRailReadiness } from '@/lib/card-rail';
 
 export interface OrganizerTierSummary {
   id: string;
@@ -26,16 +27,19 @@ export interface OrganizerDashboardProps {
   isCreator: boolean;
   tiers?: readonly OrganizerTierSummary[];
   startsAt?: string;
+  cardRailReadiness?: CardRailReadiness;
+  emtEnabled?: boolean;
 }
 
 const TABS = ['Overview', 'Guests', 'Sales', 'Managers'] as const;
 type OrganizerTab = typeof TABS[number];
 
-export function OrganizerDashboard({ eventId, title, status, creatorDid, isCreator, tiers = [], startsAt }: Readonly<OrganizerDashboardProps>) {
+export function OrganizerDashboard({ eventId, title, status, creatorDid, isCreator, tiers = [], startsAt, cardRailReadiness, emtEnabled = false }: Readonly<OrganizerDashboardProps>) {
   const [tab, setTab] = useState<OrganizerTab>('Overview');
   return <div className="space-y-6">
     <header><h1 className="text-3xl font-bold">{title}</h1><p>Organizer dashboard</p></header>
-    <EventStatusControls key={`${eventId}:${status}`} eventId={eventId} currentStatus={status} isCreator={isCreator} />
+    <EventStatusControls key={`${eventId}:${status}`} eventId={eventId} currentStatus={status} isCreator={isCreator}
+      cardRailReadiness={cardRailReadiness} hasPaidTiers={tiers.some((tier) => tier.price > 0)} emtEnabled={emtEnabled} />
     <div role="tablist" aria-label="Organizer sections" className="flex flex-wrap gap-3 border-b border-gray-200 pb-3 dark:border-gray-700">
       {TABS.map((name) => <button type="button" key={name} role="tab" id={`organizer-tab-${name}`} aria-selected={tab === name} aria-controls={`organizer-panel-${name}`} onClick={() => setTab(name)} className={tab === name ? 'font-semibold text-orange-600' : 'text-gray-500'}>{name}</button>)}
     </div>

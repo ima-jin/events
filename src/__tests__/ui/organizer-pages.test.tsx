@@ -6,6 +6,8 @@ import { makeEventRow, makeTierRow } from '../support/ui-support';
 import { ServiceError } from '@/services/errors';
 
 vi.mock('@/lib/auth', async () => (await import('../support/organizer-ui-support')).pageAuthModule);
+const cardRail = vi.hoisted(() => ({ getCardRailReadiness: vi.fn() }));
+vi.mock('@/lib/card-rail', () => cardRail);
 vi.mock('next/headers', async () => ({ headers: (await import('../support/organizer-ui-support')).pageMocks.headers }));
 vi.mock('@/services/authorization', async () => ({
   isEventOrganizer: (await import('../support/organizer-ui-support')).pageMocks.isEventOrganizer,
@@ -32,13 +34,23 @@ import userEvent from '@testing-library/user-event';
 import { feeManifestFixture } from '../support/editable-fair-fixtures';
 
 const route = { params: Promise.resolve({ eventId: 'evt_1' }) };
-beforeEach(resetOrganizerPageMocks);
+beforeEach(() => {
+  resetOrganizerPageMocks();
+  cardRail.getCardRailReadiness.mockResolvedValue({ cardEnabled: false, setupUrl: 'https://kernel.example/auth/connectors/stripe' });
+});
 
 describe('server organizer authorization', () => {
   it('passes the caller cookie to the organizer service before loading data', async () => {
     await loadOrganizerPage('evt_1');
     expect(pageMocks.isEventOrganizer).toHaveBeenCalledWith('evt_1', 'did:imajin:creator', 'imajin_session=test');
     expect(pageMocks.getEventWithTicketTypes).toHaveBeenCalledWith('evt_1', 'public');
+  });
+
+  it.each([EditPage, EventAdminPage])('checks readiness for stored creator rather than a co-host actor', async (page) => {
+    pageMocks.isEventOrganizer.mockResolvedValue({ authorized: true, role: 'cohost' });
+    pageMocks.getEventWithTicketTypes.mockResolvedValue({ event: makeEventRow({ creatorDid: 'did:imajin:stored-host' }), ticketTypes: [] });
+    render(await page(route));
+    expect(cardRail.getCardRailReadiness).toHaveBeenCalledWith('did:imajin:stored-host');
   });
 
   it.each([EventAdminPage, EditPage, LegacyEditPage])('404s for non-organizers before reading event fields', async (page) => {
@@ -120,6 +132,8 @@ describe('organizer pages', () => {
   it('renders hard-identity creation and prefilled edit forms', async () => {
     render(await CreatePage());
     expect(screen.getByRole('heading', { name: 'Create Event', level: 1 })).toBeTruthy();
+    expect(cardRail.getCardRailReadiness).toHaveBeenCalledWith('did:imajin:creator');
+    expect(screen.getAllByRole('link', { name: 'Set up card payments' })).toHaveLength(2);
   });
 
   it('renders the edit form without signing keys or arbitrary metadata', async () => {

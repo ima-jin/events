@@ -1,14 +1,19 @@
 import { Field, INPUT_CLASS } from './field';
 import { ImageUpload } from './image-upload';
 import type { FormDetails, LocationType } from './types';
+import type { CardRailReadiness } from '@/lib/card-rail';
+import { PaymentReadiness } from '../organizer/payment-readiness';
 
 interface DetailsProps {
   details: FormDetails;
   update: <K extends keyof FormDetails>(key: K, value: FormDetails[K]) => void;
   onUploadBusy: (busy: boolean) => void;
+  cardRailReadiness?: CardRailReadiness;
+  hasPaidTiers: boolean;
+  published: boolean;
 }
 
-export function DetailsFields({ details, update, onUploadBusy }: Readonly<DetailsProps>) {
+export function DetailsFields({ details, update, onUploadBusy, cardRailReadiness, hasPaidTiers, published }: Readonly<DetailsProps>) {
   return (
     <section className="space-y-4 rounded-xl border border-gray-200 p-6 dark:border-gray-700">
       <h2 className="text-xl font-semibold">Event details</h2>
@@ -43,6 +48,8 @@ export function DetailsFields({ details, update, onUploadBusy }: Readonly<Detail
           {['draft', 'published', 'paused', 'cancelled', 'completed'].map((status) => <option key={status} value={status}>{status}</option>)}
         </select>
       </label>
+      <PaymentReadiness readiness={cardRailReadiness} hasPaidTiers={hasPaidTiers}
+        emtEnabled={details.emtEnabled && Boolean(details.emtEmail.trim())} published={published} />
       <label className="block"><span>Access control</span>
         <select className={INPUT_CLASS} value={details.accessMode} onChange={(event) => update('accessMode', event.target.value as FormDetails['accessMode'])}>
           <option value="public">Public</option><option value="invite_only">Invite only</option>

@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { initialDetails, newTier, tierDraft, validateForm } from './model';
 import { saveForm, type SaveProgress } from './persistence';
 import type { EventFormProps, FormDetails, TierDraft } from './types';
+import { OrganizerRequestError } from '../organizer/request-error';
 
 function initialState(props: Readonly<EventFormProps>) {
   try {
@@ -27,8 +28,9 @@ export function useEventForm(props: Readonly<EventFormProps>) {
   const [saving, setSaving] = useState(false);
   const [uploadBusy, setUploadBusy] = useState(false);
   const [error, setError] = useState('');
+  const [errorSetupUrl, setErrorSetupUrl] = useState<string | null>(null);
   const locked = useRef(false);
-  const progress = useRef<SaveProgress>({ eventId: props.event?.id, tierIds: new Map(), uncertain: false });
+  const progress = useRef<SaveProgress>({ eventId: props.event?.id, status: props.event?.status, tierIds: new Map(), uncertain: false });
   const loadFailed = Boolean(props.loadError) || initial.invalid || (props.mode === 'edit' && !props.event);
   function update<K extends keyof FormDetails>(key: K, value: FormDetails[K]) {
     setDetails((current) => ({ ...current, [key]: value }));
@@ -53,17 +55,22 @@ export function useEventForm(props: Readonly<EventFormProps>) {
     if (locked.current || uploadBusy || loadFailed) return;
     const validation = validateForm(details, tiers);
     setError(validation);
+    setErrorSetupUrl(null);
     if (validation) return;
     locked.current = true;
     setSaving(true);
     try {
       const id = await saveForm(details, tiers, progress.current);
       router.push(`/e/${encodeURIComponent(id)}`);
-    } catch {
+    } catch (cause) {
       const message = progress.current.uncertain
         ? 'The save result is uncertain. Check the organizer dashboard before trying again; retry is disabled to prevent duplicates.'
         : 'Unable to save. Check your permissions and fields, then retry.';
       setError(message);
+      if (cause instanceof OrganizerRequestError && !progress.current.uncertain) {
+        setError(cause.message);
+        setErrorSetupUrl(cause.setupUrl);
+      }
     } finally {
       locked.current = false;
       setSaving(false);
@@ -72,7 +79,7 @@ export function useEventForm(props: Readonly<EventFormProps>) {
     }
   }
   return {
-    details, tiers, saving, uploadBusy, error, loadFailed, uncertain: progress.current.uncertain,
+    details, tiers, saving, uploadBusy, error, errorSetupUrl, loadFailed, uncertain: progress.current.uncertain,
     update, updateTier, moveTier, removeTier, submit, setUploadBusy,
     addTier: () => setTiers((current) => [...current, newTier(current[0]?.currency)]),
     cancel: () => router.push(props.event ? `/e/${encodeURIComponent(props.event.id)}` : '/dashboard'),
