@@ -44,7 +44,7 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
 export async function POST(request: NextRequest, { params }: RouteContext) {
   const authResult = await requireAuth(request);
   if ('error' in authResult) {
-    return NextResponse.json({ error: authResult.error }, { status: authResult.status });
+    return NextResponse.json(authResult.proposal ?? { error: authResult.error }, { status: authResult.status });
   }
 
   const actorDid = resolveActingDid(authResult.identity);
@@ -70,7 +70,7 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
 export async function PUT(request: NextRequest, { params }: RouteContext) {
   const authResult = await requireAuth(request);
   if ('error' in authResult) {
-    return NextResponse.json({ error: authResult.error }, { status: authResult.status });
+    return NextResponse.json(authResult.proposal ?? { error: authResult.error }, { status: authResult.status });
   }
 
   const actorDid = resolveActingDid(authResult.identity);

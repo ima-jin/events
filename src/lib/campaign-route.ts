@@ -30,7 +30,7 @@ export function rateLimitResponse(request: NextRequest, limit: number, cors: Hea
 export async function authenticateDid(request: NextRequest, cors: HeadersInit): Promise<string | NextResponse> {
   const authResult = await requireAuth(request);
   if ('error' in authResult) {
-    return jsonError(authResult.error, authResult.status, cors);
+    return NextResponse.json(authResult.proposal ?? { error: authResult.error }, { status: authResult.status, headers: cors });
   }
   return resolveActingDid(authResult.identity);
 }

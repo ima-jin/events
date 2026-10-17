@@ -14,7 +14,7 @@ const log = createLogger('events');
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const authResult = await requireAuth(request);
   if ('error' in authResult) {
-    return NextResponse.json({ error: authResult.error }, { status: authResult.status });
+    return NextResponse.json(authResult.proposal ?? { error: authResult.error }, { status: authResult.status });
   }
 
   const did = resolveActingDid(authResult.identity);

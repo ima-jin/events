@@ -75,6 +75,16 @@ Dates use the selected IANA timezone. A confirmed partial form save can be retri
 
 Registration form IDs remain editable on tiers; survey discovery widgets are not part of this organizer port. Supported document-shaped attribution manifests use the published `.fair` editor. Fee-only manifests are preserved unchanged pending [kernel gap #2787](https://github.com/ima-jin/imajin-ai/issues/2787).
 
+## Delegated organizer actions (#60)
+
+Agent delegation (`actingFor`) follows the published `@ima-jin/auth/delegation-policy`
+contract: reversible actions may execute; irreversible and value-moving actions return
+403 `AGENT_APPROVAL_REQUIRED` with the SDK's proposal payload, before side effects.
+The organizer countersigns by re-issuing the action from their own authenticated session;
+there is no delegate-supplied approval flag. Group act-as and registered-app authority
+remain separate. Every mutating route must appear in the app-local policy inventory,
+including documented protocol exceptions; coverage tests enforce this boundary.
+
 ## Settlement (registered-app contract)
 
 Events settles a paid ticket order itself. At checkout it authenticates to the pay service with its

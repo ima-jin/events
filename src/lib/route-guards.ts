@@ -12,7 +12,7 @@ export interface Actor {
 export async function requireActor(request: NextRequest): Promise<Actor | NextResponse> {
   const authResult = await requireAuth(request);
   if ('error' in authResult) {
-    return NextResponse.json({ error: authResult.error }, { status: authResult.status });
+    return NextResponse.json(authResult.proposal ?? { error: authResult.error }, { status: authResult.status });
   }
   return { did: resolveActingDid(authResult.identity), identity: authResult.identity };
 }

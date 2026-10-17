@@ -22,14 +22,14 @@ export interface OrganizerActionOptions<T> {
 }
 
 /**
- * The shared shape of the organizer money routes: authenticate, resolve the acting DID, run one
+ * The shared shape of the organizer money routes: authenticate + delegation policy, resolve the acting DID, run one
  * service call, answer its JSON result, and map failures (`ServiceError` → its status, else a
  * logged 500). Keeps each route a few lines of wiring.
  */
 export async function runOrganizerAction<T>(request: NextRequest, options: OrganizerActionOptions<T>): Promise<NextResponse> {
   const authResult = await requireAuth(request);
   if ('error' in authResult) {
-    return NextResponse.json({ error: authResult.error }, { status: authResult.status });
+    return NextResponse.json(authResult.proposal ?? { error: authResult.error }, { status: authResult.status });
   }
 
   try {
