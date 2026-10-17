@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest, NextResponse } from 'next/server';
+import { unstable_doesMiddlewareMatch } from 'next/experimental/testing/server.js';
 
 const { readKeystoreMock, resolveKeystorePathMock } = vi.hoisted(() => ({
   readKeystoreMock: vi.fn(),
@@ -77,5 +78,70 @@ describe('middleware', () => {
     await middlewareFor('/claim', { claimed: false });
     expect(resolveKeystorePathMock).toHaveBeenCalledWith('/private/events.dev.keystore.json');
     expect(readKeystoreMock).toHaveBeenCalledWith('/tmp/keystore.json');
+  });
+
+  describe('root auth callbacks under /events', () => {
+    function callbackRequest(path: string): NextRequest {
+      return new NextRequest(new URL(path, 'http://localhost:3000'), {
+        nextConfig: { basePath: '/events' },
+      });
+    }
+
+    it.each([false, true])('forwards both parameters before checking claim state (claimed=%s)', async (claimed) => {
+      vi.stubEnv('NEXT_PUBLIC_APP_URL', 'https://events.test/events');
+      vi.stubEnv('NEXT_PUBLIC_BASE_PATH', '/events');
+      readKeystoreMock.mockReturnValue(claimed ? { publicKey: 'pub' } : null);
+      const { middleware, config } = await import('../middleware');
+      const query = '?attestation_id=att%2F123&user_did=did%3Aimajin%3Aoperator';
+
+      for (const root of ['/events', '/events/']) {
+        const request = callbackRequest(`${root}${query}`);
+        expect(unstable_doesMiddlewareMatch({
+          config,
+          nextConfig: { basePath: '/events' },
+          url: request.url,
+        })).toBe(true);
+        expect(request.nextUrl.pathname).toBe('/');
+        const response = middleware(request);
+        expect(response.status).toBe(307);
+        expect(response.headers.get('location')).toBe(`https://events.test/events/api/auth/callback${query}`);
+      }
+      expect(readKeystoreMock).not.toHaveBeenCalled();
+    });
+
+    it.each(['', '?attestation_id=att-123', '?user_did=did:imajin:operator'])(
+      'keeps existing gates for missing or partial callback parameters: %s',
+      async (query) => {
+        vi.stubEnv('NEXT_PUBLIC_APP_URL', 'https://events.test/events');
+        vi.stubEnv('NEXT_PUBLIC_BASE_PATH', '/events');
+        const { middleware } = await import('../middleware');
+        readKeystoreMock.mockReturnValue(null);
+        const unclaimed = middleware(callbackRequest(`/events/${query}`));
+        expect(unclaimed.status).toBe(200);
+        expect(unclaimed.headers.get('location')).toBeNull();
+        expect(await unclaimed.text()).toContain('href="/events/claim"');
+
+        readKeystoreMock.mockReturnValue({ publicKey: 'pub' });
+        const claimed = middleware(callbackRequest(`/events/${query}`));
+        expect(claimed.headers.get('x-middleware-next')).toBe('1');
+        expect(claimed.headers.get('location')).toBeNull();
+      },
+    );
+
+    it('leaves non-root callbacks alone and keeps the callback handler reachable after claim', async () => {
+      vi.stubEnv('NEXT_PUBLIC_APP_URL', 'https://events.test/events');
+      vi.stubEnv('NEXT_PUBLIC_BASE_PATH', '/events');
+      readKeystoreMock.mockReturnValue({ publicKey: 'pub' });
+      const { middleware, config } = await import('../middleware');
+      for (const path of ['/events/api/auth/callback', '/events/dashboard']) {
+        const request = callbackRequest(`${path}?attestation_id=att-123&user_did=did:imajin:operator`);
+        expect(unstable_doesMiddlewareMatch({
+          config,
+          nextConfig: { basePath: '/events' },
+          url: request.url,
+        })).toBe(true);
+        expect(middleware(request).headers.get('x-middleware-next')).toBe('1');
+      }
+    });
   });
 });
