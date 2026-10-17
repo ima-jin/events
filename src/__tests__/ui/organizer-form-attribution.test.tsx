@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { buildFairManifest } from '@ima-jin/fair';
+import { validateManifest } from '@ima-jin/fair';
 import { editableManifest } from '@/components/organizer-form/fair-manifest';
 import { body, jsonResponse, manifestFixture, mockFetch, renderAttribution } from '../support/organizer-ui-support';
+import { documentManifestFixture, feeManifestFixture } from '../support/editable-fair-fixtures';
 
 describe('organizer attribution', () => {
   it('renders only published attribution and transfer sections', () => {
@@ -56,17 +57,55 @@ describe('organizer attribution', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it('shows safe no-manifest outcome for absent, malformed and generated fee-only manifests', () => {
-    const { unmount } = renderAttribution({ manifest: null });
-    expect(screen.getByText(/No editable attribution manifest/)).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Save attribution' })).toBeNull();
+  it.each([null, { version: 'unsupported' }, { ...manifestFixture(), attribution: [null] }])(
+    'shows a safe fallback only for absent, malformed or unsupported manifests: %j', (manifest) => {
+      renderAttribution({ manifest: editableManifest(manifest) });
+      expect(screen.getByText(/No supported attribution manifest/)).toBeTruthy();
+      expect(screen.queryByRole('button', { name: 'Save attribution' })).toBeNull();
+    },
+  );
+
+  it.each([
+    ['fee 0.4.0', feeManifestFixture()],
+    ['tax-bearing fee 0.5.0', feeManifestFixture(true)],
+    ['document 1.0', documentManifestFixture('1.0')],
+    ['document 1.1', documentManifestFixture('1.1')],
+  ] as const)('edits, saves and reloads %s without conversion or data loss', async (_shape, original) => {
+    let stored: unknown = JSON.parse(JSON.stringify(original));
+    const fetch = mockFetch({ '/api/events/evt_edit/fair': (init) => {
+      stored = body(init).manifest;
+      expect(validateManifest(stored).valid).toBe(true);
+      return jsonResponse({});
+    } });
+    const { user, unmount } = renderAttribution({ manifest: editableManifest(stored) });
+    expect(screen.queryByText(/No supported attribution manifest/)).toBeNull();
+    const note = screen.getByPlaceholderText('Note (optional)');
+    await user.clear(note);
+    await user.type(note, 'Updated event credit');
+    await user.click(screen.getByRole('button', { name: 'Save attribution' }));
+    await waitFor(() => expect(screen.getByRole('status')).toBeTruthy());
+    const expected = {
+      ...original,
+      attribution: [{ ...original.attribution[0], note: 'Updated event credit' }],
+    };
+    expect(stored).toEqual(expected);
+    expect(original.attribution[0].note).toBe('Original credit');
     unmount();
-    const fees = buildFairManifest({ creatorDid: 'did:imajin:creator', contentDid: 'did:imajin:event', contentType: 'event' });
-    expect(editableManifest(fees)).toBeNull();
-    expect(editableManifest({ ...manifestFixture(), attribution: [null] })).toBeNull();
-    expect(editableManifest(null)).toBeNull();
-    renderAttribution({ manifest: editableManifest(fees) });
-    expect(screen.getByText(/fee-only formats are preserved unchanged/)).toBeTruthy();
+    const reloaded = renderAttribution({ manifest: editableManifest(JSON.parse(JSON.stringify(stored))) });
+    expect((screen.getByPlaceholderText('Note (optional)') as HTMLInputElement).value).toBe('Updated event credit');
+    await reloaded.user.click(screen.getByRole('button', { name: 'Save attribution' }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    expect(stored).toEqual(expected);
+  });
+
+  it('rejects fee attribution shares that no longer sum to one', async () => {
+    const fetch = mockFetch({});
+    const { user } = renderAttribution({ manifest: feeManifestFixture() });
+    expect(screen.queryByText('Transfer')).toBeNull();
+    fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '90' } });
+    await user.click(screen.getByRole('button', { name: 'Save attribution' }));
+    expect(screen.getByRole('alert').textContent).toContain('Check the attribution shares');
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it('disables duplicate save and editor input during PATCH', async () => {

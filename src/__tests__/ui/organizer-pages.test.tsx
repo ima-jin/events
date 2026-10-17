@@ -29,6 +29,7 @@ import { loadOrganizerPage, requirePageActor } from '@/lib/organizer-page';
 import type { TicketTypeWithAvailability } from '@/services/events-service';
 import { OrganizerPageError, OrganizerPageLoading } from '@/components/organizer-page-state';
 import userEvent from '@testing-library/user-event';
+import { feeManifestFixture } from '../support/editable-fair-fixtures';
 
 const route = { params: Promise.resolve({ eventId: 'evt_1' }) };
 beforeEach(resetOrganizerPageMocks);
@@ -126,7 +127,20 @@ describe('organizer pages', () => {
     expect(screen.getByRole('heading', { name: 'Edit Event', level: 1 })).toBeTruthy();
     expect(globalThis.document.body.innerHTML).not.toContain('super-secret-key');
     expect(globalThis.document.body.innerHTML).not.toContain('secret:');
-    expect(screen.getByText(/No editable attribution manifest/)).toBeTruthy();
+    expect(screen.getByText(/No supported attribution manifest/)).toBeTruthy();
+  });
+
+  it('opens an event fee manifest in the organizer attribution panel', async () => {
+    pageMocks.getEventWithTicketTypes.mockResolvedValue({
+      event: makeEventRow({ metadata: { fair: feeManifestFixture(), privateNotes: 'DO_NOT_RENDER' } }),
+      ticketTypes: [],
+    });
+    render(await EditPage(route));
+    expect(screen.getByText('Event fee manifest')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Save attribution' })).toBeTruthy();
+    expect(screen.queryByText(/No supported attribution manifest/)).toBeNull();
+    expect(globalThis.document.body.innerHTML).not.toContain('DO_NOT_RENDER');
+    expect(globalThis.document.body.innerHTML).not.toContain('super-secret-key');
   });
 });
 

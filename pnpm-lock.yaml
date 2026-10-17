@@ -18,8 +18,8 @@ importers:
         specifier: ^0.8.16
         version: 0.8.16(next@15.5.26(@types/node@20.19.43)(react-dom@18.3.1(react@18.3.1))(react@18.3.1))
       '@ima-jin/fair':
-        specifier: ^0.8.16
-        version: 0.8.16(react@18.3.1)
+        specifier: 0.8.22
+        version: 0.8.22(react@18.3.1)
       '@ima-jin/logger':
         specifier: ^0.8.16
         version: 0.8.16(next@15.5.26(@types/node@20.19.43)(react-dom@18.3.1(react@18.3.1))(react@18.3.1))
@@ -894,8 +894,8 @@ packages:
     peerDependencies:
       next: '>=15.5.24'
 
-  '@ima-jin/fair@0.8.16':
-    resolution: {integrity: sha512-gIog399Fa0LWfz2Y62JnqOF1S7f4JTvurGvKctk1ScidTXlLXdkmJYBDJRawy38ZXMlmTp6ILep+oW1bQ7we6w==}
+  '@ima-jin/fair@0.8.22':
+    resolution: {integrity: sha512-Q3zpiO23ywuPpCyKTvHAlemlvyyOWjy+vt9x1URcRzwlLbfTEyhZLCU0+SQn0GPaeSwWo1vkMg0kmc6HOJC6HA==}
     peerDependencies:
       react: ^18.2.0
 
@@ -4029,7 +4029,7 @@ snapshots:
     dependencies:
       next: 15.5.26(@types/node@20.19.43)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
 
-  '@ima-jin/fair@0.8.16(react@18.3.1)':
+  '@ima-jin/fair@0.8.22(react@18.3.1)':
     dependencies:
       '@noble/ed25519': 2.3.0
       '@noble/hashes': 1.8.0

@@ -1,6 +1,6 @@
-import { isValidManifest, type FairManifest } from '@ima-jin/fair';
+import { isValidManifest, type SupportedFairManifest } from '@ima-jin/fair';
 
-export type FairAttributionManifest = FairManifest;
+export type FairAttributionManifest = SupportedFairManifest;
 
 /** Published editor and PATCH endpoint accept the same schema; never invent a fee-manifest migration. */
 export function editableManifest(value: unknown): FairAttributionManifest | null {
