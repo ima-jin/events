@@ -73,7 +73,7 @@ Only creators add/remove co-hosts or change lifecycle status. Manager selection 
 
 Dates use the selected IANA timezone. A confirmed partial form save can be retried without re-creating its event or saved tiers. An ambiguous POST result disables automatic retry: check `/dashboard` before trying again.
 
-Registration form IDs remain editable on tiers; survey discovery widgets are not part of this organizer port. Supported document-shaped attribution manifests use the published `.fair` editor. Fee-only manifests are preserved unchanged pending [kernel gap #2787](https://github.com/ima-jin/imajin-ai/issues/2787).
+Registration form IDs remain editable on tiers; survey discovery widgets are not part of this organizer port. Supported document-shaped attribution manifests use the published `.fair` editor. Fee-shape editor support is tracked in [events#43](https://github.com/ima-jin/events/issues/43).
 
 ## Delegated organizer actions (#60)
 
