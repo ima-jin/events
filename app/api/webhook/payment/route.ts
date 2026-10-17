@@ -19,7 +19,8 @@ import { backfillContactEmail } from '@/lib/contact-email';
 import { createOrderWithTickets } from '@/lib/checkout-common';
 import { eventRegisterUrl, eventMyTicketsUrl, buildPublicUrlAbsolute } from '@ima-jin/config';
 import * as bus from '@/lib/domain-events';
-import { isByoPayment, recordByoSettlement, settleCompletedOrder } from '@/lib/pay-settle';
+import { recordByoSettlement } from '@/lib/pay-settle';
+import { checkoutPaymentMismatch } from '@/lib/webhook-checkout-validation';
 import { verifyEventsKernelWebhook, kernelWebhookFailure } from '@/lib/kernel-webhook';
 import {
   parseCartFromMetadata,
@@ -147,15 +148,9 @@ async function loadWebhookEvent(eventId: string) {
   return event;
 }
 
-async function resolveWebhookTicketTypes(cart: CartEntry[], eventId: string) {
+async function resolveWebhookTicketTypes(eventId: string) {
   const allTypes = await db.select().from(ticketTypes).where(eq(ticketTypes.eventId, eventId));
-  const typesById = new Map(allTypes.map((t) => [t.id, t]));
-  for (const item of cart) {
-    if (!typesById.has(item.ticketTypeId)) {
-      throw new Error(`Ticket type not found: ${item.ticketTypeId}`);
-    }
-  }
-  return typesById;
+  return new Map(allTypes.map((t) => [t.id, t]));
 }
 
 /**
@@ -213,22 +208,15 @@ interface WebhookSettlementParams {
   createdTickets: Array<{ id: string }>;
   firstTypeId: string;
   sessionId: string;
-  /** Kernel `transactionId` of the app-authenticated checkout, when the pay webhook carries it. */
-  transactionId?: string;
-  /** Paid on the seller's own Stripe account (BYO rail): the kernel already settled it. */
-  byo: boolean;
 }
 
 /**
- * Settle a completed order (imajin-ai#2739): events calls the pay service's
- * `/api/settle` itself with its own app-service token. The kernel's bus
- * `settle` reactor only runs in the kernel process, so announcing the order
- * from here would not settle anything.
- * Non-fatal — settlement failures are logged, not thrown.
+ * Record the receipt for a verified BYO payment. The kernel already settled
+ * it; `/pay/api/settle` would refuse it (409). Platform card completions are
+ * refused before fulfilment under #2790. Receipt failures remain non-fatal.
  */
 async function triggerWebhookSettlement(params: WebhookSettlementParams): Promise<void> {
-  const { ownerDid, event, orderId, amountTotal, currency, createdTickets, firstTypeId, sessionId, transactionId, byo } = params;
-  const eventMetadata = (event.metadata || {}) as { fair?: unknown };
+  const { ownerDid, event, orderId, amountTotal, currency, createdTickets, firstTypeId, sessionId } = params;
 
   const receipt = {
     orderId,
@@ -248,13 +236,7 @@ async function triggerWebhookSettlement(params: WebhookSettlementParams): Promis
   };
 
   try {
-    if (byo) {
-      // Paid on the seller's own Stripe account: the kernel already settled it and told us, so this
-      // notification IS the settlement. Record the receipt; `/pay/api/settle` would refuse it (409).
-      await recordByoSettlement(receipt);
-      return;
-    }
-    await settleCompletedOrder({ ...receipt, sessionId, transactionId, fairManifest: eventMetadata.fair || null });
+    await recordByoSettlement(receipt);
   } catch (settleError) {
     log.error({ err: String(settleError) }, '[settle] Unexpected settlement error (non-fatal)');
   }
@@ -294,9 +276,9 @@ interface PaymentWebhookPayload {
   paymentId?: string;
   /** Kernel `transactionId` of the app-authenticated checkout — the key `/pay/api/settle` needs (imajin-ai#2739). */
   transactionId?: string;
-  /** `stripe-byo` when collected on the seller's own Stripe account (the kernel does not forward it yet, imajin-ai#2776). */
+  /** Kernel-attested seller rail; required for fulfilment. */
   rail?: string;
-  /** Present when the payment was made to a seller's own account — the interim BYO indicator. */
+  /** Kernel-attested seller identity; metadata.sellerDid is not evidence. */
   sellerDid?: string;
   customerEmail: string;
   customerName?: string | null;
@@ -348,11 +330,21 @@ export const POST = withLogger('events', async (request, { log }) => {
 });
 
 async function handleCheckoutCompleted(payload: PaymentWebhookPayload) {
-  const { metadata, customerName, amountTotal, currency, sessionId, paymentId, transactionId } = payload;
+  const { metadata, customerName, amountTotal, currency, sessionId, paymentId } = payload;
   const customerEmail = payload.customerEmail || null;
 
   // Parse cart: multi-type (cart JSON) or legacy single-type
-  const cart = parseCartFromMetadata(metadata);
+  let cart: CartEntry[];
+  try {
+    cart = parseCartFromMetadata(metadata);
+  } catch {
+    log.warn({
+      eventId: metadata?.eventId, sessionId, reason: 'invalid_cart',
+      expected: { cart: 'nonempty cart with positive safe-integer quantities' },
+      got: { cart: 'invalid' },
+    }, 'Payment completion refused');
+    return;
+  }
   const totalQuantity = cart.reduce((sum, c) => sum + c.quantity, 0);
 
   // Idempotency: check if an order for this Stripe session already exists
@@ -361,14 +353,19 @@ async function handleCheckoutCompleted(payload: PaymentWebhookPayload) {
     return;
   }
 
-  if (!customerEmail) {
-    throw new Error('Customer email is required for ticket creation');
-  }
 
   const event = await loadWebhookEvent(metadata.eventId);
 
   // Fetch all ticket types referenced in cart
-  const typesById = await resolveWebhookTicketTypes(cart, metadata.eventId);
+  const typesById = await resolveWebhookTicketTypes(metadata.eventId);
+  const mismatch = checkoutPaymentMismatch(payload, event, cart, typesById);
+  if (mismatch) {
+    log.warn({ eventId: event.id, sessionId, ...mismatch }, 'Payment completion refused');
+    return;
+  }
+  if (!customerEmail) {
+    throw new Error('Customer email is required for ticket creation');
+  }
   // Use first type for backward-compat fields that need a single value
   const firstType = typesById.get(cart[0].ticketTypeId)!;
 
@@ -416,7 +413,7 @@ async function handleCheckoutCompleted(payload: PaymentWebhookPayload) {
     await syncBuyerToEventChat(CHAT_URL, event.did, ownerDid, log);
   }
 
-  // Settle through the pay service with events' own app token
+  // Record the receipt for this verified, already-settled BYO payment.
   await triggerWebhookSettlement({
     ownerDid,
     event,
@@ -426,8 +423,6 @@ async function handleCheckoutCompleted(payload: PaymentWebhookPayload) {
     createdTickets,
     firstTypeId: firstType.id,
     sessionId,
-    transactionId,
-    byo: isByoPayment(payload),
   });
 
   // Build onboard token for magic-link auth in confirmation email

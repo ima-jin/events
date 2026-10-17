@@ -103,6 +103,10 @@ export interface StripeCheckoutItem {
   amount: number;
   quantity: number;
 }
+/** Total exactly the line items sent to pay, including any added tax lines. */
+export function totalStripeCheckoutItems(items: StripeCheckoutItem[]): number {
+  return items.reduce((sum, item) => sum + item.amount * item.quantity, 0);
+}
 
 /**
  * Build the pay-service line items for a Stripe checkout cart.

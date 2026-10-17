@@ -34,17 +34,26 @@ export interface PaymentMetadata {
  * Throws on invalid input.
  */
 export function parseCartFromMetadata(metadata: PaymentMetadata): CartEntry[] {
+  let cart: unknown;
   if (metadata.cart) {
-    try {
-      return JSON.parse(metadata.cart) as CartEntry[];
-    } catch {
-      throw new Error(`Invalid cart metadata: ${metadata.cart}`);
-    }
+    cart = JSON.parse(metadata.cart);
+  } else if (metadata.ticketTypeId) {
+    cart = [{ ticketTypeId: metadata.ticketTypeId, quantity: Number(metadata.quantity ?? '1') }];
+  } else {
+    throw new Error('No cart or ticketTypeId in metadata');
   }
-  if (metadata.ticketTypeId) {
-    return [{ ticketTypeId: metadata.ticketTypeId, quantity: Number.parseInt(metadata.quantity || '1') }];
+
+  if (!Array.isArray(cart) || cart.length === 0 || !cart.every(isCartEntry)) {
+    throw new Error('Invalid cart entries');
   }
-  throw new Error('No cart or ticketTypeId in metadata');
+  return cart;
+}
+
+function isCartEntry(item: unknown): item is CartEntry {
+  if (!item || typeof item !== 'object') return false;
+  const entry = item as CartEntry;
+  return typeof entry.ticketTypeId === 'string' && entry.ticketTypeId.length > 0
+    && Number.isSafeInteger(entry.quantity) && entry.quantity > 0;
 }
 
 // ---------------------------------------------------------------------------
