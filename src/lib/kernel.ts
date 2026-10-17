@@ -27,7 +27,7 @@ export interface KernelFetchOptions {
   headers?: Record<string, string>;
 }
 
-function kernelBaseUrl(): string | null {
+export function kernelBaseUrl(): string | null {
   const url = process.env.IMAJIN_KERNEL_URL ?? process.env.IMAJIN_AUTH_URL;
   if (!url) return null;
   let end = url.length;
