@@ -67,12 +67,12 @@ async function saveFreeConversions(path: string, details: FormDetails, tiers: re
   if (progress.status !== 'published' || details.emtEnabled || !tiers.every((tier) => minorUnits(tier.price) === 0)) return saved;
   // Keep the current payment rail until all persisted paid tiers are confirmed free.
   // Newly added free tiers can still be created after the details update.
-  for (const [index, tier] of tiers.entries()) {
+  await tiers.reduce((pending, tier, index) => pending.then(async () => {
     if (tier.id || progress.tierIds.has(tier.key)) {
       await saveTier(path, tier, index, progress);
       saved.add(tier.key);
     }
-  }
+  }), Promise.resolve());
   return saved;
 }
 
@@ -94,9 +94,10 @@ export async function saveForm(details: FormDetails, tiers: readonly TierDraft[]
   await write(path, 'PUT', updatePayload, progress);
   if (status !== 'published') progress.status = status;
   // Serialize writes so a refusal stops the chain and confirmed IDs remain retryable.
-  for (const [index, tier] of tiers.entries()) {
-    if (!savedTiers.has(tier.key)) await saveTier(path, tier, index, progress);
-  }
+  await tiers.reduce((pending, tier, index) => {
+    if (savedTiers.has(tier.key)) return pending;
+    return pending.then(() => saveTier(path, tier, index, progress));
+  }, Promise.resolve());
   if (status === 'published' && progress.status !== 'published') {
     await write(path, 'PUT', { status }, progress);
     progress.status = status;
