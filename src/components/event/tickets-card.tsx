@@ -8,9 +8,10 @@ interface TicketsCardProps {
   hasHiddenTiers: boolean;
   invite?: string;
   isAuthenticated: boolean;
+  cardRailCheckUrl?: string | null;
 }
 
-function TicketsBody({ event, tiers, hasHiddenTiers, invite, isAuthenticated }: Readonly<TicketsCardProps>) {
+function TicketsBody({ event, tiers, hasHiddenTiers, invite, isAuthenticated, cardRailCheckUrl }: Readonly<TicketsCardProps>) {
   // The checkout routes validate the invite token itself; the page only withholds the purchase UI without one.
   if (event.accessMode === 'invite_only' && !invite) {
     return (
@@ -30,6 +31,7 @@ function TicketsBody({ event, tiers, hasHiddenTiers, invite, isAuthenticated }: 
       hasHiddenTiers={hasHiddenTiers}
       invite={invite}
       etransferEnabled={event.etransferEnabled}
+      cardRailCheckUrl={cardRailCheckUrl ?? null}
       isAuthenticated={isAuthenticated}
       maxTicketsPerOrder={event.maxTicketsPerOrder}
     />

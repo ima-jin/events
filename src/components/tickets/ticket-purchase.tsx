@@ -18,6 +18,7 @@ import { ResultView } from './result-view';
 import { ERROR_TEXT, MUTED } from './styles';
 import { TierRow } from './tier-row';
 import { UnlockForm } from './unlock-form';
+import { useBuyerCardRail } from './use-buyer-card-rail';
 
 export interface TicketPurchaseProps {
   eventId: string;
@@ -27,6 +28,8 @@ export interface TicketPurchaseProps {
   /** Invite token from the page URL, forwarded to every checkout call. */
   invite?: string;
   etransferEnabled: boolean;
+  /** Public kernel readiness URL; only the browser calls it. */
+  cardRailCheckUrl: string | null;
   isAuthenticated: boolean;
   /** Event-wide cap on tickets per order (tiers may override it). */
   maxTicketsPerOrder: number | null;
@@ -73,10 +76,16 @@ export function TicketPurchase(props: Readonly<TicketPurchaseProps>) {
   const cart = useCart(tiers, maxTicketsPerOrder);
   const { state, run } = useCheckout();
   const balanceCents = useBalanceCents(isAuthenticated);
+  const cardRail = useBuyerCardRail(props.cardRailCheckUrl, tiers.some((tier) => tier.price > 0));
+  const noCardRail = state.noCardRail || cardRail === 'missing';
+  const cardUnavailable = cardRail !== 'ready' || state.noCardRail;
+  let cardMessage: string | undefined;
+  if (cardRail === 'checking') cardMessage = 'Checking card payment availability…';
+  if (cardRail === 'unavailable') cardMessage = 'Card payment availability could not be checked. Reload to try again.';
 
   const busy = state.status === 'busy';
   const collectDetails = !isAuthenticated || needsDetails;
-  const rails = resolveRails({ etransferEnabled, noCardRail: state.noCardRail, balanceCents, totalCents: cart.totalCents });
+  const rails = resolveRails({ etransferEnabled, noCardRail: cardUnavailable, balanceCents, totalCents: cart.totalCents });
 
   const attempt = async (task: () => Promise<CheckoutResult>) => {
     const failure = await run(task);
@@ -135,7 +144,8 @@ export function TicketPurchase(props: Readonly<TicketPurchaseProps>) {
           totalCents={cart.totalCents}
           currency={cart.currency}
           rails={rails}
-          noCardRail={state.noCardRail}
+          noCardRail={noCardRail}
+          cardMessage={cardMessage}
           balanceCents={balanceCents}
           busy={busy}
           onCard={() => attempt(() => startCardCheckout(eventId, cart.lines, invite))}
