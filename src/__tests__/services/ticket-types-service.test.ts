@@ -11,6 +11,12 @@ import {
 
 vi.mock('@/repositories/ticket-types-repository', async () => (await import('../support/ticket-types-support')).repositoryMock);
 vi.mock('@/services/authorization', async () => (await import('../support/ticket-types-support')).authorizationMock);
+vi.mock('@/repositories/events-repository', () => ({ getEventById: vi.fn() }));
+vi.mock('@/lib/card-rail', () => ({ getCardRailReadiness: vi.fn() }));
+
+import { getEventById } from '@/repositories/events-repository';
+import { getCardRailReadiness } from '@/lib/card-rail';
+import { makeEventRow } from '../support/events-support';
 
 import { ServiceError } from '@/services/errors';
 import {
@@ -26,6 +32,104 @@ beforeEach(() => {
   resetServiceMocks();
   repo.listTicketTypeCurrencies.mockResolvedValue([]);
   repo.insertTicketType.mockImplementation(async (values: object) => ({ ...makeTier(), ...values }));
+  vi.mocked(getEventById).mockReset().mockResolvedValue(makeEventRow());
+  vi.mocked(getCardRailReadiness).mockReset().mockResolvedValue({ cardEnabled: false, setupUrl: 'https://kernel.test/auth/connectors/stripe' });
+});
+
+describe('published tier payment rail gates', () => {
+  const SETUP = 'https://kernel.test/auth/connectors/stripe';
+  const OWNER = 'did:imajin:actual-owner';
+  const CONFLICT = { status: 409, details: { code: 'SELLER_NO_CARD_RAIL', setupUrl: SETUP, eventId: EVENT_ID } };
+  const UNAVAILABLE = { status: 503, details: { code: 'CARD_RAIL_UNAVAILABLE', retryable: true, eventId: EVENT_ID } };
+
+  beforeEach(() => {
+    vi.mocked(getEventById).mockResolvedValue(makeEventRow({ status: 'published', creatorDid: OWNER, emtEmail: null }));
+    repo.getTicketTypeForEvent.mockResolvedValue(makeTier({ price: 0, sold: 0 }));
+    repo.updateTicketType.mockImplementation(async (_id: string, updates: object) => ({ ...makeTier(), ...updates }));
+  });
+
+  const addPaid = () => create({ name: 'Paid', price: 1000 });
+  const makePaid = () => update({ tierId: 'tkt_type_1', price: 1000 });
+
+  describe.each([
+    ['paid tier creation', addPaid],
+    ['free-to-paid update', makePaid],
+  ] as const)('%s', (_name, mutate) => {
+    it('refuses missing cards without changing the tier', async () => {
+      await expect(mutate()).rejects.toMatchObject(CONFLICT);
+      expect(getCardRailReadiness).toHaveBeenCalledWith(OWNER);
+      expect(getCardRailReadiness).not.toHaveBeenCalledWith(ORGANIZER_DID);
+      expect(repo.insertTicketType).not.toHaveBeenCalled();
+      expect(repo.updateTicketType).not.toHaveBeenCalled();
+    });
+
+    it('permits cards belonging to the stored creator, not the cohost', async () => {
+      vi.mocked(getCardRailReadiness).mockResolvedValue({ cardEnabled: true, setupUrl: SETUP });
+      await mutate();
+      expect(getEventById).toHaveBeenCalledWith(EVENT_ID);
+      expect(getCardRailReadiness).toHaveBeenCalledWith(OWNER);
+    });
+
+    it('fails closed when the kernel check is unavailable', async () => {
+      vi.mocked(getCardRailReadiness).mockResolvedValue({ cardEnabled: null, setupUrl: SETUP });
+      await expect(mutate()).rejects.toMatchObject(UNAVAILABLE);
+      expect(repo.insertTicketType).not.toHaveBeenCalled();
+      expect(repo.updateTicketType).not.toHaveBeenCalled();
+    });
+
+    it('permits e-Transfer without a kernel check', async () => {
+      vi.mocked(getEventById).mockResolvedValue(makeEventRow({
+        status: 'published', creatorDid: OWNER, emtEmail: 'seller@example.com',
+      }));
+      await mutate();
+      expect(getCardRailReadiness).not.toHaveBeenCalled();
+    });
+
+    it.each(['draft', 'paused'])('allows paid mutations on an unpublished %s event', async (status) => {
+      vi.mocked(getEventById).mockResolvedValue(makeEventRow({ status }));
+      await mutate();
+      expect(getCardRailReadiness).not.toHaveBeenCalled();
+    });
+
+    it('refuses when the event no longer exists', async () => {
+      vi.mocked(getEventById).mockResolvedValue(null);
+      await expect(mutate()).rejects.toMatchObject({ status: 404 });
+      expect(getCardRailReadiness).not.toHaveBeenCalled();
+    });
+
+    it('authorizes before looking up the event or calling readiness', async () => {
+      authorizationMock.isEventOrganizer.mockResolvedValue({ authorized: false });
+      await expect(mutate()).rejects.toMatchObject({ status: 403 });
+      expect(getEventById).not.toHaveBeenCalled();
+      expect(getCardRailReadiness).not.toHaveBeenCalled();
+    });
+  });
+
+  it('allows free tier creation without a card check even on a legacy paid event', async () => {
+    await create({ name: 'Free', price: 0 });
+    expect(getCardRailReadiness).not.toHaveBeenCalled();
+  });
+
+  it('does not gate edits to an existing legacy paid tier', async () => {
+    repo.getTicketTypeForEvent.mockResolvedValue(makeTier({ price: 500, sold: 0 }));
+    await update({ tierId: 'tkt_type_1', price: 1000, name: 'Renamed' });
+    expect(getCardRailReadiness).not.toHaveBeenCalled();
+  });
+
+  it('does not gate a tier that stays free', async () => {
+    await update({ tierId: 'tkt_type_1', price: 0, name: 'Free renamed' });
+    expect(getCardRailReadiness).not.toHaveBeenCalled();
+  });
+
+  it.each(['1000', null, {}, Number.NaN, Number.POSITIVE_INFINITY, -1])(
+    'rejects an invalid price (%j) rather than bypassing the gate', async (price) => {
+      await expect(create({ name: 'Invalid', price } as CreateTierBody)).rejects.toMatchObject({ status: 400 });
+      await expect(update({ tierId: 'tkt_type_1', price })).rejects.toMatchObject({ status: 400 });
+      expect(getCardRailReadiness).not.toHaveBeenCalled();
+      expect(repo.insertTicketType).not.toHaveBeenCalled();
+      expect(repo.updateTicketType).not.toHaveBeenCalled();
+    },
+  );
 });
 
 async function expectServiceError(promise: Promise<unknown>, status: number, message: string, details?: object) {

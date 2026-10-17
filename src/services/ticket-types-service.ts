@@ -11,6 +11,8 @@ import {
 } from '@/repositories/ticket-types-repository';
 import { isEventOrganizer } from '@/services/authorization';
 import { ServiceError } from '@/services/errors';
+import { getEventById } from '@/repositories/events-repository';
+import { requirePaidEventRail } from '@/services/card-rail-policy';
 
 /** Fallback for an event that has no tiers yet. */
 const FALLBACK_CURRENCY = 'CAD';
@@ -105,9 +107,19 @@ function assertValidNewTier(body: CreateTierBody): void {
   if (!body.name) {
     throw new ServiceError('invalid', 'name is required');
   }
-  if (body.price === undefined || body.price < 0) {
+  assertValidPrice(body.price);
+}
+
+function assertValidPrice(price: unknown): asserts price is number {
+  if (typeof price !== 'number' || !Number.isFinite(price) || price < 0) {
     throw new ServiceError('invalid', 'price must be >= 0');
   }
+}
+
+async function requirePublishedTierRail(eventId: string): Promise<void> {
+  const event = await getEventById(eventId);
+  if (!event) throw new ServiceError('not_found', 'Event not found');
+  if (event.status === 'published') await requirePaidEventRail(event, true);
 }
 
 /** Create a tier for an event (organizer only). */
@@ -120,6 +132,7 @@ export async function createTier(input: TierWriteInput<CreateTierBody>): Promise
   const { name, description, price, currency = defaultCurrency, quantity, perks, sortOrder } = body;
   const { requiresRegistration, registrationFormId, accessCode } = body;
   assertValidNewTier(body);
+  if ((price as number) > 0) await requirePublishedTierRail(eventId);
 
   return insertTicketType({
     id: `tkt_type_${randomBytes(8).toString('hex')}`,
@@ -152,6 +165,7 @@ export async function updateTier(input: TierWriteInput<UpdateTierBody>): Promise
   if (!tier) {
     throw new ServiceError('not_found', 'Tier not found');
   }
+  if (body.price !== undefined) assertValidPrice(body.price);
 
   const { updates, violations } = buildTierUpdates(body, tier);
   if (violations.length > 0) {
@@ -159,6 +173,9 @@ export async function updateTier(input: TierWriteInput<UpdateTierBody>): Promise
   }
   if (Object.keys(updates).length === 0) {
     return { tier, changed: false };
+  }
+  if (tier.price === 0 && typeof updates.price === 'number' && updates.price > 0) {
+    await requirePublishedTierRail(eventId);
   }
 
   const updated = await updateTicketType(tierId, updates);
