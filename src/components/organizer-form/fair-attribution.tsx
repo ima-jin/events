@@ -61,7 +61,7 @@ export function FairAttribution({ eventId, manifest }: Readonly<FairAttributionP
           {error && <p role="alert">{error}</p>}
         </>
       ) : (
-        <p>No editable attribution manifest is attached. Older or fee-only formats are preserved unchanged; this editor does not migrate them.</p>
+        <p>No supported attribution manifest is attached. Missing, invalid or unsupported manifests cannot be edited; this editor does not migrate them.</p>
       )}
     </section>
   );
