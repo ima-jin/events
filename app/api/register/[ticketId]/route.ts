@@ -123,7 +123,7 @@ function publishRegistrationCompletionEvents(params: {
   if (ticket.ownerDid) {
     publish('event.rsvp', {
       issuer: ticket.ownerDid,
-      subject: '',
+      subject: ticket.ownerDid,
       scope: 'events',
       payload: {
         context_id: event.id,

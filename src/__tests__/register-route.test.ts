@@ -130,7 +130,7 @@ describe('POST /api/register/[ticketId]', () => {
     });
     expect(publishMock).toHaveBeenCalledWith('event.rsvp', {
       issuer: OWNER_DID,
-      subject: '',
+      subject: OWNER_DID,
       scope: 'events',
       payload: { context_id: EVENT_ID, context_type: 'event', interestDids: [OWNER_DID] },
     });

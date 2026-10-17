@@ -8,7 +8,6 @@ around the boundary, and the gap is recorded here. Each is a `gap(kernel)` marke
 
 | Area | Where | Today | What the kernel needs to expose |
 |------|-------|-------|---------------------------------|
-| Domain events (`event.*`, `ticket.*`, `order.*`, `checkin.*`) | `src/lib/domain-events.ts` | No-op unless `IMAJIN_EVENTS_PUBLISH_PATH` is set. Reactor-driven emails/attestations depend on the kernel receiving these. | An app-auth-gated publish route. |
 | Co-host / pod membership | `src/lib/kernel.ts` `isPodMember`, `listMemberPodIds` | `GET /connections/api/pods/{id}` is session-authenticated; an app-token-only caller fails closed (not an organizer). | An app-auth pod-membership route (by pod, and by DID). |
 | Contact email visibility | `src/lib/kernel.ts` `resolveProfiles` / `getContactEmail` | `email` only returned when the kernel grants this app email visibility. | A registered-app email scope on `/profile/api/resolve`. |
 | Eligibility evaluation after check-in | `src/lib/kernel.ts` `evaluateEligibility` | Best-effort; the kernel may refuse a third-party caller. | App-auth access to `POST /auth/api/eligibility/evaluate`. |
@@ -24,3 +23,11 @@ not shared-key gaps — see `src/lib/pay-settle.ts` and `src/lib/pay-app-request
 The operator must approve `pay:settle`, `pay:refund` and `pay:charge-pledges` for events'
 app DID on `apps:service-scopes`. Deploy kernel PR imajin-ai#2786 first; its refund and
 charge routes enforce app ownership as well as scope. Setup/confirm migration is events#27.
+
+Domain notifications now use the shipped `POST /api/events` with an app-service token by
+default, without a path override. See [README.md](../README.md#domain-events-notify-and-audit-only).
+The kernel reserves `order.*`, so `order.refunded` still receives a non-fatal, error-logged 403;
+it cannot be declared for approval without invalidating the entire provision preview.
+Issue events#58 records the required kernel-policy/namespace decision. `settlement.*` is
+also kernel-owned and is not sent through the app-domain publisher. This channel never
+issues attestations, moves money, or invokes the settlement callback.

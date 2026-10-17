@@ -133,6 +133,48 @@ The kernel operator completes signer provisioning through the approved vault/too
 `/jin` re-sync before receiver rollout. See [DEPLOY.md](./docs/DEPLOY.md#kernel-signed-callbacks).
 App self-secrets are vault-loaded at boot as implemented in events#39 / PR #44; see the registration runbook.
 
+## Domain events (notify and audit only)
+
+`src/lib/domain-events.ts` publishes by default to **`${IMAJIN_KERNEL_URL}/api/events`**.
+It uses the existing kernel base URL resolver (`IMAJIN_AUTH_URL` is the fallback),
+including its trailing-slash normalization. No additional publish env is required.
+Optional **`IMAJIN_EVENTS_PUBLISH_PATH`** overrides only the kernel-relative route
+path (default **`/api/events`**, also used when empty). Set it only when a compatible
+kernel mounts the event endpoint at another path; it is not an enable switch or an
+absolute/external URL.
+
+The published `@ima-jin/auth-client` 0.8.18 service-token provider signs with the app's
+bootstrapped, memory-only identity and mints/caches a token via
+`POST /auth/api/apps/token/service`. Its default `imajin:apps` audience is accepted by
+the kernel event endpoint. Only `type`, `subject`, `payload`, and optional
+`correlationId` are sent. The kernel stamps issuer/scope/origin itself.
+Caller-side issuer, scope and timestamp remain accepted by the local helper for
+request/response compatibility but are never forwarded as authority.
+
+Delivery is best-effort and non-throwing. Missing kernel URL, `IMAJIN_APP_DID`,
+or provisioned signing credentials (`IMAJIN_APP_KEYSTORE`, claimed at `/events/claim`)
+produce **error-level** diagnostics naming the settings, never a silent no-op.
+HTTP 401/403/429 and network failures are error-logged without changing the user's
+response. A 401 invalidates the cached token for the next publish. No event is
+automatically replayed; a 429 log includes `Retry-After`. Keys, tokens, payloads and
+untrusted error bodies are not logged.
+
+`imajin.app.json` declares concrete `event.*`, `ticket.*` and `checkin.*` types
+(no wildcards) for the `/jin` provision/declarations preview. **Operator step after
+deploy:** review and approve these `emittable_events` for events on **both prod and
+dev** `/jin`, then trigger an event and confirm its app DID/type in the kernel audit
+log and its notification reactor result. A declaration does not approve itself.
+App-origin events run **notify and audit only** — never money or attestations.
+
+**Contract blocker (events#58):** the current kernel reserves the entire `order.*`
+namespace, including this app's existing `order.refunded`. The emitter submits that
+type unchanged and logs the kernel's 403, non-fatally. It is intentionally absent
+from the declaration because the kernel rejects a manifest containing it, preventing
+all declarations from previewing. A kernel-policy or event-name decision is required
+before order notifications can be approved. `settlement.completed` is kernel-owned
+too: the app-domain helper refuses it locally and does not claim to deliver settlement
+callbacks or attestations through this notification channel.
+
 ## Consuming `@ima-jin/*`
 
 Published `@ima-jin/*` packages (e.g. `@ima-jin/auth-client`, `@ima-jin/config`, `@ima-jin/ui`) are served from

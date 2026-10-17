@@ -1,4 +1,18 @@
 {
+  "emittableEvents": [
+    "checkin.create",
+    "event.attendance",
+    "event.registration",
+    "event.rsvp",
+    "ticket.confirmed",
+    "ticket.purchase",
+    "ticket.purchased",
+    "ticket.receipt",
+    "ticket.refunded",
+    "ticket.registration.completed",
+    "ticket.registration.reminder",
+    "ticket.reserved"
+  ],
   "secrets": [
     { "name": "SESSION_SECRET", "kind": "random-32B" },
     { "name": "TICKET_QR_SECRET", "kind": "random-32B" }
