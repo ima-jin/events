@@ -91,6 +91,14 @@ describe('loadPublicEvent / getViewer', () => {
 });
 
 describe('EventPage', () => {
+  it('does not call card readiness during buyer server rendering or metadata generation', async () => {
+    vi.stubEnv('IMAJIN_KERNEL_URL', 'https://kernel.test');
+    givenEvent(makeEventRow({ emtEmail: 'pay@org.ca' }));
+    const fetch = mockFetch({});
+    await EventPage(route());
+    await generateMetadata(route());
+    expect(fetch).not.toHaveBeenCalled();
+  });
   it('renders the event and its purchase UI', async () => {
     givenEvent(makeEventRow({ description: 'A friendly meetup' }), [makeTierRow({ description: 'Main floor' })]);
 

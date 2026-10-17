@@ -88,6 +88,7 @@ const isEventOrganizerMock = vi.fn();
 const log = { error: vi.fn(), info: vi.fn(), warn: vi.fn(), debug: vi.fn() };
 
 export const kernelModule = {
+  kernelBaseUrl: () => 'https://kernel.events.test',
   serviceUrl: serviceUrlMock,
   appAuthHeaders: () => ({ 'X-App-DID': 'did:imajin:events-app' }),
 };
@@ -116,6 +117,7 @@ export function resetServiceMocks(): void {
   for (const mock of Object.values(repoMocks)) mock.mockReset();
   repoMocks.insertEvent.mockImplementation(async (values: EventRow) => values);
   repoMocks.insertTicketTypes.mockImplementation(async (values: TicketTypeRow[]) => values);
+  repoMocks.listTicketTypesForEvent.mockResolvedValue([]);
   publishMock.mockReset().mockResolvedValue({});
   serviceUrlMock.mockReset().mockImplementation((service: string) => SERVICE_URLS[service] ?? null);
   getNodeSelfMock.mockReset().mockResolvedValue(null);

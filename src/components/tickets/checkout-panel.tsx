@@ -9,6 +9,7 @@ interface CheckoutPanelProps {
   currency: string;
   rails: RailAvailability;
   noCardRail: boolean;
+  cardMessage?: string;
   balanceCents: number | null;
   busy: boolean;
   onCard: () => void;
@@ -59,6 +60,7 @@ export function CheckoutPanel(props: Readonly<CheckoutPanelProps>) {
           Card payment isn&apos;t set up for this event.
         </output>
       )}
+      {props.cardMessage && !noCardRail && <p className={MUTED}>{props.cardMessage}</p>}
       {hasRail ? (
         <RailButtons {...props} />
       ) : (

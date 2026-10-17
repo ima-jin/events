@@ -11,6 +11,7 @@ import * as repo from '@/repositories/events-repository';
 import type { EventRow, EventSummary, NewEventRow, NewTicketTypeRow, TicketTypeRow } from '@/repositories/events-repository';
 import { isEventOrganizer } from '@/services/authorization';
 import { ServiceError } from '@/services/errors';
+import { requirePaidEventRail } from '@/services/card-rail-policy';
 
 const log = createLogger('events');
 
@@ -34,6 +35,7 @@ export interface TicketTypeInput {
 
 /** Body of a create-event request, as the route parsed it (validated by {@link createEvent}). */
 export interface CreateEventInput {
+  status?: string;
   title?: string;
   description?: string;
   startsAt?: string;
@@ -162,6 +164,9 @@ async function buildEventFairManifest(creatorDid: string, eventDid: string, scop
 function validateCreateEventInput(input: CreateEventInput): void {
   if (!input.title) throw new ServiceError('invalid', 'title is required');
   if (!input.startsAt) throw new ServiceError('invalid', 'startsAt is required');
+  if (input.status !== undefined && input.status !== 'draft' && input.status !== 'published') {
+    throw new ServiceError('invalid', 'New events must be draft or published');
+  }
   if (input.eventType === CAMPAIGN) {
     const { targetAmount } = input;
     if (typeof targetAmount !== 'number' || targetAmount <= 0 || !Number.isInteger(targetAmount)) {
@@ -300,7 +305,7 @@ export interface CreateEventParams {
 }
 
 /**
- * Create a draft event: validate, mint its Ed25519 keypair, register its DID with
+ * Create a draft event (optionally publish after readiness): mint its Ed25519 keypair, register its DID with
  * the kernel, attach the .fair manifest, persist it with its ticket types and open
  * its chat. Requires a hard DID (enforced by the caller).
  */
@@ -313,7 +318,7 @@ export async function createEvent(params: CreateEventParams): Promise<CreateEven
   const eventDid = await registerEventDid(input.title as string, keypair);
   const fairManifest = await buildEventFairManifest(creatorDid, eventDid, actingAs ?? null);
 
-  const event = await repo.insertEvent(
+  let event = await repo.insertEvent(
     buildEventRow({ eventId, eventDid, keypair, creatorDid, input, fairManifest }),
   );
 
@@ -336,6 +341,19 @@ export async function createEvent(params: CreateEventParams): Promise<CreateEven
   const chatUrl = serviceUrl('chat');
   if (chatUrl) {
     await createEventChat({ chatUrl, eventDid, creatorDid, creatorId: identityId, nameDisplayPolicy: input.nameDisplayPolicy });
+  }
+  // Save the draft and tiers first, so refusals can be retried safely by eventId.
+  if (input.status === 'published') {
+    await requirePaidEventRail(event, ticketTypes.some((tier) => tier.price > 0));
+    const published = await repo.updateEventById(event.id, { status: 'published', updatedAt: new Date() });
+    if (!published) throw new ServiceError('not_found', NOT_FOUND);
+    event = published;
+    publishBestEffort('event.update', {
+      issuer: creatorDid,
+      subject: creatorDid,
+      scope: SCOPE,
+      payload: { eventId: event.id, status: 'published' },
+    });
   }
 
   return { event, ticketTypes, eventKeypair: { publicKey: keypair.publicKey, privateKey: keypair.privateKey } };
@@ -445,6 +463,10 @@ export async function updateEventStatus(params: UpdateEventStatusParams): Promis
   if (!allowed.includes(status)) {
     throw new ServiceError('invalid', `Cannot transition from "${currentStatus}" to "${status}"`);
   }
+  if (status === 'published') {
+    const tiers = await repo.listTicketTypesForEvent(eventId);
+    await requirePaidEventRail(event, tiers.some((tier) => tier.price > 0));
+  }
 
   const updated = await repo.updateEventById(eventId, { status, updatedAt: new Date() });
 
@@ -466,6 +488,20 @@ export interface UpdateEventParams {
   callerCookie?: string | null;
 }
 
+async function requireEventUpdateRail(event: EventRow, updates: Record<string, unknown>): Promise<void> {
+  const publishes = updates.status === 'published' && event.status !== 'published';
+  const emtEmail = updates.emtEmail === undefined ? event.emtEmail : updates.emtEmail as string | null;
+  const removesEtransfer = event.status === 'published'
+    && Boolean(event.emtEmail?.trim())
+    && updates.emtEmail !== undefined
+    && !emtEmail?.trim()
+    && (updates.status === undefined || updates.status === 'published');
+  if (publishes || removesEtransfer) {
+    const tiers = await repo.listTicketTypesForEvent(event.id);
+    await requirePaidEventRail({ ...event, emtEmail }, tiers.some((tier) => tier.price > 0));
+  }
+}
+
 /** Update an event's details (creator or co-host); a changed name policy is synced to the event chat. */
 export async function updateEvent(params: UpdateEventParams): Promise<Omit<EventRow, 'privateKey'>> {
   const { eventId, actorDid, body, callerCookie } = params;
@@ -474,6 +510,9 @@ export async function updateEvent(params: UpdateEventParams): Promise<Omit<Event
 
   const organizer = await isEventOrganizer(eventId, actorDid, callerCookie);
   if (!organizer.authorized) throw new ServiceError('forbidden', 'Not authorized to update this event');
+  if (body.emtEmail !== undefined && body.emtEmail !== null && typeof body.emtEmail !== 'string') {
+    throw new ServiceError('invalid', 'emtEmail must be a string or null');
+  }
 
   // Validates nameDisplayPolicy when present
   const updates = buildEventUpdates(body);
@@ -481,6 +520,7 @@ export async function updateEvent(params: UpdateEventParams): Promise<Omit<Event
     const { error, status } = updates as { error: string; status: number };
     throw new ServiceError('invalid', error, { status });
   }
+  await requireEventUpdateRail(event, updates);
 
   const updated = await repo.updateEventById(eventId, updates as Partial<NewEventRow>);
 

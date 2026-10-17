@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
 import { screen, within } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { OrganizerDashboard } from '@/components/organizer/organizer-dashboard';
 import { EventStatusControls } from '@/components/organizer/event-status-controls';
 import { EventOverviewStats } from '@/components/organizer/event-overview-stats';
-import { CREATOR_DID, EVENT_ID, jsonResponse, makeGuest, mockFetch, renderPanel } from '../support/organizer-ui-support';
+import { CREATOR_DID, EVENT_ID, jsonResponse, makeGuest, mockFetch, push, refresh, renderPanel } from '../support/organizer-ui-support';
+
+vi.mock('next/navigation', () => ({ useRouter: () => ({ push, refresh }) }));
 
 describe('organizer dashboard', () => {
   it('switches tabs and lazy-loads their contents', async () => {

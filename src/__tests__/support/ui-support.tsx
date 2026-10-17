@@ -126,7 +126,10 @@ export function mockFetch(routes: Record<string, Route>) {
   const spy = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const key = Object.keys(routes).find((fragment) => url.includes(fragment));
-    if (!key) return jsonResponse({ error: 'not found' }, 404);
+    if (!key) {
+      if (url.includes('/card-rail/check')) return jsonResponse({ cardEnabled: true });
+      return jsonResponse({ error: 'not found' }, 404);
+    }
     const route = routes[key];
     return typeof route === 'function' ? route(init) : route.clone();
   });
@@ -147,11 +150,13 @@ export const PURCHASE_DEFAULTS: TicketPurchaseProps = {
   tiers: [makeTier()],
   hasHiddenTiers: false,
   etransferEnabled: false,
+  cardRailCheckUrl: 'https://kernel.test/pay/api/card-rail/check?did=did%3Aimajin%3Acreator',
   isAuthenticated: false,
   maxTicketsPerOrder: null,
 };
 
 export function renderPurchase(overrides: Partial<TicketPurchaseProps> = {}) {
+  if (!vi.isMockFunction(globalThis.fetch)) mockFetch({});
   const user = userEvent.setup();
   const view = render(<TicketPurchase {...PURCHASE_DEFAULTS} {...overrides} />);
   return { user, ...view };

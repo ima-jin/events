@@ -251,12 +251,12 @@ describe('balance rail', () => {
     expect(screen.queryByRole('button', { name: /Pay with Balance/ })).toBeNull();
   });
 
-  it('is never requested for anonymous visitors', async () => {
+  it('never requests a balance for anonymous visitors', async () => {
     const fetchSpy = mockFetch({});
     const { user } = renderPurchase();
     await addTickets(user);
 
-    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(fetchSpy.mock.calls.some(([url]) => String(url).includes('/api/balance'))).toBe(false);
   });
 
   it('shows the balance checkout error', async () => {
@@ -357,7 +357,7 @@ describe('access-code unlock', () => {
 
     expect(await screen.findByRole('heading', { name: 'VIP' })).toBeTruthy();
     expect(screen.getByText('1 ticket type unlocked!')).toBeTruthy();
-    expect(String(fetchSpy.mock.calls[0][0])).toContain('code=vip');
+    expect(fetchSpy.mock.calls.some(([url]) => String(url).includes('code=vip'))).toBe(true);
     expect(screen.getByRole('heading', { name: 'General' })).toBeTruthy();
   });
 

@@ -8,6 +8,7 @@ import { EventChat } from '@/components/chat/event-chat';
 import { withBasePath } from '@/lib/base-path';
 import { getViewer, loadPublicEvent } from '@/lib/load-public-event';
 import { isHiddenStatus, type PublicEventView } from '@/lib/public-event';
+import { cardRailCheckUrl } from '@/lib/card-rail';
 
 // Always fresh: ticket availability and event edits change constantly.
 export const dynamic = 'force-dynamic';
@@ -66,7 +67,7 @@ export default async function EventPage({ params, searchParams }: Readonly<PageP
 
   const isUpcoming = new Date(event.startsAt) > new Date();
   const canBuy = event.eventType !== 'campaign' && event.status === 'published' && tiers.length > 0;
-  const purchase = <TicketsCard event={event} tiers={tiers} hasHiddenTiers={hasHiddenTiers} invite={invite} isAuthenticated={viewer !== null} />;
+  const purchase = <TicketsCard event={event} tiers={tiers} hasHiddenTiers={hasHiddenTiers} invite={invite} isAuthenticated={viewer !== null} cardRailCheckUrl={cardRailCheckUrl(creatorDid)} />;
 
   return (
     <>

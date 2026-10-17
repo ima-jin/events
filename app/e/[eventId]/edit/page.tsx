@@ -2,17 +2,19 @@ import { EventForm, FairAttribution } from '@/components/organizer-form';
 import { editableManifest } from '@/components/organizer-form/fair-manifest';
 import { eventFormView, tierFormView } from '@/lib/organizer-form-view';
 import { loadOrganizerPage } from '@/lib/organizer-page';
+import { getCardRailReadiness } from '@/lib/card-rail';
 
 export const dynamic = 'force-dynamic';
 
 export default async function EditPage({ params }: Readonly<{ params: Promise<{ eventId: string }> }>) {
   const { eventId } = await params;
   const { event, ticketTypes } = await loadOrganizerPage(eventId);
+  const cardRailReadiness = await getCardRailReadiness(String(event.creatorDid));
   const metadata = event.metadata as Record<string, unknown> | null;
   return (
     <div className="mx-auto max-w-4xl space-y-6 p-4 md:p-8">
       <h1 className="text-3xl font-bold">Edit Event</h1>
-      <EventForm mode="edit" event={eventFormView(event)} existingTickets={ticketTypes.map(tierFormView)} />
+      <EventForm mode="edit" event={eventFormView(event)} existingTickets={ticketTypes.map(tierFormView)} cardRailReadiness={cardRailReadiness} />
       <FairAttribution eventId={eventId} manifest={editableManifest(metadata?.fair)} />
     </div>
   );

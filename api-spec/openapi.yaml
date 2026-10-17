@@ -189,6 +189,16 @@ components:
             properties:
               error: { type: string }
               retryAfter: { type: integer }
+    CardRailRequired:
+      description: Paid mutation refused; connect Stripe or configure e-Transfer. A create request has saved a draft and tiers; retry using eventId, not a new create.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/CardRailError" }
+    CardRailUnavailable:
+      description: Public card readiness unavailable or invalid; retryable. Publication and live paid-tier changes are refused unless e-Transfer is configured.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/CardRailError" }
     ServerError:
       description: Unexpected failure
       content:
@@ -203,6 +213,15 @@ components:
       description: CORS preflight (headers from `corsHeaders()` in `@ima-jin/config`)
 
   schemas:
+    CardRailError:
+      type: object
+      required: [error, code, setupUrl, eventId]
+      properties:
+        error: { type: string }
+        code: { type: string, enum: [SELLER_NO_CARD_RAIL, CARD_RAIL_UNAVAILABLE] }
+        setupUrl: { type: [string, "null"], description: Kernel Stripe connector setup URL }
+        eventId: { type: string, description: Saved event id for safe retry; errors never contain the signing key }
+        retryable: { type: boolean, description: true on unavailable readiness (503) }
     Error:
       type: object
       required: [error]
@@ -710,6 +729,9 @@ paths:
         Registers a new event DID with the kernel, builds the .fair manifest, creates optional ticket types
         and, when chat is available, the event conversation. Hard-DID check: soft (email-only) identities get 403.
         Also accepts the legacy app headers (`events:write`).
+        Defaults to draft. Explicit published status checks paid tiers against the creator's card readiness
+        unless e-Transfer is configured (nonempty emtEmail). A refused publication preserves the saved draft
+        and tiers and returns eventId for a safe update/status retry, never the signing key in the error.
       security:
         - appToken: [events:write]
         - cookieAuth: []
@@ -725,6 +747,7 @@ paths:
                 - type: object
                   required: [title, startsAt]
                   properties:
+                    status: { type: string, enum: [draft, published], default: draft }
                     eventType: { type: string, enum: [event, campaign], default: event }
                     targetAmount:
                       type: integer
@@ -743,7 +766,7 @@ paths:
                           perks: { type: array, items: { type: string } }
       responses:
         "201":
-          description: Event created (status `draft`)
+          description: Event created (draft by default, or explicitly published after the readiness gate)
           content:
             application/json:
               schema:
@@ -762,6 +785,8 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/CardRailRequired" }
+        "503": { $ref: "#/components/responses/CardRailUnavailable" }
         "500": { $ref: "#/components/responses/ServerError" }
 
   /api/events/mine:
@@ -853,6 +878,10 @@ paths:
       tags: [events]
       operationId: updateEvent
       summary: Update event fields (creator or cohost)
+      description: >
+        Publishing via PUT and removing configured e-Transfer from a published paid event require
+        the stored creator's card readiness unless the resulting event has e-Transfer enabled.
+        Unrelated saves of legacy published events are unaffected.
       security:
         - appToken: [events:write]
         - cookieAuth: []
@@ -883,6 +912,8 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/CardRailRequired" }
+        "503": { $ref: "#/components/responses/CardRailUnavailable" }
         "500": { $ref: "#/components/responses/ServerError" }
     patch:
       tags: [events]
@@ -891,6 +922,8 @@ paths:
       description: >
         Transitions: draft → published; published → paused, cancelled, completed; paused → published,
         cancelled. `cancelled` and `completed` are terminal.
+        Paid publication requires the stored creator's card readiness unless e-Transfer is configured.
+        Refusal leaves the draft or paused event unchanged.
       security:
         - appToken: [events:write]
         - cookieAuth: []
@@ -922,6 +955,8 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/CardRailRequired" }
+        "503": { $ref: "#/components/responses/CardRailUnavailable" }
         "500": { $ref: "#/components/responses/ServerError" }
 
   /api/events/{id}/access:
@@ -1636,7 +1671,10 @@ paths:
       tags: [tiers]
       operationId: createTier
       summary: Create a tier (creator or cohost)
-      description: When `currency` is omitted it defaults to the event's most common tier currency, else `CAD`.
+      description: >
+        When currency is omitted it defaults to the event's most common tier currency, else CAD.
+        Adding a paid tier to a published event requires the stored creator's card readiness
+        unless e-Transfer is configured. Free tiers and unpublished events are unaffected.
       security:
         - appToken: [events:write]
         - cookieAuth: []
@@ -1670,6 +1708,8 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/CardRailRequired" }
+        "503": { $ref: "#/components/responses/CardRailUnavailable" }
         "500": { $ref: "#/components/responses/ServerError" }
     put:
       tags: [tiers]
@@ -1679,6 +1719,8 @@ paths:
         Once tickets are sold the currency cannot change, the price cannot go down and quantity/perks may only
         grow; violations return 400 with a `violations` list. An empty change set returns the tier unchanged
         with `message: "No changes"`.
+        A free-to-paid tier change on a published event requires the stored creator's card readiness
+        unless e-Transfer is configured; refusal leaves the tier unchanged.
       security:
         - appToken: [events:write]
         - cookieAuth: []
@@ -1723,6 +1765,8 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/CardRailRequired" }
+        "503": { $ref: "#/components/responses/CardRailUnavailable" }
         "500": { $ref: "#/components/responses/ServerError" }
 
   /api/events/{id}/tiers/unlock:

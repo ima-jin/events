@@ -1,4 +1,5 @@
 import { withBasePath } from '@/lib/base-path';
+import { organizerError } from './request-error';
 
 export function organizerPath(eventId: string, suffix = ''): string {
   return withBasePath(`/api/events/${encodeURIComponent(eventId)}${suffix}`);
@@ -8,6 +9,7 @@ export async function organizerRequest<T>(path: string, init?: RequestInit): Pro
   const response = await fetch(path, { cache: 'no-store', ...init });
   const data = await response.json();
   if (!response.ok) {
+    if (data?.code === 'SELLER_NO_CARD_RAIL' || data?.retryable === true) throw organizerError(data);
     throw new Error(typeof data.error === 'string' ? data.error : 'Request failed. Please try again.');
   }
   return data as T;

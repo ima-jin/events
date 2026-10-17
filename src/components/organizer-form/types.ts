@@ -1,3 +1,5 @@
+import type { CardRailReadiness } from '@/lib/card-rail';
+
 export type JsonValue = string | number | boolean | null | readonly JsonValue[] | { readonly [key: string]: JsonValue };
 export type LocationType = 'physical' | 'virtual' | 'hybrid';
 
@@ -46,6 +48,7 @@ export interface EventFormProps {
   existingTickets?: readonly EventFormTier[];
   creatorEmail?: string | null;
   loadError?: string;
+  cardRailReadiness?: CardRailReadiness;
 }
 
 export interface FormDetails {

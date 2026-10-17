@@ -4,6 +4,7 @@ import { DetailsFields } from './details-fields';
 import { TierFields } from './tier-fields';
 import { useEventForm } from './use-event-form';
 import type { EventFormProps } from './types';
+import { PaymentReadiness } from '../organizer/payment-readiness';
 
 export type { EventFormProps, EventFormEvent, EventFormTier, JsonValue } from './types';
 export { FairAttribution, type FairAttributionProps } from './fair-attribution';
@@ -17,9 +18,13 @@ export function EventForm(props: Readonly<EventFormProps>) {
   return (
     <form noValidate onSubmit={(event) => { event.preventDefault(); form.submit().catch(form.reportFailure); }} className="space-y-6">
       <fieldset disabled={form.saving || form.uncertain} className="space-y-6">
-        <DetailsFields details={form.details} update={form.update} onUploadBusy={form.setUploadBusy} />
+        <DetailsFields details={form.details} update={form.update} onUploadBusy={form.setUploadBusy}
+          cardRailReadiness={props.cardRailReadiness} hasPaidTiers={form.tiers.some((tier) => Number(tier.price) > 0)}
+          published={props.event?.status === 'published'} />
         <section className="space-y-4 rounded-xl border border-gray-200 p-6 dark:border-gray-700">
           <h2 className="text-xl font-semibold">Ticket tiers</h2>
+          <PaymentReadiness readiness={props.cardRailReadiness} hasPaidTiers={form.tiers.some((tier) => Number(tier.price) > 0)}
+            emtEnabled={form.details.emtEnabled && Boolean(form.details.emtEmail.trim())} />
           <button type="button" onClick={form.addTier}>Add tier</button>
           {form.tiers.map((tier, index) => (
             <TierFields key={tier.key} tier={tier} first={index === 0} last={index === form.tiers.length - 1}
@@ -29,6 +34,7 @@ export function EventForm(props: Readonly<EventFormProps>) {
         </section>
       </fieldset>
       {form.error && <p role="alert" className="rounded-lg bg-red-50 p-4 text-red-700">{form.error}</p>}
+      {form.errorSetupUrl && <a href={form.errorSetupUrl} className="underline">Set up card payments</a>}
       <div className="flex gap-4">
         <button type="button" onClick={form.cancel} disabled={form.saving}>Cancel</button>
         <button type="submit" disabled={form.saving || form.uploadBusy || form.uncertain}
