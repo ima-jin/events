@@ -18,6 +18,7 @@ const PARAMS = {
   cancelUrl: 'https://events.test/no',
   fairManifest: null,
   sellerDid: 'did:imajin:organizer',
+  appAuth: { bearer: 'events-app-token', payeeManifest: null },
   metadata: { eventId: 'evt_1' },
   log,
 };
@@ -42,7 +43,9 @@ describe('requestPayCheckoutSession', () => {
     expect(result).toEqual({ checkout: { id: 'cs_1', url: 'https://stripe.test/cs_1' } });
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe('https://pay.test/pay/api/checkout');
+    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer events-app-token');
     expect(JSON.parse(init.body as string)).toMatchObject({ sellerDid: 'did:imajin:organizer', currency: 'CAD' });
+    expect(JSON.parse(init.body as string)).not.toHaveProperty('payeeManifest');
   });
 
   it.each([

@@ -117,13 +117,13 @@ export function buildPayeeManifest(params: {
 // Checkout
 // ---------------------------------------------------------------------------
 
-/** What an app-authenticated pay checkout carries: the app token and the declared payee manifest. */
+/** Every checkout carries the app token; only events with a chain declare a payee manifest. */
 export interface AppCheckoutAuth {
   bearer: string;
-  payeeManifest: PayeeManifest;
+  payeeManifest: PayeeManifest | null;
 }
 
-export type PrepareAppCheckoutResult = { appAuth: AppCheckoutAuth | null } | { error: string; status: number };
+export type PrepareAppCheckoutResult = { appAuth: AppCheckoutAuth } | { error: string; status: number };
 
 export interface PrepareAppCheckoutParams {
   fairManifest: unknown;
@@ -152,17 +152,12 @@ async function resolveChainBuyerDid(params: PrepareAppCheckoutParams): Promise<s
 
 /**
  * Prepare an app-authenticated pay checkout: mint events' app-service token and
- * resolve the payee manifest to declare. Returns `{ appAuth: null }` when the
- * event has no `.fair` chain (nothing to settle — checkout proceeds unbound, as
- * before) and `{ error, status }` when the checkout cannot be made settleable
- * (fail closed: taking a payment that can never pay the organizer is worse).
+ * resolve the payee manifest to declare. Events with no `.fair` chain still
+ * authenticate, but do not declare a payee manifest. Mint failure always fails
+ * closed, before any payment is requested.
  */
 export async function prepareAppCheckout(params: PrepareAppCheckoutParams): Promise<PrepareAppCheckoutResult> {
   const { log } = params;
-  if (!hasSettleableChain(params.fairManifest)) {
-    log.warn({}, '[settle] Event has no .fair chain — checkout is not app-bound and will not settle');
-    return { appAuth: null };
-  }
 
   let chainBuyerDid = params.buyerDid;
   if (chainNeedsBuyerDid(params.fairManifest)) {
@@ -176,13 +171,12 @@ export async function prepareAppCheckout(params: PrepareAppCheckoutParams): Prom
     amountCents: params.amountCents,
     buyerDid: chainBuyerDid,
   });
-  if (!payeeManifest) return { appAuth: null };
 
   try {
     return { appAuth: { bearer: await getPayAppToken(), payeeManifest } };
-  } catch (err) {
-    log.error({ err: String(err) }, '[settle] Could not obtain events app-service token for checkout');
-    return { error: 'Payment service unavailable', status: 503 };
+  } catch {
+    log.error({}, '[settle] Could not obtain events app-service token for checkout');
+    return { error: 'Payment service unavailable; please retry checkout', status: 503 };
   }
 }
 

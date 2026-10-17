@@ -78,6 +78,7 @@ beforeEach(() => {
   mocks.loadPublishedEvent.mockResolvedValue({
     event: { id: 'evt_1', did: EVENT_DID, title: EVENT_TITLE, creatorDid: ORGANIZER, metadata: { fair: FAIR } },
   });
+
   mocks.resolveInviteAccessForEvent.mockResolvedValue(null);
   mocks.validateCart.mockResolvedValue({
     typesById: new Map([['tt_1', { name: 'GA', description: null, price: 2500, quantity: null, sold: 0 }]]),
@@ -116,7 +117,10 @@ describe('POST /api/checkout — app-authenticated pay checkout (imajin-ai#2739)
     expect(payBody.metadata).toMatchObject({ service: 'events', eventId: 'evt_1', buyerDid: 'did:imajin:buyer' });
   });
 
-  it('fails closed with 503 — and never calls pay — when events cannot get its app token', async () => {
+  it.each([FAIR, null, undefined, { chain: [] }, { fees: [] }])('fails closed with a retryable 503 and no pay call when minting fails for %j', async (fair) => {
+    mocks.loadPublishedEvent.mockResolvedValue({
+      event: { id: 'evt_1', did: EVENT_DID, title: EVENT_TITLE, creatorDid: ORGANIZER, metadata: { fair } },
+    });
     mocks.getPayAppToken.mockRejectedValue(new Error('loadAppSigningKey: no keystore found'));
     const fetchMock = vi.fn();
     globalThis.fetch = fetchMock as unknown as typeof fetch;
@@ -124,9 +128,19 @@ describe('POST /api/checkout — app-authenticated pay checkout (imajin-ai#2739)
     const res = await callRoute();
 
     expect(res.status).toBe(503);
-    expect(await res.json()).toEqual({ error: 'Payment service unavailable' });
+    expect(await res.json()).toEqual({ error: 'Payment service unavailable; please retry checkout' });
     expect(fetchMock).not.toHaveBeenCalled();
     expect(mocks.publish).not.toHaveBeenCalled();
+    expect(mocks.getPayAppToken).toHaveBeenCalledTimes(1);
+
+    // A later buyer retry can recover; the failed request never fell back to anonymous pay.
+    mocks.getPayAppToken.mockResolvedValue('events-app-token');
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ id: 'cs_retry', url: 'https://stripe.test/cs_retry' })));
+    const retry = await callRoute();
+    expect(retry.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer events-app-token');
   });
 
   it('400s before calling pay when the chain pays the buyer but no email or session identifies them', async () => {
@@ -149,9 +163,9 @@ describe('POST /api/checkout — app-authenticated pay checkout (imajin-ai#2739)
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('proceeds unbound (no Authorization, no payeeManifest) for an event with no .fair chain', async () => {
+  it.each([null, undefined, { chain: [] }, { fees: [] }])('authenticates a seller checkout with no payee chain (%j)', async (fair) => {
     mocks.loadPublishedEvent.mockResolvedValue({
-      event: { id: 'evt_1', did: EVENT_DID, title: EVENT_TITLE, creatorDid: ORGANIZER, metadata: {} },
+      event: { id: 'evt_1', did: EVENT_DID, title: EVENT_TITLE, creatorDid: ORGANIZER, metadata: { fair } },
     });
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ id: 'cs_2', url: 'https://stripe.test/cs_2' })));
     globalThis.fetch = fetchMock as unknown as typeof fetch;
@@ -160,9 +174,40 @@ describe('POST /api/checkout — app-authenticated pay checkout (imajin-ai#2739)
 
     expect(res.status).toBe(200);
     const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
-    expect((init.headers as Record<string, string>).Authorization).toBeUndefined();
-    expect(JSON.parse(init.body as string).payeeManifest).toBeUndefined();
-    expect(mocks.getPayAppToken).not.toHaveBeenCalled();
+    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer events-app-token');
+    const payBody = JSON.parse(init.body as string);
+    expect(payBody.sellerDid).toBe(ORGANIZER);
+    expect(payBody).not.toHaveProperty('payeeManifest');
+    expect(payBody).not.toHaveProperty('appAuth');
+    expect(mocks.getPayAppToken).toHaveBeenCalledTimes(1);
+    expect(mocks.createSoftDidFromEmail).not.toHaveBeenCalled();
+  });
+
+  describe.each(['today', '#2873'])('seller-checkout public contract: %s kernel (test double)', (kernel) => {
+    it.each([FAIR, null])('opens a session for a paid checkout with manifest %j', async (fair) => {
+      mocks.loadPublishedEvent.mockResolvedValue({
+        event: { id: 'evt_1', did: EVENT_DID, title: EVENT_TITLE, creatorDid: ORGANIZER, metadata: { fair } },
+      });
+      const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+        const body = JSON.parse(init.body as string);
+        const authorization = new Headers(init.headers).get('Authorization');
+        if (kernel === '#2873' && body.sellerDid && authorization !== 'Bearer events-app-token') {
+          return new Response(JSON.stringify({ error: 'App-service token required' }), { status: 401 });
+        }
+        expect(authorization).toBe('Bearer events-app-token');
+        expect(body.sellerDid).toBe(ORGANIZER);
+        expect(body.items).toEqual([{ name: `${EVENT_TITLE} — GA`, amount: 2500, quantity: 2 }]);
+        expect(body.currency).toBe('CAD');
+        return new Response(JSON.stringify({ id: 'cs_compatible', url: 'https://stripe.test/cs_compatible' }));
+      });
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      const res = await callRoute();
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ url: 'https://stripe.test/cs_compatible', sessionId: 'cs_compatible' });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('surfaces the pay service’s refusal (e.g. 403 pay:settle not approved) as a checkout error', async () => {
