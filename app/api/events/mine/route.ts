@@ -10,7 +10,7 @@ import { listCreatorEvents } from '@/services/events-service';
 export const GET = withLogger('events', async (request, { log }) => {
   const authResult = await requireAuth(request);
   if ('error' in authResult) {
-    return NextResponse.json({ error: authResult.error }, { status: authResult.status });
+    return NextResponse.json(authResult.proposal ?? { error: authResult.error }, { status: authResult.status });
   }
 
   try {

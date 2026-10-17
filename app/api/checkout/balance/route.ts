@@ -56,7 +56,7 @@ export const POST = withLogger('events', async (request, { log }) => {
     // Auth required â€” buyer must be logged in
     const authResult = await requireAuth(request);
     if ('error' in authResult) {
-      return NextResponse.json({ error: authResult.error }, { status: authResult.status });
+      return NextResponse.json(authResult.proposal ?? { error: authResult.error }, { status: authResult.status });
     }
     const buyerDid = resolveActingDid(authResult.identity);
 

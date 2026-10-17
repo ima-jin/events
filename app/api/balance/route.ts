@@ -23,7 +23,7 @@ export const GET = withLogger('events', async (request, { log }) => {
   try {
     const authResult = await requireAuth(request);
     if ('error' in authResult) {
-      return NextResponse.json({ error: authResult.error }, { status: authResult.status });
+      return NextResponse.json(authResult.proposal ?? { error: authResult.error }, { status: authResult.status });
     }
     const buyerDid = resolveActingDid(authResult.identity);
     const payUrl = `${PAY_SERVICE_URL}/api/balance/${encodeURIComponent(buyerDid)}`;

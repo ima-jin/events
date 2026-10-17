@@ -28,7 +28,7 @@ export async function GET(
   } else {
     const authResult = await requireAuth(request);
     if ('error' in authResult) {
-      return NextResponse.json({ error: authResult.error }, { status: authResult.status });
+      return NextResponse.json(authResult.proposal ?? { error: authResult.error }, { status: authResult.status });
     }
     did = resolveActingDid(authResult.identity);
   }

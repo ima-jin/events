@@ -25,7 +25,9 @@ export async function authenticateAppOrSession(
   cors: HeadersInit,
   options: AppOrSessionOptions,
 ): Promise<AppOrSessionCaller | NextResponse> {
-  if (request.headers.get('x-app-did')) {
+  // Delegation must use the SDK's grants-verified session/token identity, never
+  // the legacy app-consent identity which has no delegation overlay.
+  if (request.headers.get('x-app-did') && !request.headers.has('x-acting-for')) {
     const appResult = await requireAppAuth(request, { scope: options.appScope });
     if ('error' in appResult) {
       return NextResponse.json({ error: appResult.error }, { status: appResult.status, headers: cors });
@@ -36,7 +38,7 @@ export async function authenticateAppOrSession(
 
   const authResult = options.requireHardIdentity ? await requireHardDID(request) : await requireAuth(request);
   if ('error' in authResult) {
-    return NextResponse.json({ error: authResult.error }, { status: authResult.status });
+    return NextResponse.json(authResult.proposal ?? { error: authResult.error }, { status: authResult.status });
   }
   return { did: resolveActingDid(authResult.identity), identity: authResult.identity };
 }

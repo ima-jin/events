@@ -1,5 +1,7 @@
 import { requireSessionOrAppToken } from '@ima-jin/auth';
 import { getIdentityTier } from '@/lib/kernel';
+import { evaluateEventsDelegationPolicy } from '@/lib/delegation-policy';
+import type { DelegationPolicyBody } from '@ima-jin/auth/delegation-policy';
 
 /**
  * The events app's single auth entry point (refs ima-jin/imajin-ai#1974).
@@ -28,8 +30,7 @@ export interface EventsIdentity {
   actingAs?: string;
   /**
    * Owner DID the caller acts for under verified agent delegation (`X-Acting-For`).
-   * Not yet surfaced by the published `requireSessionOrAppToken` (kernel main has
-   * it, unreleased) — typed here so `resolveActingDid` picks it up once it ships.
+   * Surfaced only after the published SDK verifies the delegation grant.
    */
   actingFor?: string;
 }
@@ -37,6 +38,8 @@ export interface EventsIdentity {
 export interface AuthError {
   error: string;
   status: number;
+  /** Complete SDK proposal; preserve it when building a route response. */
+  proposal?: DelegationPolicyBody;
 }
 
 export interface AuthSuccess {
@@ -79,9 +82,13 @@ export async function requireAuth(
     return { error: result.error, status: result.status };
   }
 
-  const { did, scopes, via, actingAs } = result.auth;
-  const actingFor = (result.auth as { actingFor?: string }).actingFor;
-  return { identity: { id: did, scopes, via, actingAs, actingFor } };
+  const { did, scopes, via, actingAs, actingFor } = result.auth;
+  const identity = { id: did, scopes, via, actingAs, actingFor };
+  const decision = await evaluateEventsDelegationPolicy(request, identity);
+  if (!decision.allowed) {
+    return { error: decision.body.error, status: decision.status, proposal: decision.body };
+  }
+  return { identity };
 }
 
 /** Like {@link requireAuth}, but resolves to `null` instead of an error. */
@@ -104,7 +111,7 @@ export function resolveActingDid(identity: EventsIdentity): string {
 
 /** Standard JSON-able body for an {@link AuthError}. */
 export function authErrorBody(authError: AuthError): { error: string } {
-  return { error: authError.error };
+  return authError.proposal ?? { error: authError.error };
 }
 
 /** DIDs allowed to use platform-admin routes: `NODE_DID` plus `EVENTS_ADMIN_DIDS` (comma-separated). */
