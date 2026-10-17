@@ -181,12 +181,12 @@ describe('prepareAppCheckout', () => {
     expect(result).toMatchObject({ appAuth: { bearer: APP_TOKEN } });
   });
 
-  it('is not app-bound (and warns) for an event with no .fair chain', async () => {
-    const result = await prepareAppCheckout({ fairManifest: null, amountCents: 5_000, resolveSoftDid, log });
+  it.each([null, undefined, { chain: [] }, { fees: [] }])('mints the app token without a payee manifest for %j', async (fairManifest) => {
+    const result = await prepareAppCheckout({ fairManifest, amountCents: 5_000, resolveSoftDid, log });
 
-    expect(result).toEqual({ appAuth: null });
-    expect(mocks.getPayAppTokenMock).not.toHaveBeenCalled();
-    expect(logWarn).toHaveBeenCalled();
+    expect(result).toEqual({ appAuth: { bearer: APP_TOKEN, payeeManifest: null } });
+    expect(mocks.getPayAppTokenMock).toHaveBeenCalledTimes(1);
+    expect(resolveSoftDid).not.toHaveBeenCalled();
   });
 
   it('400s when the chain pays the buyer but neither a session nor an email identifies them', async () => {
@@ -205,13 +205,13 @@ describe('prepareAppCheckout', () => {
     expect(logError).toHaveBeenCalled();
   });
 
-  it('fails closed (503) when events cannot obtain its app token', async () => {
+  it.each([FAIR, null, { chain: [] }])('fails closed (503) when minting fails for %j', async (fairManifest) => {
     mocks.getPayAppTokenMock.mockRejectedValue(new Error('loadAppSigningKey: no keystore found'));
 
-    const result = await prepareAppCheckout({ fairManifest: FAIR, amountCents: 10_000, buyerDid: BUYER, resolveSoftDid, log });
+    const result = await prepareAppCheckout({ fairManifest, amountCents: 10_000, buyerDid: BUYER, resolveSoftDid, log });
 
-    expect(result).toEqual({ error: 'Payment service unavailable', status: 503 });
-    expect(logError).toHaveBeenCalled();
+    expect(result).toEqual({ error: 'Payment service unavailable; please retry checkout', status: 503 });
+    expect(logError).toHaveBeenCalledWith({}, expect.any(String));
   });
 });
 
@@ -245,14 +245,14 @@ describe('requestPayCheckoutSession with app auth', () => {
     expect(body.appAuth).toBeUndefined();
   });
 
-  it('sends no Authorization header and no payeeManifest without app auth', async () => {
+  it('still sends Authorization without a payeeManifest', async () => {
     const fetchMock = vi.fn(async () => jsonResponse({ id: 'cs_2', url: 'https://stripe.test/cs_2' }));
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    await requestPayCheckoutSession({ ...base, appAuth: null });
+    await requestPayCheckoutSession({ ...base, appAuth: { bearer: APP_TOKEN, payeeManifest: null } });
 
     const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
-    expect((init.headers as Record<string, string>).Authorization).toBeUndefined();
+    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer events-app-token');
     expect(JSON.parse(init.body as string).payeeManifest).toBeUndefined();
   });
 });
