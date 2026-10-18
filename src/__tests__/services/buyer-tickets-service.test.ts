@@ -141,8 +141,34 @@ describe('buyer ticket projection', () => {
     expect(isPodMemberMock).not.toHaveBeenCalled();
     repo.getBuyerEventAccess.mockResolvedValue({ creatorDid: 'did:imajin:other', podId: 'pod_1' });
     isPodMemberMock.mockResolvedValue(true);
-    expect(await getBuyerTickets(EVENT_ID, OWNER_DID, 'session=caller')).toMatchObject({ hasAccess: true });
+    expect(await read()).toMatchObject({ hasTicket: false, hasAccess: true, isOrganizer: true, orders: [] });
+    expect(isPodMemberMock).toHaveBeenCalledWith('pod_1', OWNER_DID, ['owner', 'host', 'cohost'], null);
+  });
+
+  it('retains the compatibility cookie without changing the explicit owner or role allowlist', async () => {
+    repo.getBuyerEventAccess.mockResolvedValue({ creatorDid: 'did:imajin:other', podId: 'pod_1' });
+    isPodMemberMock.mockResolvedValue(true);
+
+    expect(await getBuyerTickets(EVENT_ID, OWNER_DID, 'session=caller')).toMatchObject({ hasAccess: true, isOrganizer: true });
     expect(isPodMemberMock).toHaveBeenCalledWith('pod_1', OWNER_DID, ['owner', 'host', 'cohost'], 'session=caller');
+  });
+
+  it('denies organizer access when app membership is absent or fails closed, even with a cookie', async () => {
+    repo.getBuyerEventAccess.mockResolvedValue({ creatorDid: 'did:imajin:other', podId: 'pod_1' });
+    isPodMemberMock.mockResolvedValue(false);
+
+    expect(await getBuyerTickets(EVENT_ID, OWNER_DID, 'session=creator')).toMatchObject({
+      hasTicket: false, hasAccess: false, isOrganizer: false, orders: [],
+    });
+    expect(isPodMemberMock).toHaveBeenCalledWith('pod_1', OWNER_DID, ['owner', 'host', 'cohost'], 'session=creator');
+  });
+
+  it('preserves ticket access without granting organizer access after a membership denial', async () => {
+    arrange([buyerRow()]);
+    repo.getBuyerEventAccess.mockResolvedValue({ creatorDid: 'did:imajin:other', podId: 'pod_1' });
+    isPodMemberMock.mockResolvedValue(false);
+
+    expect(await read()).toMatchObject({ hasTicket: true, hasAccess: true, isOrganizer: false });
   });
 
   it('propagates database failures to the thin route', async () => {

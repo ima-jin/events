@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => {
   return {
     selectQueue,
     settleCompletedOrder: vi.fn(),
+    requestOrderOnboard: vi.fn(),
     recordByoSettlement: vi.fn(),
     createOrderWithTickets: vi.fn(),
     busPublish: vi.fn(),
@@ -50,6 +51,7 @@ vi.mock('@/db', () => {
     orders: {},
   };
 });
+vi.mock('@/lib/order-onboard', () => ({ requestOrderOnboard: mocks.requestOrderOnboard }));
 vi.mock('@/lib/contact-email', () => ({ backfillContactEmail: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('@/lib/checkout-common', () => ({ createOrderWithTickets: mocks.createOrderWithTickets }));
 vi.mock('@/lib/pay-settle', () => ({
@@ -280,6 +282,50 @@ describe('POST /api/webhook/payment — kernel signatures', () => {
 });
 
 describe('POST /api/webhook/payment — BYO card rail (kernel #2766: the kernel already settled it)', () => {
+  it('returns 500 on failed atomic fulfillment, then fulfills a freshly signed redelivery of the still-pending order', async () => {
+    const stored = {
+      id: 'ord_saved', eventId: EVENT.id, paymentMethod: 'stripe', status: 'pending',
+      amountTotal: 5000, currency: 'CAD', metadata: { kernelTransactionId: 'tx_saved' },
+    };
+    mocks.selectQueue[0] = [stored];
+    mocks.createOrderWithTickets.mockRejectedValueOnce(new Error('ticket insert rolled back'));
+    expect((await callRoute()).status).toBe(500);
+    expect(mocks.requestOrderOnboard).not.toHaveBeenCalled();
+    expect(mocks.publishConfirmationEmails).not.toHaveBeenCalled();
+    mocks.selectQueue.push([stored], [EVENT], [TICKET_TYPE], []);
+    expect((await callRoute()).status).toBe(200);
+    expect(mocks.createOrderWithTickets).toHaveBeenCalledTimes(2);
+    expect(mocks.publishConfirmationEmails).toHaveBeenCalledTimes(1);
+    expect(mocks.requestOrderOnboard).toHaveBeenCalledTimes(1);
+  });
+  it('promotes the stored pending checkout without substituting webhook transaction metadata', async () => {
+    const stored = {
+      id: 'ord_saved', eventId: EVENT.id, paymentMethod: 'stripe', status: 'pending',
+      amountTotal: 5000, currency: 'CAD', metadata: { kernelTransactionId: 'tx_saved' },
+    };
+    mocks.selectQueue[0] = [stored];
+    await callRoute({ ...PAYLOAD, transactionId: 'tx_payload_not_authority' });
+    expect(mocks.createOrderWithTickets).toHaveBeenCalledWith(expect.objectContaining({
+      hostedOrder: stored,
+      orderMetadata: expect.not.objectContaining({ kernelTransactionId: expect.anything() }),
+    }));
+    expect(mocks.requestOrderOnboard).toHaveBeenCalledTimes(1);
+    expect(mocks.requestOrderOnboard).toHaveBeenCalledWith('ord_1');
+    expect(mocks.publishConfirmationEmails).toHaveBeenCalledWith(expect.objectContaining({
+      magicLink: 'https://events.test/e/evt_1/tickets',
+      registrationUrl: 'https://events.test/e/evt_1/tickets',
+    }));
+  });
+
+  it('does not fulfil a stored pending checkout for a different event or amount', async () => {
+    mocks.selectQueue[0] = [{
+      id: 'ord_saved', eventId: 'evt_other', status: 'pending', paymentMethod: 'stripe',
+      amountTotal: 5000, currency: 'CAD', metadata: { kernelTransactionId: 'tx_saved' },
+    }];
+    expect((await callRoute()).status).toBe(200);
+    expect(mocks.createOrderWithTickets).not.toHaveBeenCalled();
+    expect(mocks.requestOrderOnboard).not.toHaveBeenCalled();
+  });
   const RECEIPT = {
     orderId: 'ord_1',
     eventId: 'evt_1',

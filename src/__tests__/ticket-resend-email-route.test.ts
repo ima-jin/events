@@ -1,3 +1,4 @@
+vi.mock('@/lib/order-onboard', () => ({ requestOrderOnboard: vi.fn() }));
 /**
  * Tests for app/api/events/[id]/tickets/[ticketId]/resend-email/route.ts
  *

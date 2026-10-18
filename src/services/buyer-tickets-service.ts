@@ -145,6 +145,11 @@ function registrationEmbedBaseUrl(): string | null {
   }
 }
 
+/**
+ * Project the explicit owner's tickets and organizer access. Pod reads use
+ * app authorization; the compatibility cookie is ignored by `isPodMember`.
+ * Missing pod entitlement or membership never grants organizer access.
+ */
 export async function getBuyerTickets(eventId: string, ownerDid: string, callerCookie: string | null) {
   const rows = await listOwnedTicketRows(eventId, ownerDid);
   const event = await getBuyerEventAccess(eventId);

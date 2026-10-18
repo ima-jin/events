@@ -30,11 +30,28 @@ beforeEach(() => {
   mocks.sqlHolder.sql = sqlMock.sql;
 });
 
+describe.each([
+  ['sales', listOrderSaleRows],
+  ['export', listExportOrderRows],
+])('unpaid hosted checkout exclusion: %s', (_name, list) => {
+  it('filters pending card rails only, retaining pending EMT and unknown legacy methods', async () => {
+    sqlMock.queue([]);
+
+    await list(EVENT_ID);
+
+    const query = sqlMock.calls[0].text;
+    expect(query).toContain("o.status <> 'pending' OR COALESCE(o.payment_method, '') NOT IN ('stripe', 'stripe-byo')");
+    expect(query).not.toContain("o.status = 'completed'");
+    expect(sqlMock.calls[0].values).toEqual([EVENT_ID]);
+  });
+});
+
 describe('sales event lookup', () => {
   it('returns the event row, or null when it is missing', async () => {
     sqlMock.queue([salesEvent()]);
     expect(await getSalesEvent(EVENT_ID)).toEqual(salesEvent());
     expect(sqlMock.calls[0].text).toContain('FROM events.events');
+    expect(sqlMock.calls[0].text).toContain('creator_did');
     expect(sqlMock.calls[0].values).toEqual([EVENT_ID]);
 
     sqlMock.queue([]);

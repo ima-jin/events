@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => {
   process.env.NEXT_PUBLIC_EVENTS_URL = 'https://events.test';
   return {
     getPayAppToken: vi.fn(),
+    insertOrder: vi.fn(),
     loadPublishedEvent: vi.fn(),
     validateCart: vi.fn(),
     resolveCheckoutIdentity: vi.fn(),
@@ -25,6 +26,7 @@ vi.mock('@ima-jin/logger', () => ({
     handler(req, { log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() }, correlationId: 'corr_1' }),
   createLogger: vi.fn(() => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() })),
 }));
+vi.mock('@/repositories/orders-repository', () => ({ insertOrder: mocks.insertOrder }));
 vi.mock('@/lib/domain-events', () => ({ publish: mocks.publish }));
 vi.mock('@ima-jin/config', () => ({
   rateLimit: () => ({ limited: false }),
@@ -75,6 +77,7 @@ function callRoute(body: Record<string, unknown> = { eventId: 'evt_1', ticketTyp
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.getPayAppToken.mockResolvedValue('events-app-token');
+  mocks.insertOrder.mockReset().mockResolvedValue({});
   mocks.loadPublishedEvent.mockResolvedValue({
     event: { id: 'evt_1', did: EVENT_DID, title: EVENT_TITLE, creatorDid: ORGANIZER, metadata: { fair: FAIR } },
   });
@@ -94,6 +97,22 @@ afterEach(() => {
 });
 
 describe('POST /api/checkout — app-authenticated pay checkout (imajin-ai#2739)', () => {
+  it('does not invent a transaction reference when the kernel omits one', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: 'cs_legacy', url: 'https://stripe.test/cs_legacy' })));
+    expect((await callRoute()).status).toBe(200);
+    expect(mocks.insertOrder).toHaveBeenCalledWith(expect.objectContaining({
+      stripeSessionId: 'cs_legacy', metadata: {},
+    }));
+  });
+
+  it('does not expose a payable session if its local order cannot be persisted', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: 'cs_1', url: 'https://stripe.test/cs_1', transactionId: 'tx_1' })));
+    mocks.insertOrder.mockRejectedValue(new Error('storage unavailable'));
+    const result = await callRoute();
+    expect(result.status).toBe(500);
+    expect(await result.json()).toEqual({ error: 'Checkout failed' });
+    expect(mocks.publish).not.toHaveBeenCalled();
+  });
   it('calls pay /api/checkout with events’ app token as Bearer and the resolved payeeManifest', async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ id: 'cs_1', url: 'https://stripe.test/cs_1', transactionId: 'tx_1' })));
     globalThis.fetch = fetchMock as unknown as typeof fetch;
@@ -101,6 +120,9 @@ describe('POST /api/checkout — app-authenticated pay checkout (imajin-ai#2739)
     const res = await callRoute();
 
     expect(res.status).toBe(200);
+    expect(mocks.insertOrder).toHaveBeenCalledWith(expect.objectContaining({
+      stripeSessionId: 'cs_1', status: 'pending', metadata: { kernelTransactionId: 'tx_1' },
+    }));
     expect(await res.json()).toEqual({ url: 'https://stripe.test/cs_1', sessionId: 'cs_1' });
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe('https://pay.test/pay/api/checkout');

@@ -18,6 +18,7 @@ import {
   profileMap,
   resetResolveRouteMocks,
   resolveProfilesMock,
+  lookupOrderPaymentsMock,
   getSurveyResponsesForTicketsMock,
   surveyMap,
   testReturns401WhenAuthFails,
@@ -30,7 +31,9 @@ import { GET } from '../../app/api/events/[id]/sales/route';
 
 const makeRequest = (query = '') => makeEventRequest('sales', query);
 
-const EVENT_ROW = { id: EVENT_ID, title: 'Test Event', currency: 'CAD' };
+const SELLER_DID = 'did:imajin:event-creator';
+const EVENT_ROW = { id: EVENT_ID, title: 'Test Event', currency: 'CAD', creator_did: SELLER_DID };
+const PAYMENT = { transactionId: 'tx_1', sessionId: 'cs_1', metadata: { orderId: 'ord_1', service: 'events' } };
 const ORPHAN_OWNER_DID = 'did:imajin:orphan-owner';
 
 const ORDER_ROW = {
@@ -78,6 +81,7 @@ describe('GET .../sales — batched identity resolution (#1998)', () => {
     nextSql([EVENT_ROW]);
     nextSql([ORDER_ROW]);
     nextSql([ORPHAN_ROW]);
+    lookupOrderPaymentsMock.mockResolvedValue([PAYMENT]);
     resolveProfilesMock
       .mockResolvedValueOnce(profileMap(BUYER_PROFILE))
       .mockResolvedValueOnce(profileMap(ORPHAN_PROFILE));
@@ -97,8 +101,7 @@ describe('GET .../sales — batched identity resolution (#1998)', () => {
       buyerEmail: 'buyer@example.com',
       amountTotal: 5000,
       status: 'completed',
-      // gap(kernel): no public per-order pay route, so no payment id on order sales.
-      paymentId: null,
+      paymentId: 'tx_1',
     });
     expect(findSale(json, 'tkt_orphan')).toMatchObject({
       buyerName: 'Orphan Owner',
@@ -108,6 +111,7 @@ describe('GET .../sales — batched identity resolution (#1998)', () => {
       status: 'completed',
     });
     expect(json.summary).toMatchObject({ totalSales: 2, totalRevenue: 7500, avgOrderValue: 3750 });
+    expect(lookupOrderPaymentsMock).toHaveBeenCalledWith(SELLER_DID, ['cs_1']);
   });
 
   it('orders the unified sales list newest first', async () => {
@@ -154,6 +158,7 @@ describe('GET .../sales — batched identity resolution (#1998)', () => {
     nextSql([ORDER_ROW]);
     nextSql([]); // no orphans
     resolveProfilesMock.mockResolvedValueOnce(profileMap(BUYER_PROFILE));
+    lookupOrderPaymentsMock.mockResolvedValue([PAYMENT]);
 
     const res = await GET(makeRequest('?format=csv'), ROUTE_PARAMS);
     const text = await res.text();
@@ -164,6 +169,7 @@ describe('GET .../sales — batched identity resolution (#1998)', () => {
     expect(text).toContain('Buyer Name');
     expect(text).toContain('buyer-handle');
     expect(text).toContain('General (1)');
+    expect(text).toContain('ord_1,tx_1,');
   });
 
   it('uses the spreadsheet content type and .xlsx filename when format=xlsx', async () => {

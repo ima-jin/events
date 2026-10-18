@@ -1,4 +1,6 @@
 import { serviceUrl } from '@/lib/kernel';
+import { randomUUID } from 'node:crypto';
+import { insertOrder } from '@/repositories/orders-repository';
 /**
  * POST /api/checkout
  *
@@ -169,6 +171,26 @@ export const POST = withLogger('events', async (request, { log, correlationId })
 
     if ('error' in payResult) return payFailureResponse(payResult);
     const { checkout } = payResult;
+    // Save the kernel-owned reference before the browser can complete payment.
+    // Neither webhook metadata nor a Stripe session is a substitute for it.
+    await insertOrder({
+      id: `ord_${randomUUID()}`,
+      eventId: event.id,
+      buyerDid: buyerDid ?? null,
+      buyerEmail: customerEmail ?? null,
+      ticketTypeId: cart.length === 1 ? cart[0].ticketTypeId : null,
+      quantity: totalQuantity,
+      amountTotal: totalStripeCheckoutItems(stripeItems),
+      currency: cartCurrency.toUpperCase(),
+      paymentMethod: 'stripe',
+      stripeSessionId: checkout.id,
+      status: 'pending',
+      metadata: {
+        ...(typeof checkout.transactionId === 'string' && checkout.transactionId.trim()
+          ? { kernelTransactionId: checkout.transactionId }
+          : {}),
+      },
+    });
 
     publish('ticket.purchase', {
       issuer: buyerDid || '',

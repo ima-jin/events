@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { createLogger, type Logger } from '@ima-jin/logger';
 import type { NewOrder, Order, Ticket, TicketType } from '@/db/schema';
 import { publish } from '@/lib/domain-events';
-import { findOrderById, insertOrder, markOrderRefunded } from '@/repositories/orders-repository';
+import { completeHostedOrder, findOrderById, insertOrder, markOrderRefunded } from '@/repositories/orders-repository';
 import { decrementSold, incrementSold } from '@/repositories/ticket-types-repository';
 import {
   findRefundableTicketsByOrder,
@@ -28,6 +28,8 @@ const log = createLogger('events');
 
 export interface CreateOrderWithTicketsParams {
   orderId?: string;
+  /** Pending app-owned checkout row, loaded by the verified payment webhook. */
+  hostedOrder?: Order;
   eventId: string;
   buyerDid: string;
   buyerEmail?: string;
@@ -127,10 +129,10 @@ function signingContext(params: CreateOrderWithTicketsParams): TicketSigningCont
   return { eventId, eventDid, eventPrivateKey, log: callerLog };
 }
 
-async function insertTicketsForCart(
+async function buildTicketsForCart(
   order: Order,
   params: CreateOrderWithTicketsParams,
-): Promise<Ticket[]> {
+): Promise<TicketInsert[]> {
   const { cart, typesById, ticketStatus, customerEmail } = params;
   const pending = cart.flatMap((item) =>
     Array.from({ length: item.quantity }, () => ({ item, tt: typesById.get(item.ticketTypeId)! })),
@@ -145,7 +147,7 @@ async function insertTicketsForCart(
         customerEmail,
         signingContext(params),
       );
-      return insertTicket(buildTicketInsertValues(ticketId, item, tt, order, signature, params));
+      return buildTicketInsertValues(ticketId, item, tt, order, signature, params);
     }),
   );
 }
@@ -166,10 +168,18 @@ async function incrementSoldCounts(cart: CartItem[]): Promise<void> {
 export async function createOrderWithTickets(
   params: CreateOrderWithTicketsParams,
 ): Promise<CreateOrderWithTicketsResult> {
-  const orderId = params.orderId ?? generateOrderId();
-
-  const order = await insertOrder(buildOrderInsertValues(orderId, params));
-  const createdTickets = await insertTicketsForCart(order, params);
+  const orderId = params.hostedOrder?.id ?? params.orderId ?? generateOrderId();
+  const values = buildOrderInsertValues(orderId, params);
+  if (params.hostedOrder) {
+    values.metadata = { ...params.orderMetadata, ...(params.hostedOrder.metadata as Record<string, unknown>) };
+    // Resolve all signatures before the transaction. A signing failure leaves
+    // the pending checkout untouched and a verified redelivery can try again.
+    const ticketValues = await buildTicketsForCart(params.hostedOrder, params);
+    return completeHostedOrder(orderId, values, ticketValues, params.incrementSold ? params.cart : []);
+  }
+  const order = await insertOrder(values);
+  const ticketValues = await buildTicketsForCart(order, params);
+  const createdTickets = await Promise.all(ticketValues.map((ticket) => insertTicket(ticket)));
 
   if (params.incrementSold) {
     await incrementSoldCounts(params.cart);
@@ -186,7 +196,7 @@ export interface RefundOrderInput {
   orderId: string;
   /** DID of the organizer issuing the refund. */
   actorDid: string;
-  /** The caller's session cookie, forwarded for the co-host pod-membership check. */
+  /** Legacy caller context only; co-host membership uses kernel app authorization. */
   callerCookie?: string | null;
 }
 

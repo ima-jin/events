@@ -8,9 +8,10 @@ export type OrganizerCheck = { authorized: true; role: 'creator' | 'cohost' } | 
  * (an active member of the event's kernel pod, resolved through the kernel's
  * public pod API — never a kernel database).
  *
- * `callerCookie` is the caller's own session cookie, forwarded to the kernel's
- * session-authenticated pod-membership route (see `isPodMember`); an
- * app-token-only caller passes nothing and fails closed for co-host checks.
+ * Membership reads use app authorization, operator-approved connections:read
+ * scope and the pod owner's active grant. The optional `callerCookie` is
+ * retained for compatibility only and ignored by `isPodMember`; missing app
+ * entitlement or failed membership reads deny co-host access.
  */
 export async function isEventOrganizer(
   eventId: string,

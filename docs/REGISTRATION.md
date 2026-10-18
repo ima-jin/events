@@ -108,6 +108,37 @@ Approve `notify:broadcast` for events' app DID through `apps:service-scopes` on 
 The app never uses a kernel-internal contact credential: optional reply-to email comes from
 the public profile resolver and is omitted when not visible.
 
+## Scoped kernel reads and private onboarding
+
+Before deploying the events#70 consumers, the **operator**, not the coding agent, must:
+
+- Deploy the public contracts from kernel PRs #2910, #2911, #2913 and #2914.
+  Pod reads remain unavailable until #2911 has merged and deployed.
+- Approve `pay:read`, `connections:read`, `profile:email:read`,
+  `profile:contact:backfill` and `onboard:send` for the existing events app DID
+  through the existing countersigned `apps:service-scopes` proposal/card.
+  Preserve the app's existing payment/notification approvals.
+- Refresh the existing cached app-service token after approval (or restart through
+  the normal operator deploy path). No new key, shared secret or environment credential.
+- Include `profile:email:read` and `profile:contact:backfill` in the registered
+  requested scopes for the existing per-user OAuth authorization flow.
+- Obtain each **pod owner's** active `connections:read` OAuth grant for this exact
+  events app. A member's consent, same registry owner or session cookie is insufficient.
+  Group/business pods without a supported owner-consent path remain closed.
+- Obtain `onboard:send` owner OAuth consent when the checkout seller differs from the
+  app's registry owner. The kernel must independently recognize the completed app-bound checkout.
+- For profile email/backfill, obtain the target person's actual exact-scope OAuth consent
+  unless a qualifying completed payment is bound to both this app and that payer DID.
+  Ordinary events login does not create that grant; anonymous checkouts commonly have
+  `fromDid=NULL`, and ticket metadata/email matches must not bypass the person gate.
+
+Unapproved scopes, revoked grants and unsupported resources fail closed/best-effort.
+Do not silently enroll anonymous/free-RSVP users, forward cookies to bypass refusal, or
+make these scopes globally service-eligible. Onboarding never returns a token to events.
+Do not automatically retry 403/404/5xx or 429 private delivery attempts; `Retry-After`
+must elapse before any later operator-directed attempt. The app records an attempt before
+delivery and does not automatically retry it, including unknown 5xx outcomes.
+
 ## Kernel callback registration
 
 The kernel signs; events verifies with the published `@ima-jin/auth/kernel-webhook` **0.8.18**.

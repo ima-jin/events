@@ -44,6 +44,7 @@ const hoisted = vi.hoisted(() => {
     sqlMock,
     isEventOrganizerMock: vi.fn(),
     resolveProfilesMock: vi.fn(),
+    lookupOrderPaymentsMock: vi.fn(),
     getSurveyResponsesForTicketsMock: vi.fn(),
     getSurveyFormsMock: vi.fn(),
   };
@@ -52,6 +53,7 @@ const hoisted = vi.hoisted(() => {
 export const {
   isEventOrganizerMock,
   resolveProfilesMock,
+  lookupOrderPaymentsMock,
   getSurveyResponsesForTicketsMock,
   getSurveyFormsMock,
 } = hoisted;
@@ -71,10 +73,11 @@ vi.mock('@/services/authorization', () => ({
   isEventOrganizer: hoisted.isEventOrganizerMock,
 }));
 
-// Only `resolveProfiles` is replaced; the rest of `@/lib/kernel` is real.
+// Reporting lookups are replaced; the rest of `@/lib/kernel` is real.
 vi.mock('@/lib/kernel', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/kernel')>()),
   resolveProfiles: hoisted.resolveProfilesMock,
+  lookupOrderPayments: hoisted.lookupOrderPaymentsMock,
 }));
 
 vi.mock('@/lib/surveys', () => ({
@@ -100,6 +103,7 @@ export function resetResolveRouteMocks(): void {
   hoisted.queue.length = 0;
   isEventOrganizerMock.mockReset().mockResolvedValue({ authorized: true, role: 'creator' });
   resolveProfilesMock.mockReset().mockResolvedValue(new Map());
+  lookupOrderPaymentsMock.mockReset().mockResolvedValue([]);
   getSurveyResponsesForTicketsMock.mockReset().mockResolvedValue(new Map());
   getSurveyFormsMock.mockReset().mockResolvedValue(new Map());
 }
@@ -138,6 +142,7 @@ export function testReturns401WhenAuthFails(GET: EventRouteHandler, makeRequest:
     expect(res.status).toBe(401);
     expect(await res.json()).toEqual({ error: 'Unauthorized' });
     expect(isEventOrganizerMock).not.toHaveBeenCalled();
+    expect(lookupOrderPaymentsMock).not.toHaveBeenCalled();
   });
 }
 
@@ -149,6 +154,7 @@ export function testReturns403ForNonOrganizer(GET: EventRouteHandler, makeReques
     expect(res.status).toBe(403);
     expect(await res.json()).toEqual({ error: 'Forbidden' });
     expect(resolveProfilesMock).not.toHaveBeenCalled();
+    expect(lookupOrderPaymentsMock).not.toHaveBeenCalled();
   });
 }
 
@@ -158,6 +164,7 @@ export function testReturns404WhenEventNotFound(GET: EventRouteHandler, makeRequ
 
     const res = await GET(makeRequest(), ROUTE_PARAMS);
     expect(res.status).toBe(404);
+    expect(lookupOrderPaymentsMock).not.toHaveBeenCalled();
   });
 }
 

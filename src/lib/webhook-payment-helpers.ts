@@ -4,7 +4,6 @@
  */
 
 import type { Logger } from '@ima-jin/logger';
-import { publicServiceUrl } from '@/lib/kernel';
 import { publish } from '@/lib/domain-events';
 import { eventUrl, buildPublicUrlAbsolute } from '@ima-jin/config';
 import { generateQRCode } from '@/lib/email';
@@ -129,7 +128,6 @@ export async function publishConfirmationEmails(params: ConfirmationEmailParams)
   } = params;
 
   const EVENTS_URL = buildPublicUrlAbsolute('events');
-  const AUTH_URL = publicServiceUrl('auth');
   const eventDate = new Date(event.startsAt);
   const formattedEventDate = eventDate.toLocaleDateString('en-US', {
     weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
@@ -161,7 +159,7 @@ export async function publishConfirmationEmails(params: ConfirmationEmailParams)
   if (bundleTickets.length > 0) {
     await publishBundleConfirmation({
       customerEmail, ownerDid, event, firstTypeName, bundleTickets, currency,
-      formattedEventDate, formattedEventTime, magicLink, eventImageUrl, EVENTS_URL, AUTH_URL, log,
+      formattedEventDate, formattedEventTime, magicLink, eventImageUrl, EVENTS_URL, log,
     });
   }
 }
@@ -233,7 +231,6 @@ interface BundleConfirmParams {
   magicLink?: string;
   eventImageUrl?: string;
   EVENTS_URL: string;
-  AUTH_URL: string;
   log: Logger;
 }
 

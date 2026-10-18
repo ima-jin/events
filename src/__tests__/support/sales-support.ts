@@ -18,7 +18,7 @@ export const ORPHAN_OWNER_DID = 'did:imajin:orphan-owner';
 export const COOKIE = 'session=abc';
 
 export function salesEvent(overrides: Partial<SalesEventRow> = {}): SalesEventRow {
-  return { id: 'evt_1', title: 'Test Event', currency: 'CAD', ...overrides };
+  return { id: 'evt_1', title: 'Test Event', currency: 'CAD', creator_did: ORGANIZER_DID, ...overrides };
 }
 
 export function orderSaleRow(overrides: Partial<OrderSaleRow> = {}): OrderSaleRow {

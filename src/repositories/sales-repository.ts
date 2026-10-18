@@ -4,11 +4,12 @@ import type { DateLike } from '@/repositories/guests-repository';
 /** postgres.js returns COUNT/SUM aggregates as strings (bigint/numeric), plain ints as numbers. */
 export type NumericLike = number | string;
 
-/** The event columns the sales reports need (filename + currency fallback). */
+/** Stored seller plus the event filename and currency fallback for sales reports. */
 export interface SalesEventRow {
   id: string;
   title: string | null;
   currency: string | null;
+  creator_did: string | null;
 }
 
 /** One order x ticket row of the sales report (an order with no tickets yet has null ticket columns). */
@@ -79,11 +80,11 @@ export interface AdminEventRow {
   surveys_completed: NumericLike;
 }
 
-/** The id/title/currency of an event, or null when it does not exist. */
+/** Event sales context, including the stored checkout seller, or null when missing. */
 export async function getSalesEvent(eventId: string): Promise<SalesEventRow | null> {
   const sql = getClient();
   const [event] = await sql<SalesEventRow[]>`
-    SELECT id, title, currency FROM events.events WHERE id = ${eventId} LIMIT 1
+    SELECT id, title, currency, creator_did FROM events.events WHERE id = ${eventId} LIMIT 1
   `;
   return event ?? null;
 }
@@ -109,6 +110,7 @@ export function listOrderSaleRows(eventId: string): Promise<OrderSaleRow[]> {
     LEFT JOIN events.tickets t ON t.order_id = o.id
     LEFT JOIN events.ticket_types tt ON tt.id = t.ticket_type_id
     WHERE o.event_id = ${eventId}
+      AND (o.status <> 'pending' OR COALESCE(o.payment_method, '') NOT IN ('stripe', 'stripe-byo'))
     ORDER BY o.created_at DESC, t.created_at ASC
   `;
 }
@@ -154,6 +156,7 @@ export function listExportOrderRows(eventId: string): Promise<ExportOrderRow[]> 
     FROM events.orders o
     JOIN events.ticket_types tt ON o.ticket_type_id = tt.id
     WHERE o.event_id = ${eventId}
+      AND (o.status <> 'pending' OR COALESCE(o.payment_method, '') NOT IN ('stripe', 'stripe-byo'))
     ORDER BY o.purchased_at DESC NULLS LAST, o.created_at DESC
   `;
 }

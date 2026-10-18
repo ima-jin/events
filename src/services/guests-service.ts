@@ -279,10 +279,10 @@ export async function buildGuestCsv(
   return { filename: safeFilename(event), content: CSV_BOM + lines.join('') };
 }
 
-/** Co-hosted events (the caller's kernel pods); a kernel/db failure is non-fatal. */
-async function listCohostEvents(callerCookie: string | null | undefined, now: Date): Promise<AttendingEventRow[]> {
+/** Co-hosted events for the explicit DID; a kernel/db failure is non-fatal. */
+async function listCohostEvents(ownerDid: string, now: Date): Promise<AttendingEventRow[]> {
   try {
-    const podIds = await listMemberPodIds(callerCookie);
+    const podIds = await listMemberPodIds(ownerDid);
     return podIds.length === 0 ? [] : await listPodEvents(podIds, now);
   } catch (err) {
     log.warn({ err: String(err) }, 'Failed to fetch cohost events (non-fatal)');
@@ -316,16 +316,22 @@ function toAttendingEvent(row: AttendingEventRow): AttendingEvent {
  * Upcoming events `ownerDid` is attending, hosting or co-hosting. Invite-only
  * events show up only for the owner's own (created / co-hosted) events or when
  * `viewerDid` also holds a ticket.
+ * The optional cookie is retained for compatibility only; membership reads
+ * use app authorization and the explicit owner DID, not the viewer's session.
  */
-export async function listAttendingEvents(
+export function listAttendingEvents(
   ownerDid: string,
   viewerDid: string | null,
   callerCookie?: string | null,
+): Promise<AttendingEvent[]>;
+export async function listAttendingEvents(
+  ownerDid: string,
+  viewerDid: string | null,
 ): Promise<AttendingEvent[]> {
   const now = new Date();
   const ticketed = await listTicketedEvents(ownerDid, now);
   const created = await listCreatedEvents(ownerDid, now);
-  const cohosted = await listCohostEvents(callerCookie, now);
+  const cohosted = await listCohostEvents(ownerDid, now);
 
   const all = dedupeByEvent([...ticketed, ...created, ...cohosted]);
   const publicEvents = all.filter((r) => r.accessMode === 'public');
