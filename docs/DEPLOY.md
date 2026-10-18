@@ -1,10 +1,8 @@
 # Deploying events (dev + prod)
-**Vault-only release (#61): do not execute the legacy deploy/soak/rollback commands below.**
-Normal startup now runs `scripts/start.ts` with `--import=tsx` and requires the operator-supplied
-vault credential before importing Next. The legacy maintenance steps below still expect an
-env-based database handoff and the old listener definition. Adapt and rehearse them only in
-the separately coordinated cutover (imajin-ai#2241 / #2516); do not put a credential in
-`.env.local` or a shell to bypass that boundary. This PR performs no deployment.
+Normal startup runs `scripts/start.ts` with `--import=tsx` and requires the operator-supplied
+vault credential before importing Next. Both deploy-path database runners also fetch through
+the app keystore, never a database env entry. This PR performs no deployment.
+Production cutover remains separately coordinated under imajin-ai#2516.
 
 Refs ima-jin/imajin-ai#2518; this change prepares deployment only. Ryan mints the app identity through
 the kernel claim flow; dev/prod cutover remains in #2529/#2516.
@@ -25,10 +23,13 @@ the persisted process list still referenced the old checkouts.
 ## One command per environment
 
 **Upgrade order (each environment separately):** deploy a kernel that includes
-ima-jin/imajin-ai#2801, then select **Sync manifest secrets** on `/jin` and countersign
+ima-jin/imajin-ai#2801 and PR #2851, then select **Sync manifest secrets** on `/jin` and countersign
 events' `imajin.app.json` declarations **before upgrading this app**. Skipping that
 order makes a claimed app fail closed at boot with exit status 1. Fresh provision/claim
-issues and seals the declarations through the kernel. No deployment is performed by this PR.
+issues and seals kernel-issued declarations. No deployment is performed by this PR.
+For the operator-supplied database declaration, use **App secrets set** (or **App secrets rotate**)
+and obtain the owner's countersign through the approved private tool. Sync does not generate it.
+Never copy a server credential through a shell, SSH or an env file.
 
 On the **ProLiant kernel host**, as its existing `jin` process-manager user, from the target
 standalone checkout:
@@ -52,14 +53,18 @@ refuses a same-named pm2 entry with a different cwd or executable. It prints no 
 2. Clear inherited contract variables so `.env.local` is authoritative; fetch/check out ref.
 3. `node scripts/check-env.mjs <dev|prod>` checks required variables, target URLs,
    `0600` files, disabled ticket migration, and forbidden key/logging vars. Without a
-   keystore it only warns: claim at `/events/claim` after boot.
+   keystore it only warns, but migrations and normal startup fail closed: complete the
+   explicit claim-only onboarding below before attempting deploy.
 4. `pnpm install --frozen-lockfile` installs only this repo's published dependencies.
 5. Build with `.env.local` loaded. `NEXT_PUBLIC_*` changes always require this rebuild.
-6. Run `scripts/migrate-baseline.mjs`, then drizzle migrate with the same env file.
+6. Run `scripts/migrate-baseline.mjs`, then `scripts/migrate.mjs` with `--import=tsx`.
+   Both independently call the published `loadFromVault` with key `DATABASE_URL`,
+   `onMissing: 'fail'`, app DID, kernel URL and bootstrap keystore. Connection values remain
+   in memory. The second script uses the programmatic Drizzle migrator with migration
+   history confined to `events`; neither reads `DATABASE_URL` from env.
 7. Start/restart only `<env>-events` using this repo's ecosystem file; **`pm2 save`**.
-   Without a keystore, the server boots unclaimed. The operator claims only at
-   `/events/claim`; the published SDK persists the bootstrap keystore and activates
-   the app immediately, without an env edit or restart.
+   The listener uses the typed pre-import vault boundary. Without its credential
+   it never imports the server. No automatic unclaimed production listener is opened.
 8. Poll loopback `/events/api/health` for `status: ok`, `service: imajin-events`.
 
 Any failure before step 7 leaves pm2 alone. This is an in-place build, **not an atomic
@@ -93,12 +98,17 @@ registered scopes. Do not use the legacy registry create response that exposes a
 See [REGISTRATION.md](./REGISTRATION.md).
 
 - Put `IMAJIN_APP_DID` and `NEXT_PUBLIC_IMAJIN_APP_ID` (registry id) in the target checkout's
-  `.env.local` via a private editor. After boot, paste the one-time operator code
+  `.env.local` via a private editor. For first claim, install/build and use `pnpm claim`
+  (optionally `PORT` as a non-secret process setting) before running deployment.
+  Paste the one-time operator code
   from `/jin` only at `/events/claim`, never into an environment file or shell.
 - Use `IMAJIN_APP_KEYSTORE=/home/jin/.imajin/events.dev.keystore.json` or
   `/home/jin/.imajin/events.prod.keystore.json`. Prepare a private parent directory
   (`0700`) owned by `jin`. The SDK writes the bootstrap keystore `0600`; the actual
   app signing key stays memory-only. Preserve the keystore across deploys.
+- Stop the isolated claim-only listener after claim; its ordinary routes and health
+  stay unavailable. Complete database **App secrets set** plus owner countersign on `/jin`,
+  then use the normal deploy path. First claim needs no database credential or migration.
 - Subsequent boots authenticate with the keystore. Loss requires operator approval with
   `reissueClaim: true`, not hand-made replacement keys.
 - The operator must approve `pay:settle`, `pay:refund` and `pay:charge-pledges` for events'
@@ -134,11 +144,14 @@ The kernel signs callbacks; events verifies public keys, with no shared callback
 Before changing pm2:
 
 ```bash
-node --env-file=.env.local scripts/migrate-baseline.mjs --dry-run
+node --import=tsx --env-file=.env.local scripts/migrate-baseline.mjs --dry-run
 ```
 
 This validates without recording history. A refusal is a hard stop; no destructive
 repair, no migration SQL rewrite, no force flag.
+`MIGRATIONS_TEST_DATABASE_URL` is only for disposable test/CI databases, additionally
+requiring `NODE_ENV=test` or `CI=true`. The deploy preflight forbids that input and clears
+an inherited override; it cannot substitute for vault provisioning.
 
 ## One-time cutover — deferred to #2529 / #2516
 existing ticket QRs are invalidated at cutover; no reissue
@@ -199,6 +212,11 @@ Public checks: `https://dev-jin.imajin.ai/events/api/health` and
 `https://jin.imajin.ai/events/api/health`.
 
 ## Prod cutover quick reference
+The non-deploy soak/rollback utilities below still have a historical env-based database
+tracking interface and listener assumptions. Do not use them with this vault-only release
+until their adaptation is reviewed and rehearsed in the coordinated imajin-ai#2516 cutover.
+Never add a credential to env to make a legacy utility work. The deploy-path baseline and
+programmatic migration runners above are already vault-aware.
 
 Run only in Ryan's approved prod cutover window, as the existing process-manager user.
 Complete [SOAK.md — Record, rollback, rehearse](./SOAK.md#record-rollback-rehearse)

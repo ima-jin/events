@@ -25,21 +25,27 @@ Concretely, for this app:
   would orphan every existing migration's tracking state.
 
 ## Workflow
-The commands below describe the legacy maintenance tooling, not authorization to use it
-with deployed credentials. This app-only vault adoption does not port database maintenance,
-soak or rollback tools. Their env-based credential handoff must be reviewed separately
-under imajin-ai#2241 / #2516 before cutover. Never populate a server env file, shell or
-command with a real database credential to make those tools work.
+The baseline and programmatic migration runners load the operator-supplied database
+credential through the published `loadFromVault`, using the app DID, kernel URL and bootstrap
+keystore with key `DATABASE_URL`, `onMissing: 'fail'`. Neither reads a database credential
+from env. Provision through `/jin` **App secrets set/rotate** and owner countersign first.
+Never populate a server env file, shell or command with a real database credential.
 
 ```bash
 pnpm db:generate   # diff src/db/schema.ts against migrations/ and write new SQL
-pnpm db:migrate     # apply pending migrations in migrations/ to DATABASE_URL
-pnpm db:studio      # browse this app's own schema
+pnpm db:migrate    # vault fetch, then programmatic Drizzle migrator for events only
 ```
 
 `migrations/` is committed. `drizzle.config.ts` scopes `drizzle-kit` to `APP_DB_SCHEMA` only
 (`schemaFilter`), so `pnpm db:generate` can never emit a migration for a table outside this
 app's own schema.
+Generation does not need a database connection. `db:studio` is restricted to disposable
+test/CI databases, not deployed credentials.
+
+Only explicit `MIGRATIONS_TEST_DATABASE_URL` plus `NODE_ENV=test` or `CI=true` may bypass
+the vault in isolated tests/CI. `DATABASE_URL` is ignored even there. Deploy preflight
+forbids the test override and clears inherited copies. CI's migration job uses only its
+dedicated disposable database; no deployed values are available to that job.
 
 ## The events baseline (ima-jin/imajin-ai#2514)
 
@@ -69,8 +75,8 @@ are rewritten by adoption.
 Use this app's own database credential, scoped to `events`, and review a dry run first:
 
 ```bash
-node --env-file=.env.local scripts/migrate-baseline.mjs --dry-run
-node --env-file=.env.local scripts/migrate-baseline.mjs
+node --import=tsx --env-file=.env.local scripts/migrate-baseline.mjs --dry-run
+node --import=tsx --env-file=.env.local scripts/migrate-baseline.mjs
 pnpm db:migrate
 ```
 

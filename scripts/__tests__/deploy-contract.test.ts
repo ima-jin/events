@@ -1,36 +1,18 @@
 import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseEnv } from 'node:util';
 import { describe, expect, it } from 'vitest';
 import { checkFile, ENV_NAMES, validateEnvironment } from '../check-env.mjs';
+import { validEnv } from './support/deploy-env';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const read = (file: string) => readFileSync(join(root, file), 'utf8');
 const require = createRequire(import.meta.url);
 
-function validEnv(target = 'dev'): Record<string, string> {
-  const host = target === 'dev' ? 'dev-jin.imajin.ai' : 'jin.imajin.ai';
-  const base = `https://${host}`;
-  return {
-    APP_DB_SCHEMA: 'events',
-    IMAJIN_KERNEL_URL: base,
-    IMAJIN_AUTH_URL: base,
-    AUTH_SERVICE_URL: `${base}/auth`,
-    NEXT_PUBLIC_IMAJIN_AUTH_URL: base,
-    NEXT_PUBLIC_AUTH_URL: `${base}/auth`,
-    NEXT_PUBLIC_APP_URL: `${base}/events`,
-    NEXT_PUBLIC_EVENTS_URL: `${base}/events`,
-    NEXT_PUBLIC_BASE_PATH: '/events',
-    NEXT_PUBLIC_SERVICE_PREFIX: target === 'dev' ? 'dev-' : '',
-    IMAJIN_ENV: target === 'dev' ? 'dev' : '',
-    IMAJIN_APP_DID: 'did:imajin:fixture',
-    IMAJIN_APP_KEYSTORE: `/fixture/events.${target}.keystore.json`,
-  };
-}
 
 function sourceFiles(directory: string, extension = /\.(?:[cm]?js|tsx?)$/): string[] {
   const result: string[] = [];
@@ -107,7 +89,7 @@ describe('blank-valued env contract', () => {
     const docs = read('docs/ENVIRONMENTS.md');
     for (const name of ENV_NAMES) expect(docs, name).toContain(`\`${name}\``);
     const deployedNames = ENV_NAMES.filter((name: string) =>
-      !['PORT', 'NODE_ENV', 'NEXT_RUNTIME', 'IMAJIN_APP_PRIVATE_KEY', 'DATABASE_URL'].includes(name));
+      !['PORT', 'NODE_ENV', 'NEXT_RUNTIME', 'IMAJIN_APP_PRIVATE_KEY', 'DATABASE_URL', 'MIGRATIONS_TEST_DATABASE_URL'].includes(name));
     for (const file of ['.env.dev.example', '.env.prod.example']) {
       expect(Object.keys(parseEnv(read(file))).sort()).toEqual([...deployedNames].sort());
     }
@@ -122,6 +104,7 @@ describe('deploy workflow with sandboxed command fixtures', () => {
     const calls = join(home, 'calls');
     for (const dir of [bin, join(checkout, 'scripts'), join(checkout, 'node_modules/next/dist/bin'),
       join(checkout, 'node_modules/drizzle-kit')]) mkdirSync(dir, { recursive: true });
+    symlinkSync(realpathSync(join(root, 'node_modules/tsx')), join(checkout, 'node_modules/tsx'), 'dir');
     for (const file of ['scripts/deploy.sh', 'scripts/check-env.mjs', '.env.example']) {
       writeFileSync(join(checkout, file), read(file));
     }
@@ -131,12 +114,13 @@ describe('deploy workflow with sandboxed command fixtures', () => {
     const recordNode = (name: string) => `
       const fs = process.getBuiltinModule("node:fs");
       if (process.env.IMAJIN_KERNEL_URL !== "https://dev-jin.imajin.ai") process.exit(3);
+      if (process.env.DATABASE_URL || process.env.MIGRATIONS_TEST_DATABASE_URL) process.exit(6);
       fs.appendFileSync(process.env.FIXTURE_CALLS, "${name}\\n");
       if (process.env.FIXTURE_FAIL === "${name}") process.exit(4);
     `;
     writeFileSync(join(checkout, 'node_modules/next/dist/bin/next'), recordNode('build'));
     writeFileSync(join(checkout, 'scripts/migrate-baseline.mjs'), recordNode('baseline'));
-    writeFileSync(join(checkout, 'node_modules/drizzle-kit/bin.cjs'), recordNode('migrate'));
+    writeFileSync(join(checkout, 'scripts/migrate.mjs'), recordNode('migrate'));
     const tool = (name: string, body: string) => writeFileSync(join(bin, name),
       `#!/usr/bin/env bash\n${body}\n`, { mode: 0o755 });
     tool('git', '[[ "$1" == status ]] || printf "git %s\\n" "$1" >> "$FIXTURE_CALLS"');
@@ -164,7 +148,7 @@ describe('deploy workflow with sandboxed command fixtures', () => {
   it('runs install/build/baseline/migrate before pm2 start/save with file-authoritative env', () => {
     const fixture = deploymentFixture();
     try {
-      const result = fixture.run();
+      const result = fixture.run({ MIGRATIONS_TEST_DATABASE_URL: 'FAKE_INHERITED_TEST_OVERRIDE', CI: 'true' });
       expect(result.stderr).toContain('No keystore found — claim at /events/claim after boot');
       expect(result.status).toBe(0);
       expect(readFileSync(fixture.calls, 'utf8').trim().split('\n')).toEqual([
@@ -282,7 +266,7 @@ describe('deploy environment guard', () => {
     }
   });
 
-  it.each(['DATABASE_URL', 'IMAJIN_APP_PRIVATE_KEY', 'AUTH_INTERNAL_API_KEY', 'PROFILE_INTERNAL_API_KEY',
+  it.each(['DATABASE_URL', 'MIGRATIONS_TEST_DATABASE_URL', 'IMAJIN_APP_PRIVATE_KEY', 'AUTH_INTERNAL_API_KEY', 'PROFILE_INTERNAL_API_KEY',
     'ENABLE_REQUEST_LOG', 'ENABLE_APP_LOG', 'LOG_DB_TRANSPORT', 'PORT', 'NODE_ENV', 'NEXT_RUNTIME'])(
     'refuses %s without leaking its value', (name) => {
       const problems = validateEnvironment({ ...validEnv(), [name]: 'never-print-fixture' }, 'dev');

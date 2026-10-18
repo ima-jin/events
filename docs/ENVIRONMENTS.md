@@ -106,6 +106,8 @@ See [DEPLOY.md](./DEPLOY.md#kernel-signed-callbacks) for rollout and trust requi
 ## Forbidden / framework-managed names (documented, never populated)
 - `DATABASE_URL`: vault-only operator-supplied credential, never a server env entry.
   The database role must be confined to `events`; see [REGISTRATION.md](./REGISTRATION.md).
+- `MIGRATIONS_TEST_DATABASE_URL`: forbidden on deployment. Only a disposable test/CI
+  runner with `NODE_ENV=test` or `CI=true` may explicitly opt in; runtime never consumes it.
 
 - `IMAJIN_APP_PRIVATE_KEY`: forbidden by instrumentation. The claim SDK fetches the signing
   key into memory; no raw key env, homemade keys or log output.

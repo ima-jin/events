@@ -73,7 +73,7 @@ For each environment, the **operator** uses the approved kernel `/jin` surface:
    with owner countersign through the approved private credential-entry tool.
    Never paste a value into chat, a command, a shell session, an env file or this manifest.
 3. Restart through the separately approved cutover procedure only after the declaration
-   is supplied. Production coordination remains imajin-ai#2241 / #2516, not this code change.
+   is supplied. Production coordination remains imajin-ai#2516, not this code change.
 
 The published `@ima-jin/auth-client@0.8.24` `createVaultBoot<ServerConfig>` calls the SDK's
 keystore-authenticated, encrypted `loadFromVault` fetch with `onMissing: 'fail'`.

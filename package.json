@@ -13,7 +13,7 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate",
+    "db:migrate": "node --env-file-if-exists=.env.local --import tsx scripts/migrate.mjs",
     "db:studio": "drizzle-kit studio"
   },
   "dependencies": {

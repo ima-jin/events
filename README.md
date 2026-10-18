@@ -50,9 +50,10 @@ Identity minting and cutover remain operator steps (ima-jin/imajin-ai#2518, #252
    [`docs/REGISTRATION.md`](./docs/REGISTRATION.md).
 4. **Prepare this app's own database** through the separately approved cutover procedure
    (its own Postgres schema only — see [`docs/MIGRATIONS.md`](./docs/MIGRATIONS.md)).
-   Do not use the legacy env-based migration/deploy tooling for the vault-only release.
+   Baseline and migration runners use the same app-keystore vault fetch, never database env.
    ```bash
    pnpm install
+   pnpm db:migrate
    ```
 5. **Run it**:
    ```bash
