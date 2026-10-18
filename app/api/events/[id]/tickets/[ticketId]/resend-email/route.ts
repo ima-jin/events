@@ -10,6 +10,7 @@ import { isEventOrganizer } from '@/lib/organizer';
 import { db, tickets, events, ticketTypes } from '@/db';
 import { generateQRCode } from '@/lib/email';
 import { publish } from '@/lib/domain-events';
+import { requestOrderOnboard } from '@/lib/order-onboard';
 
 import { eventUrl, eventRegisterUrl, eventMyTicketsUrl, buildPublicUrlAbsolute } from '@ima-jin/config';
 
@@ -104,10 +105,7 @@ async function resolveResendCustomerEmail(surveyResponse: ResendEmailContext['su
 /**
  * Deep link to the ticket's registration (or my-tickets) page for the email.
  *
- * gap(kernel): the kernel version minted an `auth.onboard_tokens` magic link
- * here so a soft-DID buyer could sign in from the email. A registered app
- * cannot mint one (see `createOnboardToken` in src/lib/kernel.ts), so the
- * email carries the plain deep link — the buyer signs in on arrival.
+ * Private onboarding is separate; this resend never reconstructs a credential URL.
  */
 function resendTicketLink(ctx: ResendEmailContext): string {
   const { ticket, event } = ctx;
@@ -232,6 +230,8 @@ export async function POST(
       .update(tickets)
       .set({ lastEmailSentAt: new Date(sentAt) })
       .where(eq(tickets.id, ticketId));
+
+    await requestOrderOnboard(ctx.ticket.orderId);
 
     return NextResponse.json({ success: true, email: redactEmail(customerEmail), lastEmailSentAt: sentAt });
   } catch (error) {

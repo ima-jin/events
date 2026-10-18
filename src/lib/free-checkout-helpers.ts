@@ -8,14 +8,13 @@ import { db, ticketTypes, tickets, eventInvites } from '@/db';
 import { eq, and, sql } from 'drizzle-orm';
 import { optionalAuth } from '@/lib/auth';
 import { resolveCheckoutIdentity } from '@/lib/checkout-common';
-import { eventUrl } from '@ima-jin/config';
+import { eventUrl, eventMyTicketsUrl, eventRegisterUrl } from '@ima-jin/config';
 import { generateQRCode } from '@/lib/email';
 import { publish } from '@/lib/domain-events';
-import { serviceUrl, createOnboardToken, getIdentityTier } from '@/lib/kernel';
+import { getIdentityTier } from '@/lib/kernel';
 import type { Logger } from '@ima-jin/logger';
 import type { TicketType, Ticket, EventInvite } from '@/db/schema';
 
-const AUTH_URL = (serviceUrl('auth') ?? '');
 
 // ---------------------------------------------------------------------------
 // Ticket type resolution
@@ -194,27 +193,6 @@ export async function createFreeTicket(params: CreateFreeTicketParams): Promise<
 // Confirmation email
 // ---------------------------------------------------------------------------
 
-/**
- * gap(kernel): a registered app cannot mint an onboard token (see
- * `createOnboardToken` in src/lib/kernel.ts), so the confirmation email goes
- * out without a magic link when none is available.
- */
-async function createFreeOnboardMagicLink(
-  email: string,
-  name: string | undefined,
-  redirectUrl: string,
-  context: string,
-  log: Logger,
-): Promise<string | undefined> {
-  try {
-    const token = await createOnboardToken();
-    return token ? `${AUTH_URL}/api/onboard/verify?token=${token}` : undefined;
-  } catch (err) {
-    log.error({ err: String(err), email, name, redirectUrl, context }, 'Onboard token creation failed (non-fatal)');
-    return undefined;
-  }
-}
-
 function resolveFreeEventImageUrl(imageUrl: string | null | undefined, eventsBase: string): string | undefined {
   if (!imageUrl) return undefined;
   return imageUrl.startsWith('http') ? imageUrl : `${eventsBase}${imageUrl}`;
@@ -229,7 +207,7 @@ export interface FreeConfirmationParams {
     isVirtual?: boolean | null;
     venue?: string | null;
   };
-  ticketType: { name: string };
+  ticketType: { name: string; requiresRegistration?: boolean };
   ticketId: string;
   ownerDid: string;
   ownerEmail: string;
@@ -239,11 +217,11 @@ export interface FreeConfirmationParams {
 }
 
 /**
- * Send the RSVP confirmation email (with QR code + magic link). Fire-and-forget
+ * Send the RSVP confirmation email (with QR code + ordinary ticket CTA). Fire-and-forget
  * — failures are logged, not thrown.
  */
 export async function sendFreeConfirmationEmail(params: FreeConfirmationParams): Promise<void> {
-  const { event, ticketType, ticketId, ownerDid, ownerEmail, name, eventsUrl, log } = params;
+  const { event, ticketType, ticketId, ownerDid, ownerEmail, eventsUrl, log } = params;
 
   try {
     const eventDate = new Date(event.startsAt);
@@ -254,13 +232,9 @@ export async function sendFreeConfirmationEmail(params: FreeConfirmationParams):
       hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
     });
 
-    const magicLink = await createFreeOnboardMagicLink(
-      ownerEmail,
-      name,
-      eventUrl(eventsUrl, event.id),
-      `access your RSVP for ${event.title}`,
-      log,
-    );
+    const magicLink = ticketType.requiresRegistration
+      ? eventRegisterUrl(eventsUrl, event.id, ticketId)
+      : eventMyTicketsUrl(eventsUrl, event.id);
 
     const qrCodeDataUri = await generateQRCode(ticketId);
     const eventImageUrl = resolveFreeEventImageUrl(event.imageUrl, eventsUrl);

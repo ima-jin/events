@@ -16,7 +16,7 @@ import {
 } from '@/__tests__/support/orders-support';
 
 const kernel = vi.hoisted(() => ({
-  createOnboardToken: vi.fn(),
+  sendOrderOnboard: vi.fn(),
   resolveProfiles: vi.fn(),
   publicServiceUrl: () => 'https://kernel.test/auth',
 }));
@@ -41,12 +41,12 @@ vi.mock('@/repositories/ticket-types-repository', async () =>
   (await import('@/__tests__/support/orders-support')).ticketTypesRepositoryMock(),
 );
 
-import { findOrderById } from '@/repositories/orders-repository';
+import { claimOrderOnboard, findOrderById } from '@/repositories/orders-repository';
 import { findTicketTypesByIds } from '@/repositories/ticket-types-repository';
 import { sendConfirmationEmails } from '@/services/order-confirmation-emails';
 
 const MY_TICKETS = `https://events.test/e/${EVENT_ID}/my-tickets`;
-const MAGIC_LINK = 'https://kernel.test/auth/api/onboard/verify?token=tok_1';
+const MAGIC_LINK = MY_TICKETS;
 
 function payloadOf(type: string): Record<string, unknown> {
   const call = publishMock.mock.calls.find(([eventType]) => eventType === type);
@@ -59,7 +59,7 @@ function stubProfile(email: string | null, displayName: string | null = 'Bea Buy
 
 beforeEach(() => {
   resetOrdersMocks();
-  kernel.createOnboardToken.mockReset().mockResolvedValue('tok_1');
+  kernel.sendOrderOnboard.mockReset().mockResolvedValue(true);
   stubProfile(BUYER_EMAIL);
   generateQRCode.mockReset().mockResolvedValue('data:qr');
   vi.mocked(findOrderById).mockResolvedValue(makeOrder());
@@ -78,6 +78,20 @@ describe('sendConfirmationEmails — buyer contact', () => {
       'No buyer email available on EMT confirm; skipping receipt + ticket emails',
     );
     expect(publishMock).not.toHaveBeenCalled();
+  });
+
+  it('does not call private onboarding for an order without a stored eligible reference', async () => {
+    vi.mocked(claimOrderOnboard).mockResolvedValueOnce(null);
+    await sendConfirmationEmails(makeEvent(), [makeTicket()], ORDER_ID);
+    expect(kernel.sendOrderOnboard).not.toHaveBeenCalled();
+    expect(publishMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('preserves ordinary emails when the private send throws', async () => {
+    vi.mocked(claimOrderOnboard).mockResolvedValueOnce('tx_stored');
+    kernel.sendOrderOnboard.mockRejectedValueOnce(new Error('unavailable'));
+    await expect(sendConfirmationEmails(makeEvent(), [makeTicket()], ORDER_ID)).resolves.toBeUndefined();
+    expect(publishMock).toHaveBeenCalledTimes(2);
   });
 
   it("falls back to the order's buyer email when the profile has none", async () => {
@@ -108,7 +122,15 @@ describe('sendConfirmationEmails — buyer contact', () => {
 });
 
 describe('sendConfirmationEmails — receipt + bundle', () => {
-  it('publishes the receipt and the ticket bundle with a magic link', async () => {
+  it('requests a separate private send while leaving both ordinary email CTAs unchanged', async () => {
+    vi.mocked(claimOrderOnboard).mockResolvedValueOnce('tx_stored');
+    await sendConfirmationEmails(makeEvent(), [makeTicket()], ORDER_ID);
+    expect(kernel.sendOrderOnboard).toHaveBeenCalledWith('tx_stored');
+    expect(publishMock).toHaveBeenCalledTimes(2);
+    expect(payloadOf('ticket.confirmed').magicLink).toBe(MY_TICKETS);
+    expect(payloadOf('ticket.receipt').registrationUrl).toBe(MY_TICKETS);
+  });
+  it('publishes the receipt and the ticket bundle with ordinary tickets CTA', async () => {
     await sendConfirmationEmails(
       makeEvent({ isVirtual: null, venue: 'The Hall' }),
       [makeTicket({ id: 'tkt_1' }), makeTicket({ id: 'tkt_2' })],
@@ -152,28 +174,32 @@ describe('sendConfirmationEmails — receipt + bundle', () => {
     });
   });
 
-  it('falls back to the my-tickets page when the kernel mints no onboard token', async () => {
-    kernel.createOnboardToken.mockResolvedValue(null);
+  it('keeps ordinary emails and CTAs when the private kernel send refuses', async () => {
+    vi.mocked(claimOrderOnboard).mockResolvedValueOnce('tx_stored');
+    kernel.sendOrderOnboard.mockResolvedValue(false);
 
     await sendConfirmationEmails(makeEvent(), [makeTicket()], ORDER_ID);
 
     expect(payloadOf('ticket.confirmed').magicLink).toBe(MY_TICKETS);
     expect(payloadOf('ticket.receipt').registrationUrl).toBe(MY_TICKETS);
+    expect(kernel.sendOrderOnboard).toHaveBeenCalledTimes(1);
+    expect(kernel.sendOrderOnboard).toHaveBeenCalledWith('tx_stored');
+    expect(publishMock).toHaveBeenCalledTimes(2);
   });
 
-  it('points the receipt at the magic link and holds pending-registration tickets out of the bundle', async () => {
+  it('points the receipt at registration and holds pending-registration tickets out of the bundle', async () => {
     await sendConfirmationEmails(
       makeEvent(),
       [makeTicket({ id: 'tkt_1' }), makeTicket({ id: 'tkt_2', registrationStatus: 'pending' })],
       ORDER_ID,
     );
 
-    expect(payloadOf('ticket.receipt')).toMatchObject({ registrationUrl: MAGIC_LINK, hasRegistrationRequired: true });
+    expect(payloadOf('ticket.receipt')).toMatchObject({ registrationUrl: `https://events.test/e/${EVENT_ID}/register/tkt_2`, hasRegistrationRequired: true });
     expect((payloadOf('ticket.confirmed').tickets as { id: string }[]).map((t) => t.id)).toEqual(['tkt_1']);
   });
 
-  it('sends the register url when registration is pending and there is no onboard token', async () => {
-    kernel.createOnboardToken.mockResolvedValue(null);
+  it('sends the register url when registration is pending', async () => {
+    kernel.sendOrderOnboard.mockResolvedValue(false);
 
     await sendConfirmationEmails(
       makeEvent(),

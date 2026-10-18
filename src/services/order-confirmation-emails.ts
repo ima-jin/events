@@ -8,7 +8,8 @@ import { createLogger } from '@ima-jin/logger';
 import type { Event, Ticket, TicketType } from '@/db/schema';
 import { publish } from '@/lib/domain-events';
 import { generateQRCode } from '@/lib/email';
-import { createOnboardToken, publicServiceUrl, resolveProfiles } from '@/lib/kernel';
+import { resolveProfiles } from '@/lib/kernel';
+import { requestOrderOnboard } from '@/lib/order-onboard';
 import { findOrderById } from '@/repositories/orders-repository';
 import { findTicketTypesByIds } from '@/repositories/ticket-types-repository';
 
@@ -100,23 +101,16 @@ function resolveEventImageUrl(event: Event, eventsUrl: string): string | undefin
   return event.imageUrl.startsWith('http') ? event.imageUrl : `${eventsUrl}${event.imageUrl}`;
 }
 
-/** Magic link (onboard token when the kernel mints one) + the CTA url for the receipt. */
-async function resolveLinks(
+/** Ordinary CTAs only; the kernel sends private onboarding mail separately. */
+function resolveLinks(
   event: Event,
   eventsUrl: string,
   registrationPending: Ticket[],
-): Promise<{ magicLink: string; registrationUrl: string }> {
-  const onboardToken = await createOnboardToken();
-  const magicLink = onboardToken
-    ? `${publicServiceUrl('auth')}/api/onboard/verify?token=${onboardToken}`
-    : eventMyTicketsUrl(eventsUrl, event.id);
-
-  if (registrationPending.length === 0) {
-    return { magicLink, registrationUrl: eventMyTicketsUrl(eventsUrl, event.id) };
-  }
-  const registrationUrl = onboardToken
-    ? magicLink
-    : eventRegisterUrl(eventsUrl, event.id, registrationPending[0].id);
+): { magicLink: string; registrationUrl: string } {
+  const magicLink = eventMyTicketsUrl(eventsUrl, event.id);
+  const registrationUrl = registrationPending.length > 0
+    ? eventRegisterUrl(eventsUrl, event.id, registrationPending[0].id)
+    : magicLink;
   return { magicLink, registrationUrl };
 }
 
@@ -229,7 +223,7 @@ export async function sendConfirmationEmails(
   const eventsUrl = buildPublicUrlAbsolute('events');
   const { date, time } = formatEventTiming(event);
   const registrationPending = confirmedTickets.filter((t) => t.registrationStatus === 'pending');
-  const { magicLink, registrationUrl } = await resolveLinks(event, eventsUrl, registrationPending);
+  const { magicLink, registrationUrl } = resolveLinks(event, eventsUrl, registrationPending);
 
   const ctx: EmailContext = {
     event,
@@ -252,4 +246,5 @@ export async function sendConfirmationEmails(
   if (bundleTickets.length > 0) {
     await publishTicketBundle(ctx, bundleTickets, typesById);
   }
+  await requestOrderOnboard(orderId);
 }

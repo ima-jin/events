@@ -33,7 +33,7 @@ vi.mock('@/repositories/ticket-types-repository', async () =>
 vi.mock('@/services/pay-refund', () => ({ requestPayRefund: vi.fn() }));
 vi.mock('@/services/ticket-signing', () => ({ resolveTicketSignature: vi.fn() }));
 
-import { findOrderById, insertOrder, markOrderRefunded } from '@/repositories/orders-repository';
+import { completeHostedOrder, findOrderById, insertOrder, markOrderRefunded } from '@/repositories/orders-repository';
 import { decrementSold, incrementSold } from '@/repositories/ticket-types-repository';
 import {
   findRefundableTicketsByOrder,
@@ -142,6 +142,36 @@ describe('createOrderWithTickets', () => {
       }),
     );
     expect(result.tickets).toHaveLength(2);
+    expect(incrementSold).not.toHaveBeenCalled();
+  });
+
+  it('promotes the saved hosted order while retaining its kernel reference and other metadata', async () => {
+    vi.mocked(completeHostedOrder).mockImplementation(async (_id, values) => ({ order: makeOrder(values as never), tickets: [] }));
+    const hostedOrder = makeOrder({ id: 'ord_saved', status: 'pending', metadata: { kernelTransactionId: 'tx_stored', keep: true } });
+    const result = await createOrderWithTickets(params({
+      hostedOrder,
+      orderMetadata: { purchaseEmail: 'b@test.com', kernelTransactionId: 'tx_not_from_checkout' },
+    }));
+    expect(insertOrder).not.toHaveBeenCalled();
+    expect(completeHostedOrder).toHaveBeenCalledWith('ord_saved', expect.objectContaining({
+      id: 'ord_saved', status: 'completed', metadata: { kernelTransactionId: 'tx_stored', keep: true, purchaseEmail: 'b@test.com' },
+    }), expect.arrayContaining([expect.objectContaining({ orderId: 'ord_saved' })]), []);
+    expect(result.order.metadata).toMatchObject({ kernelTransactionId: 'tx_stored' });
+  });
+
+  it('leaves a hosted checkout untouched on signing failure and can fulfill a later retry', async () => {
+    const hostedOrder = makeOrder({ id: 'ord_saved', status: 'pending', metadata: { kernelTransactionId: 'tx_stored' } });
+    vi.mocked(resolveTicketSignature).mockRejectedValueOnce(new Error('signing unavailable'));
+    await expect(createOrderWithTickets(params({ hostedOrder }))).rejects.toThrow('signing unavailable');
+    expect(completeHostedOrder).not.toHaveBeenCalled();
+    expect(insertOrder).not.toHaveBeenCalled();
+    expect(insertTicket).not.toHaveBeenCalled();
+    vi.mocked(completeHostedOrder).mockResolvedValue({ order: makeOrder(), tickets: [makeTicket()] });
+    await expect(createOrderWithTickets(params({ hostedOrder, incrementSold: true }))).resolves.toMatchObject({
+      tickets: [expect.objectContaining({ id: 'tkt_1' })],
+    });
+    expect(completeHostedOrder).toHaveBeenCalledWith('ord_saved', expect.anything(),
+      expect.any(Array), [{ ticketTypeId: TYPE_ID, quantity: 2 }]);
     expect(incrementSold).not.toHaveBeenCalled();
   });
 

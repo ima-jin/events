@@ -1,4 +1,6 @@
-import { serviceUrl, publicServiceUrl, createOnboardToken } from '@/lib/kernel';
+import { serviceUrl } from '@/lib/kernel';
+import { requestOrderOnboard } from '@/lib/order-onboard';
+import type { Order } from '@/db/schema';
 /**
  * POST /api/webhook/payment
  *
@@ -6,7 +8,7 @@ import { serviceUrl, publicServiceUrl, createOnboardToken } from '@/lib/kernel';
  * Creates order + ticket records via the shared createOrderWithTickets
  * helper. Webhook-only logic (soft-DID creation, chat member sync, email
  * migration, .fair settlement signals, per-ticket bus publishes, onboard
- * token magic links) stays here.
+ * private onboarding requests) stays here.
  */
 
 import { NextResponse } from 'next/server';
@@ -131,13 +133,13 @@ async function migrateSoftDidToHard(email: string, hardDid: string, eventId: str
 // handleCheckoutCompleted step helpers
 // ---------------------------------------------------------------------------
 
-async function isDuplicateWebhookOrder(sessionId: string): Promise<boolean> {
-  const existingOrder = await db
-    .select({ id: orders.id })
+async function findWebhookOrder(sessionId: string): Promise<Order | undefined> {
+  const [existingOrder] = await db
+    .select()
     .from(orders)
     .where(eq(orders.stripeSessionId, sessionId))
     .limit(1);
-  return existingOrder.length > 0;
+  return existingOrder;
 }
 
 async function loadWebhookEvent(eventId: string) {
@@ -243,28 +245,25 @@ async function triggerWebhookSettlement(params: WebhookSettlementParams): Promis
 }
 
 interface WebhookRegistrationInfo {
-  magicLink?: string;
+  magicLink: string;
   registrationUrl: string;
 }
 
 /**
- * Build the onboard magic link and registration/tickets destination URL used
- * in the confirmation email.
+ * Ordinary ticket destinations only; the kernel emails credentials privately.
  */
-async function resolveWebhookRegistrationInfo(
+function resolveWebhookRegistrationInfo(
   createdTickets: Array<{ id: string; registrationStatus?: string | null }>,
   event: { id: string },
-): Promise<WebhookRegistrationInfo> {
+): WebhookRegistrationInfo {
   const EVENTS_URL = buildPublicUrlAbsolute('events');
-  const eventsAuthUrl = publicServiceUrl('auth');
 
   const ctaTicket = createdTickets.find((t) => t.registrationStatus === 'pending') ?? null;
 
-  const onboardToken = await createOnboardToken();
-  const magicLink = onboardToken ? `${eventsAuthUrl}/api/onboard/verify?token=${onboardToken}` : undefined;
+  const magicLink = eventMyTicketsUrl(EVENTS_URL, event.id);
   let registrationUrl = eventMyTicketsUrl(EVENTS_URL, event.id);
   if (ctaTicket) {
-    registrationUrl = magicLink ?? eventRegisterUrl(EVENTS_URL, event.id, ctaTicket.id);
+    registrationUrl = eventRegisterUrl(EVENTS_URL, event.id, ctaTicket.id);
   }
 
   return { magicLink, registrationUrl };
@@ -348,7 +347,8 @@ async function handleCheckoutCompleted(payload: PaymentWebhookPayload) {
   const totalQuantity = cart.reduce((sum, c) => sum + c.quantity, 0);
 
   // Idempotency: check if an order for this Stripe session already exists
-  if (await isDuplicateWebhookOrder(sessionId)) {
+  const hostedOrder = await findWebhookOrder(sessionId);
+  if (hostedOrder && hostedOrder.status !== 'pending') {
     log.info({ sessionId }, 'Duplicate webhook — order already exists for session');
     return;
   }
@@ -363,6 +363,13 @@ async function handleCheckoutCompleted(payload: PaymentWebhookPayload) {
     log.warn({ eventId: event.id, sessionId, ...mismatch }, 'Payment completion refused');
     return;
   }
+  if (hostedOrder && (hostedOrder.eventId !== event.id
+    || hostedOrder.paymentMethod !== 'stripe'
+    || hostedOrder.amountTotal !== amountTotal
+    || hostedOrder.currency !== currency.toUpperCase())) {
+    log.warn({ sessionId }, 'Stored checkout does not match completion');
+    return;
+  }
   if (!customerEmail) {
     throw new Error('Customer email is required for ticket creation');
   }
@@ -373,6 +380,7 @@ async function handleCheckoutCompleted(payload: PaymentWebhookPayload) {
   const ownerDid = await resolveWebhookOwnerDid(metadata.buyerDid, customerEmail, customerName, event.id);
 
   const { tickets: createdTickets, order } = await createOrderWithTickets({
+    hostedOrder,
     eventId: event.id,
     buyerDid: ownerDid,
     cart,
@@ -380,7 +388,7 @@ async function handleCheckoutCompleted(payload: PaymentWebhookPayload) {
     totalQuantity,
     totalAmount: amountTotal,
     currency: currency.toUpperCase(),
-    paymentMethod: paymentId ? 'stripe' : 'etransfer',
+    paymentMethod: 'stripe',
     ticketStatus: 'valid',
     stripeSessionId: sessionId,
     paymentId: paymentId || undefined,
@@ -425,8 +433,7 @@ async function handleCheckoutCompleted(payload: PaymentWebhookPayload) {
     sessionId,
   });
 
-  // Build onboard token for magic-link auth in confirmation email
-  const { magicLink, registrationUrl } = await resolveWebhookRegistrationInfo(createdTickets, event);
+  const { magicLink, registrationUrl } = resolveWebhookRegistrationInfo(createdTickets, event);
 
   await publishConfirmationEmails({
     customerEmail,
@@ -442,6 +449,7 @@ async function handleCheckoutCompleted(payload: PaymentWebhookPayload) {
     registrationUrl,
     log,
   });
+  await requestOrderOnboard(orderId);
 }
 
 async function handlePaymentFailed(payload: PaymentWebhookPayload) {

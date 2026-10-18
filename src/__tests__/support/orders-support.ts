@@ -38,7 +38,7 @@ function mockFns<K extends string>(names: readonly K[]): Record<K, ReturnType<ty
 }
 
 export const ordersRepositoryMock = () =>
-  mockFns(['findOrderById', 'insertOrder', 'markOrderCompleted', 'markOrderRefunded', 'findEventById']);
+  mockFns(['findOrderById', 'insertOrder', 'completeHostedOrder', 'claimOrderOnboard', 'markOrderCompleted', 'markOrderRefunded', 'findEventById']);
 
 export const ticketsRepositoryMock = () =>
   mockFns([
@@ -96,7 +96,7 @@ function makeChain(result: unknown, calls: ChainCall[]): Chain {
     get(_target, property) {
       if (property === 'then') {
         return (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) =>
-          Promise.resolve(result).then(resolve, reject);
+          (result instanceof Error ? Promise.reject(result) : Promise.resolve(result)).then(resolve, reject);
       }
       return (...args: unknown[]) => {
         calls.push({ method: String(property), args });
@@ -123,8 +123,11 @@ function createDbMock() {
     return Promise.resolve(sqlResults.shift());
   });
 
+  const db = { select: start('select'), insert: start('insert'), update: start('update') };
+  const transaction = vi.fn(async (callback: (tx: typeof db) => Promise<unknown>) => callback(db));
+
   return {
-    db: { select: start('select'), insert: start('insert'), update: start('update') },
+    db: { ...db, transaction },
     sql,
     calls,
     /** Queue the result of the next `db.select/insert/update` chain. */

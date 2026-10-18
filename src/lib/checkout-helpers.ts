@@ -160,6 +160,7 @@ function isNoCardRail(body: { code?: unknown; error?: unknown } | null): boolean
 export interface PayCheckoutSession {
   id: string;
   url: string;
+  transactionId?: string;
 }
 
 /**
