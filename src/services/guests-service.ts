@@ -319,12 +319,15 @@ function toAttendingEvent(row: AttendingEventRow): AttendingEvent {
  * The optional cookie is retained for compatibility only; membership reads
  * use app authorization and the explicit owner DID, not the viewer's session.
  */
+export function listAttendingEvents(
+  ownerDid: string,
+  viewerDid: string | null,
+  callerCookie?: string | null,
+): Promise<AttendingEvent[]>;
 export async function listAttendingEvents(
   ownerDid: string,
   viewerDid: string | null,
-  _callerCookie?: string | null,
 ): Promise<AttendingEvent[]> {
-  void _callerCookie;
   const now = new Date();
   const ticketed = await listTicketedEvents(ownerDid, now);
   const created = await listCreatedEvents(ownerDid, now);

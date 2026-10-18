@@ -15,7 +15,7 @@ export async function insertOrder(values: NewOrder): Promise<Order> {
 }
 
 /** No completed state is visible unless tickets and sold counts also commit. */
-export async function completeHostedOrder(
+export function completeHostedOrder(
   orderId: string,
   values: NewOrder,
   ticketValues: TicketInsert[],
@@ -28,11 +28,11 @@ export async function completeHostedOrder(
     )).returning();
     if (!order) throw new Error('Hosted checkout order is no longer pending');
     const createdTickets = await tx.insert(tickets).values(ticketValues).returning();
-    for (const item of soldCounts) {
-      await tx.update(ticketTypes).set({
+    await Promise.all(soldCounts.map((item) =>
+      tx.update(ticketTypes).set({
         sold: sql`${ticketTypes.sold} + ${item.quantity}`,
-      }).where(eq(ticketTypes.id, item.ticketTypeId));
-    }
+      }).where(eq(ticketTypes.id, item.ticketTypeId)),
+    ));
     return { order, tickets: createdTickets };
   });
 }

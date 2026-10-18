@@ -208,13 +208,17 @@ interface PodMember {
  *
  * Requires app scope and the pod owner's live OAuth grant. No cookie is forwarded.
  */
+export function isPodMember(
+  podId: string,
+  did: string,
+  roles?: readonly string[],
+  callerCookie?: string | null,
+): Promise<boolean>;
 export async function isPodMember(
   podId: string,
   did: string,
   roles: readonly string[] = ORGANIZER_POD_ROLES,
-  _callerCookie?: string | null
 ): Promise<boolean> {
-  void _callerCookie; // Compatibility only; app authority never comes from a cookie.
   const data = await scopedAppFetch<{ members?: PodMember[] }>(
     'connections', `/api/apps/pods/${encodeURIComponent(podId)}/members`,
   );
