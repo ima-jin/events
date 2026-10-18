@@ -54,5 +54,5 @@ export async function startVaultServer<Result>(
 export async function startClaimServer<Result>(start: () => Promise<Result>): Promise<Result> {
   if (store[BOOT]) throw new Error('Events startup already attempted');
   store[BOOT] = { claimOnly: true };
-  return start();
+  return await start();
 }
