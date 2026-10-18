@@ -364,7 +364,7 @@ describe('listAttendingEvents', () => {
 
     const result = await listAttendingEvents(OWNER_DID, null, COOKIE);
 
-    expect(mocks.listMemberPodIds).toHaveBeenCalledWith(COOKIE);
+    expect(mocks.listMemberPodIds).toHaveBeenCalledWith(OWNER_DID);
     expect(result.map((r) => r.eventId)).toEqual(['e3', 'e1', 'e2']);
     expect(result[1]).toEqual({
       eventId: 'e1',
@@ -403,9 +403,33 @@ describe('listAttendingEvents', () => {
     expect(result.map((r) => r.eventId).sort()).toEqual(['priv_a', 'pub']);
   });
 
-  it('skips the co-host lookup when the caller is in no pods', async () => {
+  it('looks up the profile owner rather than the viewer or cookie identity', async () => {
+    const viewerDid = 'did:imajin:viewer';
+    mocks.listMemberPodIds.mockImplementation(async (did: string) => did === OWNER_DID ? ['owner_pod'] : ['viewer_pod']);
+    mocks.repo.listPodEvents.mockImplementation(async (podIds: string[]) =>
+      podIds.includes('owner_pod') ? [attendingRow('owner_cohost')] : [attendingRow('viewer_cohost')]);
+
+    const result = await listAttendingEvents(OWNER_DID, viewerDid, 'session=viewer');
+
+    expect(mocks.listMemberPodIds).toHaveBeenCalledTimes(1);
+    expect(mocks.listMemberPodIds).toHaveBeenCalledWith(OWNER_DID);
+    expect(mocks.repo.listPodEvents).toHaveBeenCalledWith(['owner_pod'], expect.any(Date));
+    expect(result.map((r) => r.eventId)).toEqual(['owner_cohost']);
+  });
+
+  it('looks up co-hosted events by DID without a cookie', async () => {
+    mocks.listMemberPodIds.mockResolvedValue(['pod_1']);
+    mocks.repo.listPodEvents.mockResolvedValue([attendingRow('cohost')]);
+
+    expect((await listAttendingEvents(OWNER_DID, null)).map((r) => r.eventId)).toEqual(['cohost']);
+    expect(mocks.listMemberPodIds).toHaveBeenCalledTimes(1);
+    expect(mocks.listMemberPodIds).toHaveBeenCalledWith(OWNER_DID);
+  });
+
+  it('skips the event lookup when app membership is empty or denied', async () => {
     await listAttendingEvents(OWNER_DID, null);
 
+    expect(mocks.listMemberPodIds).toHaveBeenCalledWith(OWNER_DID);
     expect(mocks.repo.listPodEvents).not.toHaveBeenCalled();
   });
 
@@ -416,8 +440,21 @@ describe('listAttendingEvents', () => {
     const result = await listAttendingEvents(OWNER_DID, null);
 
     expect(result.map((r) => r.eventId)).toEqual(['e1']);
+    expect(mocks.repo.listPodEvents).not.toHaveBeenCalled();
     expect(mocks.warn).toHaveBeenCalledWith(
       { err: 'Error: kernel down' },
+      'Failed to fetch cohost events (non-fatal)',
+    );
+  });
+
+  it('omits co-hosted events when their local event lookup fails', async () => {
+    mocks.listMemberPodIds.mockResolvedValue(['pod_1']);
+    mocks.repo.listPodEvents.mockRejectedValue(new Error('cohost db down'));
+    mocks.repo.listCreatedEvents.mockResolvedValue([attendingRow('created')]);
+
+    expect((await listAttendingEvents(OWNER_DID, null)).map((r) => r.eventId)).toEqual(['created']);
+    expect(mocks.warn).toHaveBeenCalledWith(
+      { err: 'Error: cohost db down' },
       'Failed to fetch cohost events (non-fatal)',
     );
   });
