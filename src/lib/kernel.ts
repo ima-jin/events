@@ -171,7 +171,8 @@ export async function resolveProfiles(dids: string[]): Promise<Map<string, Resol
     )
   );
   for (const data of responses) {
-    for (const entry of data?.results ?? []) {
+    if (!Array.isArray(data?.results)) continue;
+    for (const entry of data.results) {
       if (entry?.did) result.set(entry.did, entry);
     }
   }
@@ -213,6 +214,7 @@ export async function isPodMember(
   roles: readonly string[] = ORGANIZER_POD_ROLES,
   _callerCookie?: string | null
 ): Promise<boolean> {
+  void _callerCookie; // Compatibility only; app authority never comes from a cookie.
   const data = await scopedAppFetch<{ members?: PodMember[] }>(
     'connections', `/api/apps/pods/${encodeURIComponent(podId)}/members`,
   );

@@ -52,6 +52,10 @@ describe('scoped profile and contact calls', () => {
     expect(await getContactEmail(profile.did)).toBeNull();
     expect(await resolveProfiles(['did:other'])).toEqual(new Map());
   });
+  it.each([null, { results: {} }, { results: [null, {}] }])('ignores malformed profile results: %j', async (body) => {
+    fetchMock.mockResolvedValue(reply(body));
+    expect(await getContactEmail(profile.did)).toBeNull();
+  });
   it('refreshes exactly once on 401 and uses the refreshed token', async () => {
     vi.mocked(getPayAppToken).mockResolvedValueOnce('old').mockResolvedValueOnce('fresh');
     fetchMock.mockResolvedValueOnce(reply({}, 401)).mockResolvedValueOnce(reply({ results: [profile] }));
