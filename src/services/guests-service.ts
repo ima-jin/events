@@ -314,16 +314,11 @@ function toAttendingEvent(row: AttendingEventRow): AttendingEvent {
 
 /**
  * Upcoming events `ownerDid` is attending, hosting or co-hosting. Invite-only
- * events show up only for the owner's own (created / co-hosted) events or when
- * `viewerDid` also holds a ticket.
- * The optional cookie is retained for compatibility only; membership reads
- * use app authorization and the explicit owner DID, not the viewer's session.
+ * events show up for the authenticated owner's created / co-hosted events or
+ * when the authenticated viewer also holds a ticket. `viewerDid` must come
+ * from verified authentication, never from request query parameters.
+ * Membership reads use app authorization and the explicit owner DID.
  */
-export function listAttendingEvents(
-  ownerDid: string,
-  viewerDid: string | null,
-  callerCookie?: string | null,
-): Promise<AttendingEvent[]>;
 export async function listAttendingEvents(
   ownerDid: string,
   viewerDid: string | null,
@@ -339,7 +334,9 @@ export async function listAttendingEvents(
 
   let visible = publicEvents;
   if (privateEvents.length > 0) {
-    const owned = new Set([...created, ...cohosted].map((r) => r.eventId));
+    const owned = new Set(
+      viewerDid === ownerDid ? [...created, ...cohosted].map((r) => r.eventId) : [],
+    );
     const held = viewerDid
       ? new Set(
           await listHeldEventIds(

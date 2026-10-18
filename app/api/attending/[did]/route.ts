@@ -5,14 +5,13 @@
  *
  * Privacy:
  *   - public events: shown to anyone
- *   - invite_only events: only shown if viewer_did also has a ticket
- *
- * Query params:
- *   - viewer_did: optional DID of the viewer (for invite_only privacy check)
+ *   - invite_only events: shown to the authenticated owner or ticket holder
+ *   - viewer_did is not an authentication credential and is ignored
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@ima-jin/logger';
+import { optionalAuth } from '@/lib/auth';
 import { listAttendingEvents } from '@/services/guests-service';
 import { isServiceError } from '@/services/errors';
 
@@ -26,10 +25,10 @@ export async function GET(
 ) {
   const { did } = await params;
   const ownerDid = decodeURIComponent(did);
-  const viewerDid = request.nextUrl.searchParams.get('viewer_did') || null;
 
   try {
-    return NextResponse.json(await listAttendingEvents(ownerDid, viewerDid, request.headers.get('cookie')));
+    const identity = await optionalAuth(request);
+    return NextResponse.json(await listAttendingEvents(ownerDid, identity?.id ?? null));
   } catch (error) {
     if (isServiceError(error)) {
       return NextResponse.json({ error: error.message, ...error.details }, { status: error.status });
