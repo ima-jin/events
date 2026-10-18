@@ -147,6 +147,18 @@ describe('getEventSales JSON report', () => {
     expect(report.summary).toEqual({ totalSales: 0, totalRevenue: 0, avgOrderValue: 0, totalOrders: 0 });
   });
 
+  it('retains held EMT sales and their existing summary behavior without querying pay', async () => {
+    mocks.repo.listOrderSaleRows.mockResolvedValue([
+      orderSaleRow({ payment_method: 'etransfer', stripe_session_id: null, ticket_status: 'held' }),
+    ]);
+
+    const report = await jsonReport();
+
+    expect(report.sales[0]).toMatchObject({ paymentMethod: 'etransfer', paymentId: null, status: 'pending', quantity: 1 });
+    expect(report.summary).toEqual({ totalSales: 1, totalRevenue: 5000, avgOrderValue: 5000, totalOrders: 1 });
+    expect(mocks.lookupOrderPayments).not.toHaveBeenCalled();
+  });
+
   it('groups an order\'s ticket rows, de-duplicating tickets and counting types', async () => {
     mocks.repo.listOrderSaleRows.mockResolvedValue([
       orderSaleRow({ ticket_id: 'tkt_1' }),
