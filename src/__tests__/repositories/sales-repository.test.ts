@@ -35,6 +35,7 @@ describe('sales event lookup', () => {
     sqlMock.queue([salesEvent()]);
     expect(await getSalesEvent(EVENT_ID)).toEqual(salesEvent());
     expect(sqlMock.calls[0].text).toContain('FROM events.events');
+    expect(sqlMock.calls[0].text).toContain('creator_did');
     expect(sqlMock.calls[0].values).toEqual([EVENT_ID]);
 
     sqlMock.queue([]);

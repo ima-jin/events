@@ -20,6 +20,8 @@ import {
 const mocks = vi.hoisted(() => ({
   isEventOrganizer: vi.fn(),
   resolveProfiles: vi.fn(),
+  lookupOrderPayments: vi.fn(),
+  warn: vi.fn(),
   getSurveyResponsesForTickets: vi.fn(),
   getSurveyForms: vi.fn(),
   repo: {
@@ -32,8 +34,12 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('@/services/authorization', () => ({ isEventOrganizer: mocks.isEventOrganizer }));
+vi.mock('@ima-jin/logger', () => ({ createLogger: () => ({ warn: mocks.warn }) }));
 vi.mock('@/repositories/sales-repository', () => mocks.repo);
-vi.mock('@/lib/kernel', () => ({ resolveProfiles: mocks.resolveProfiles }));
+vi.mock('@/lib/kernel', () => ({
+  resolveProfiles: mocks.resolveProfiles,
+  lookupOrderPayments: mocks.lookupOrderPayments,
+}));
 vi.mock('@/lib/surveys', () => ({
   getSurveyResponsesForTickets: mocks.getSurveyResponsesForTickets,
   getSurveyForms: mocks.getSurveyForms,
@@ -43,6 +49,7 @@ import { computeOrderStatus, exportEventSales, getEventSales } from '@/services/
 
 const BUYER_PROFILE = profile(BUYER_DID, 'Buyer Name', 'buyer-handle', 'buyer@example.com');
 const ORPHAN_PROFILE = profile(ORPHAN_OWNER_DID, 'Orphan Owner', 'orphan-handle', 'owner@example.com');
+const PAYMENT = { transactionId: 'tx_1', sessionId: 'cs_1', metadata: { orderId: 'ord_1', service: 'events' } };
 
 async function jsonReport(options: Parameters<typeof getEventSales>[2] = {}) {
   const result = await getEventSales(EVENT_ID, ORGANIZER_DID, options);
@@ -60,6 +67,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   mocks.isEventOrganizer.mockResolvedValue({ authorized: true, role: 'creator' });
   mocks.resolveProfiles.mockResolvedValue(new Map());
+  mocks.lookupOrderPayments.mockResolvedValue([]);
   mocks.getSurveyResponsesForTickets.mockResolvedValue(new Map());
   mocks.repo.getSalesEvent.mockResolvedValue(salesEvent());
   mocks.repo.listOrderSaleRows.mockResolvedValue([]);
@@ -79,6 +87,7 @@ describe.each([
     expect(mocks.isEventOrganizer).toHaveBeenCalledWith(EVENT_ID, ORGANIZER_DID, COOKIE);
     expect(mocks.repo.getSalesEvent).not.toHaveBeenCalled();
     expect(mocks.resolveProfiles).not.toHaveBeenCalled();
+    expect(mocks.lookupOrderPayments).not.toHaveBeenCalled();
   });
 
   it('answers 404 when the event does not exist', async () => {
@@ -86,12 +95,14 @@ describe.each([
 
     expect(await thrown(call())).toMatchObject({ code: 'not_found', status: 404, message: 'Event not found' });
     expect(mocks.resolveProfiles).not.toHaveBeenCalled();
+    expect(mocks.lookupOrderPayments).not.toHaveBeenCalled();
   });
 });
 
 describe('getEventSales JSON report', () => {
   it('merges orders and orphan tickets newest first, resolving each batch of DIDs once', async () => {
     mocks.repo.listOrderSaleRows.mockResolvedValue([orderSaleRow()]);
+    mocks.lookupOrderPayments.mockResolvedValue([PAYMENT]);
     mocks.repo.listOrphanTicketRows.mockResolvedValue([orphanRow()]);
     mocks.resolveProfiles
       .mockResolvedValueOnce(profileMap(BUYER_PROFILE))
@@ -111,7 +122,7 @@ describe('getEventSales JSON report', () => {
       quantity: 1,
       amountTotal: 5000,
       currency: 'CAD',
-      paymentId: null,
+      paymentId: 'tx_1',
       stripeSessionId: 'cs_1',
       purchasedAt: '2026-01-02T10:00:00.000Z',
       tickets: [{ ticketId: 'tkt_1', status: 'valid' }],
@@ -244,6 +255,7 @@ describe('getEventSales downloads', () => {
   it('returns a CSV with one line per order, formatted amounts and grouped ticket types', async () => {
     mocks.repo.listOrderSaleRows.mockResolvedValue([orderSaleRow(), orderSaleRow({ ticket_id: 'tkt_2' })]);
     mocks.resolveProfiles.mockResolvedValueOnce(profileMap(BUYER_PROFILE));
+    mocks.lookupOrderPayments.mockResolvedValue([PAYMENT]);
 
     const file = await csvFile({ format: 'csv' });
     const [header, line] = csvLines(file.content);
@@ -253,7 +265,7 @@ describe('getEventSales downloads', () => {
     expect(file.content.startsWith('\uFEFF')).toBe(true);
     expect(header.split(',').slice(0, 3)).toEqual(['Order ID', 'Transaction ID', 'Buyer Name']);
     expect(line).toBe(
-      `ord_1,,Buyer Name,buyer-handle,buyer@example.com,${BUYER_DID},General (2),2,50.00,CAD,completed,stripe,2026-01-02T10:00:00.000Z,cs_1`,
+      `ord_1,tx_1,Buyer Name,buyer-handle,buyer@example.com,${BUYER_DID},General (2),2,50.00,CAD,completed,stripe,2026-01-02T10:00:00.000Z,cs_1`,
     );
     expect(mocks.repo.listOrphanTicketRows).toHaveBeenCalledWith(EVENT_ID);
   });
@@ -285,6 +297,95 @@ describe('getEventSales downloads', () => {
 
   it('treats an unknown format as the JSON report', async () => {
     expect((await getEventSales(EVENT_ID, ORGANIZER_DID, { format: 'pdf' })).kind).toBe('json');
+  });
+});
+
+describe('sales payment enrichment', () => {
+  it('uses the stored seller after authorization and batches unique order sessions, not ticket rows', async () => {
+    const sellerDid = 'did:imajin:stored-seller';
+    mocks.repo.getSalesEvent.mockResolvedValue(salesEvent({ creator_did: sellerDid }));
+    mocks.repo.listOrderSaleRows.mockResolvedValue([
+      orderSaleRow(),
+      orderSaleRow({ ticket_id: 'tkt_2' }),
+      orderSaleRow({ order_id: 'ord_2', stripe_session_id: 'cs_2', ticket_id: 'tkt_3' }),
+    ]);
+    mocks.lookupOrderPayments.mockImplementation(async () => {
+      expect(mocks.isEventOrganizer).toHaveBeenCalledWith(EVENT_ID, ORGANIZER_DID, COOKIE);
+      expect(mocks.repo.getSalesEvent).toHaveBeenCalledWith(EVENT_ID);
+      expect(mocks.repo.listOrderSaleRows).toHaveBeenCalledWith(EVENT_ID);
+      return [{ ...PAYMENT, transactionId: 'tx_2', sessionId: 'cs_2' }, PAYMENT];
+    });
+
+    const report = await jsonReport({ callerCookie: COOKIE });
+
+    expect(mocks.lookupOrderPayments).toHaveBeenCalledTimes(1);
+    expect(mocks.lookupOrderPayments).toHaveBeenCalledWith(sellerDid, ['cs_1', 'cs_2']);
+    expect(report.sales.map((sale) => sale.paymentId)).toEqual(['tx_1', 'tx_2']);
+  });
+
+  it.each([
+    ['no seller', null, 'stripe', 'cs_1'],
+    ['no session', ORGANIZER_DID, 'stripe', null],
+    ['non-card', ORGANIZER_DID, 'etransfer', 'cs_1'],
+  ])('does not query pay for %s', async (_label, sellerDid, method, session) => {
+    mocks.repo.getSalesEvent.mockResolvedValue(salesEvent({ creator_did: sellerDid }));
+    mocks.repo.listOrderSaleRows.mockResolvedValue([
+      orderSaleRow({ payment_method: method, stripe_session_id: session }),
+    ]);
+
+    expect((await jsonReport()).sales[0].paymentId).toBeNull();
+    expect(mocks.lookupOrderPayments).not.toHaveBeenCalled();
+  });
+
+  it('keeps absent, unrequested and ambiguous matches null, preserving summary and status', async () => {
+    mocks.repo.listOrderSaleRows.mockResolvedValue([
+      orderSaleRow(),
+      orderSaleRow({ order_id: 'ord_2', stripe_session_id: 'cs_missing', ticket_id: 'tkt_2' }),
+      orderSaleRow({ order_id: 'ord_3', stripe_session_id: 'cs_3', ticket_id: 'tkt_3', ticket_status: 'held' }),
+    ]);
+    mocks.lookupOrderPayments.mockResolvedValue([
+      PAYMENT,
+      { ...PAYMENT, transactionId: 'tx_ambiguous' },
+      { ...PAYMENT, transactionId: 'tx_third' },
+      { ...PAYMENT, transactionId: 'tx_foreign', sessionId: 'cs_foreign' },
+      { ...PAYMENT, transactionId: 'tx_3', sessionId: 'cs_3' },
+    ]);
+
+    const report = await jsonReport();
+
+    expect(report.sales.map((sale) => sale.paymentId)).toEqual([null, null, 'tx_3']);
+    expect(report.sales.map((sale) => sale.status)).toEqual(['completed', 'completed', 'pending']);
+    expect(report.summary).toEqual({ totalSales: 3, totalRevenue: 15000, avgOrderValue: 5000, totalOrders: 3 });
+    expect(mocks.warn).toHaveBeenCalledWith({ count: 1 }, 'Ambiguous sales payment matches omitted');
+  });
+
+  it('preserves a best-effort report and orphan payment IDs when pay fails', async () => {
+    mocks.repo.listOrderSaleRows.mockResolvedValue([orderSaleRow()]);
+    mocks.repo.listOrphanTicketRows.mockResolvedValue([orphanRow({ payment_id: 'legacy_payment' })]);
+    mocks.lookupOrderPayments.mockRejectedValue(new Error('unavailable with sensitive details'));
+
+    const report = await jsonReport();
+
+    expect(report.sales.map((sale) => sale.paymentId)).toEqual(['legacy_payment', null]);
+    expect(report.summary.totalRevenue).toBe(7500);
+    expect(mocks.warn).toHaveBeenCalledWith({}, 'Sales payment lookup unavailable (non-fatal)');
+    expect(JSON.stringify(mocks.warn.mock.calls)).not.toContain('sensitive details');
+  });
+
+  it('treats metadata as descriptive only and does not publish it in JSON or CSV', async () => {
+    mocks.repo.listOrderSaleRows.mockResolvedValue([orderSaleRow({ ticket_status: 'held' })]);
+    mocks.lookupOrderPayments.mockResolvedValue([{
+      ...PAYMENT,
+      metadata: { orderId: 'different-order', eventId: 'different-event', service: 'metadata-marker', type: 'completed' },
+    }]);
+
+    const report = await jsonReport();
+    const file = await csvFile({ format: 'csv' });
+
+    expect(report.sales[0]).toMatchObject({ paymentId: 'tx_1', orderId: 'ord_1', amountTotal: 5000, status: 'pending' });
+    expect(JSON.stringify(report)).not.toContain('metadata-marker');
+    expect(file.content).toContain('tx_1');
+    expect(file.content).not.toContain('metadata-marker');
   });
 });
 

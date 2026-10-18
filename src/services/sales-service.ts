@@ -1,5 +1,6 @@
+import { createLogger } from '@ima-jin/logger';
 import { csvRow } from '@/lib/guest-export-helpers';
-import { resolveProfiles, type ResolvedProfile } from '@/lib/kernel';
+import { lookupOrderPayments, resolveProfiles, type OrderPayment, type ResolvedProfile } from '@/lib/kernel';
 import { getSurveyResponsesForTickets, type SurveyAnswers, type SurveyResponse } from '@/lib/surveys';
 import type { DateLike } from '@/repositories/guests-repository';
 import {
@@ -17,12 +18,14 @@ import { isEventOrganizer } from '@/services/authorization';
 import { ServiceError } from '@/services/errors';
 
 const FORBIDDEN_MESSAGE = 'Forbidden';
+const log = createLogger('events');
 const UNKNOWN = 'unknown';
 const UNKNOWN_LABEL = 'Unknown';
 const CSV_BOM = '\uFEFF';
 export const CSV_MIME = 'text/csv; charset=utf-8';
 const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 const COMPLETED_TICKET_STATUSES = new Set(['valid', 'used']);
+const CARD_PAYMENT_METHODS = new Set(['stripe', 'stripe-byo']);
 const SALES_HEADERS = [
   'Order ID',
   'Transaction ID',
@@ -66,6 +69,33 @@ export interface CsvFile {
   /** UTF-8 CSV text, prefixed with a BOM so spreadsheets detect the encoding. */
   content: string;
 }
+/** The helper enforces app/seller scope; a session with multiple rows is never guessed. */
+async function orderPayments(
+  sellerDid: string | null,
+  rows: OrderSaleRow[],
+): Promise<Map<string, OrderPayment | null>> {
+  const payments = new Map<string, OrderPayment | null>();
+  if (!sellerDid) return payments;
+  const sessions = [...new Set(rows
+    .filter((row) => CARD_PAYMENT_METHODS.has(row.payment_method ?? ''))
+    .map((row) => row.stripe_session_id)
+    .filter((id): id is string => Boolean(id)))];
+  if (sessions.length === 0) return payments;
+  try {
+    const requested = new Set(sessions);
+    const matches = await lookupOrderPayments(sellerDid, sessions);
+    for (const payment of matches) {
+      if (!requested.has(payment.sessionId)) continue;
+      payments.set(payment.sessionId, payments.has(payment.sessionId) ? null : payment);
+    }
+    const ambiguous = [...payments.values()].filter((payment) => payment === null).length;
+    if (ambiguous > 0) log.warn({ count: ambiguous }, 'Ambiguous sales payment matches omitted');
+  } catch {
+    payments.clear();
+    log.warn({}, 'Sales payment lookup unavailable (non-fatal)');
+  }
+  return payments;
+}
 
 export interface SalesOptions {
   /** `csv` / `xlsx` select a download; anything else is the JSON report. */
@@ -82,6 +112,8 @@ export interface SaleTicket {
 
 export interface Sale {
   transactionId: string | null;
+  /** Descriptive enrichment only; never proof of amount or ticket status. */
+  paymentMetadata: Record<string, string>;
   orderId: string;
   buyer: { did: string | null; name: string | null; handle: string | null; email: string | null };
   tickets: SaleTicket[];
@@ -171,10 +203,14 @@ function toSale(
   tickets: SaleTicket[],
   buyerIdentities: Identities,
   fallbackCurrency: string | null,
+  payments: Map<string, OrderPayment | null>,
 ): Sale {
   const buyer = lookup(row.buyer_did, buyerIdentities);
+  const cardSession = CARD_PAYMENT_METHODS.has(row.payment_method ?? '') ? row.stripe_session_id : null;
+  const payment = cardSession ? payments.get(cardSession) : null;
   return {
-    transactionId: null,
+    transactionId: payment?.transactionId ?? null,
+    paymentMetadata: payment?.metadata ?? {},
     orderId: row.order_id,
     buyer: {
       did: row.buyer_did ?? null,
@@ -198,6 +234,7 @@ function groupOrderSales(
   surveys: Map<string, SurveyResponse>,
   buyerIdentities: Identities,
   fallbackCurrency: string | null,
+  payments: Map<string, OrderPayment | null>,
 ): Sale[] {
   const groups = new Map<string, { row: OrderSaleRow; tickets: SaleTicket[] }>();
   for (const row of rows) {
@@ -213,17 +250,18 @@ function groupOrderSales(
       });
     }
   }
-  return [...groups.values()].map((g) => toSale(g.row, g.tickets, buyerIdentities, fallbackCurrency));
+  return [...groups.values()].map((g) => toSale(g.row, g.tickets, buyerIdentities, fallbackCurrency, payments));
 }
 
 /** Orders joined with tickets, survey attendee names (dykil) and batched buyer identities (kernel). */
-async function fetchOrderSales(eventId: string, fallbackCurrency: string | null): Promise<Sale[]> {
+async function fetchOrderSales(eventId: string, fallbackCurrency: string | null, sellerDid: string | null): Promise<Sale[]> {
   const rows = await listOrderSaleRows(eventId);
+  const payments = await orderPayments(sellerDid, rows);
   const surveys = await getSurveyResponsesForTickets(
     rows.flatMap((r) => (r.ticket_id ? [{ ticketId: r.ticket_id, formId: r.registration_form_id }] : [])),
   );
   const buyerIdentities = await resolveProfiles(uniqueDids(rows.map((r) => r.buyer_did)));
-  return groupOrderSales(rows, surveys, buyerIdentities, fallbackCurrency);
+  return groupOrderSales(rows, surveys, buyerIdentities, fallbackCurrency, payments);
 }
 
 function toOrphanSaleView(
@@ -371,7 +409,7 @@ function salesCsvRow(sale: Sale): unknown[] {
  */
 export async function getEventSales(eventId: string, actorDid: string, options: SalesOptions = {}): Promise<SalesResult> {
   const event = await loadEvent(eventId, actorDid, options.callerCookie);
-  const sales = await fetchOrderSales(eventId, event.currency);
+  const sales = await fetchOrderSales(eventId, event.currency, event.creator_did);
   const orphans = await fetchOrphanSales(eventId, event.currency ?? 'CAD');
   if (options.format === 'csv' || options.format === 'xlsx') {
     return { kind: 'file', file: toSalesFile(event, options.format, SALES_HEADERS, sales.map(salesCsvRow)) };
