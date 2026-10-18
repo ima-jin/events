@@ -29,17 +29,17 @@ issues or command history. **`IMAJIN_APP_PRIVATE_KEY` must never be set.**
 
 `instrumentation.ts` refuses a missing DID or raw-key env, then calls
 `bootstrapSigningIdentity()`. With a keystore, the published SDK fetches the signing key;
-without one, boot stays unclaimed and makes no claim exchange.
+without one, only explicit claim-only startup is available and makes no claim exchange.
 
-- **Operator browser path (only claim path):** boot the app.
-  With no keystore, events boots unclaimed: every route except `/claim`, `/api/claim`,
-  and `/api/health` serves a "not claimed yet" page (all under `/events` on the host).
+- **Operator browser path (only claim path):** run explicit `pnpm claim`.
+  This isolated mode serves only `/claim`, `/api/claim` and Next static assets
+  (all under `/events` on the host). Other routes, including health, return 503.
   Open `/events/claim` and paste the one-time code from the kernel operator's `/jin`
   approval card. The code is the operator-only bearer capability; an ordinary user
   session or app token cannot authorize a claim. The kernel enforces single use.
   The server checks the returned DID against `IMAJIN_APP_DID` and activates the
-  identity without a restart. Both claim routes 404 afterward; health reports
-  `claimed: false` before the claim and `claimed: true` afterward.
+  identity in memory. Both claim routes 404 afterward. Stop the claim-only listener
+  and restart normally after vault provisioning; it never transitions to ordinary traffic.
 - **Successful claim:** the SDK spends the one-time claim code and binds a narrowly scoped
   bootstrap credential. It persists only the bootstrap keystore (`0600`), not the real
   app signing key. The signing key remains in process memory.
@@ -61,6 +61,37 @@ Requests without a usable proxy address share a separately capped fallback bucke
 Claim codes, SDK errors and keystore contents are never logged or returned to the browser.
 
 ## Vault-only boot credentials
+### Operator-supplied database credential (#61)
+`imajin.app.json` declares only `{ "name": "DATABASE_URL", "kind": "operator-supplied" }`
+for the existing external database. The role must remain confined to the app's `events`
+schema. The manifest never contains a value, and syncing does not generate this credential.
+
+For each environment, the **operator** uses the approved kernel `/jin` surface:
+1. Deploy the kernel contract from imajin-ai PR #2851, then **Sync manifest secrets**
+   for the existing events app and obtain the owner's countersign.
+2. Use **App secrets set** for `DATABASE_URL`, or **App secrets rotate** for a replacement,
+   with owner countersign through the approved private credential-entry tool.
+   Never paste a value into chat, a command, a shell session, an env file or this manifest.
+3. Restart through the separately approved cutover procedure only after the declaration
+   is supplied. Production coordination remains imajin-ai#2516, not this code change.
+
+The published `@ima-jin/auth-client@0.8.24` `createVaultBoot<ServerConfig>` calls the SDK's
+keystore-authenticated, encrypted `loadFromVault` fetch with `onMissing: 'fail'`.
+`scripts/start.ts` awaits that boundary before dynamically importing `scripts/server.ts`.
+DB consumers read `getServerConfig()` from shared process memory; no env fallback or write
+exists. Next build-time route discovery never constructs a client or needs a credential.
+Direct `next start` / `next dev` is unsupported and fails the instrumentation config guard.
+
+Missing keystore, refused or missing credentials, malformed envelopes and network failures
+prevent the server import/listen. The launcher exits 1 with a fixed, value-free action line.
+There is no retry into a partially configured server. Rotation is fetched on the next fresh
+boot; never copy an existing server value through a shell or SSH.
+
+`pnpm claim` is an explicit onboarding exception, not normal startup: it fetches no database
+credential, cannot construct a database, and its outer HTTP gate keeps ordinary traffic closed
+even after successful claim. All localhost or host config remains non-secret.
+
+### Kernel-issued self-secrets
 
 Root `imajin.app.json` declares the session and ticket QR recipes (names and kinds only).
 The kernel issues and seals missing declarations during provision/claim. For an already
@@ -68,11 +99,11 @@ registered app, select **Sync manifest secrets** on `/jin` and countersign the p
 Never generate, see, paste or copy the resulting credentials.
 
 After establishing the bootstrap keystore, events awaits the published
-`@ima-jin/auth-client@0.8.18` app-keystore `loadFromVault` for each required declaration.
+`@ima-jin/auth-client@0.8.24` app-keystore `loadFromVault` for each kernel-issued declaration.
 Only after both load successfully does it activate the signing identity. Session and
 ticket QR signing/verification read these values lazily from shared server memory;
 imports and builds need no credentials. No value is persisted, logged or assigned to env,
-and stale env entries are ignored with a names-only deletion warning. Without a keystore the existing browser claim gate remains;
+and stale env entries are ignored with a names-only deletion warning. The explicit claim-only browser gate remains;
 the claim exchange also waits for the vault before activating.
 
 A refused, missing or unreachable secret aborts boot with a value-free line naming the

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Operator-only deploy, never invoked by CI. No tracing: env contains secrets.
+# Operator-only deploy, never invoked by CI. No tracing or credential output.
 set -euo pipefail
 
 fail() { printf 'deploy: %s\n' "$*" >&2; exit 1; }
@@ -37,7 +37,7 @@ main() {
         if (app) {
           const env = app.pm2_env;
           if (env.pm_cwd !== process.argv[2] ||
-              env.pm_exec_path !== process.argv[2] + "/node_modules/next/dist/bin/next") process.exit(1);
+              env.pm_exec_path !== process.argv[2] + "/scripts/start.ts") process.exit(1);
           process.stdout.write("present");
         }
       } catch { process.exit(1); }
@@ -54,10 +54,10 @@ main() {
   node scripts/check-env.mjs "$target"
   pnpm install --frozen-lockfile
   node --env-file=.env.local node_modules/next/dist/bin/next build
-  node --env-file=.env.local scripts/migrate-baseline.mjs
-  node --env-file=.env.local node_modules/drizzle-kit/bin.cjs migrate
+  node --import=tsx --env-file=.env.local scripts/migrate-baseline.mjs
+  node --import=tsx --env-file=.env.local scripts/migrate.mjs
 
-  # Only after validation/build/baseline succeed. First claim happens in the browser.
+  # Only after validation/build/vault-backed migrations succeed. First claim is separate.
   if [[ "$existing" == "present" ]]; then
     pm2 restart ecosystem.config.cjs --only "$name" --update-env
   else

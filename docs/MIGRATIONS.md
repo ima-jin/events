@@ -17,23 +17,35 @@ Concretely, for this app:
   `auth`, `profile`, …) or another app's schema. Every interaction with kernel-owned data goes
   through the kernel's public HTTP API (`IMAJIN_AUTH_URL`), authenticated the same way any
   other caller would be — see `docs/REGISTRATION.md` and `AGENTS.md` §2.
-- `DATABASE_URL` in this app's own `.env.local` points at this app's own Postgres database (or
+- Runtime `DATABASE_URL` is operator-supplied through the kernel vault, never `.env.local`.
+  It points at this app's own Postgres database (or
   a database this app has been granted a role scoped to `APP_DB_SCHEMA` in) — never the
   kernel's database.
 - `APP_DB_SCHEMA` is set once, at registration time, and never changed afterwards. Renaming it
   would orphan every existing migration's tracking state.
 
 ## Workflow
+The baseline and programmatic migration runners load the operator-supplied database
+credential through the published `loadFromVault`, using the app DID, kernel URL and bootstrap
+keystore with key `DATABASE_URL`, `onMissing: 'fail'`. Neither reads a database credential
+from env. Provision through `/jin` **App secrets set/rotate** and owner countersign first.
+Never populate a server env file, shell or command with a real database credential.
 
 ```bash
 pnpm db:generate   # diff src/db/schema.ts against migrations/ and write new SQL
-pnpm db:migrate     # apply pending migrations in migrations/ to DATABASE_URL
-pnpm db:studio      # browse this app's own schema
+pnpm db:migrate    # vault fetch, then programmatic Drizzle migrator for events only
 ```
 
 `migrations/` is committed. `drizzle.config.ts` scopes `drizzle-kit` to `APP_DB_SCHEMA` only
 (`schemaFilter`), so `pnpm db:generate` can never emit a migration for a table outside this
 app's own schema.
+Generation does not need a database connection. `db:studio` is restricted to disposable
+test/CI databases, not deployed credentials.
+
+Only explicit `MIGRATIONS_TEST_DATABASE_URL` plus `NODE_ENV=test` or `CI=true` may bypass
+the vault in isolated tests/CI. `DATABASE_URL` is ignored even there. Deploy preflight
+forbids the test override and clears inherited copies. CI's migration job uses only its
+dedicated disposable database; no deployed values are available to that job.
 
 ## The events baseline (ima-jin/imajin-ai#2514)
 
@@ -63,8 +75,8 @@ are rewritten by adoption.
 Use this app's own database credential, scoped to `events`, and review a dry run first:
 
 ```bash
-node --env-file=.env.local scripts/migrate-baseline.mjs --dry-run
-node --env-file=.env.local scripts/migrate-baseline.mjs
+node --import=tsx --env-file=.env.local scripts/migrate-baseline.mjs --dry-run
+node --import=tsx --env-file=.env.local scripts/migrate-baseline.mjs
 pnpm db:migrate
 ```
 
@@ -101,7 +113,7 @@ expressions; resolve a mismatch manually rather than bypassing validation.
 
 `pnpm exec vitest run scripts/__tests__/baseline` runs unit tests without connecting to a database. Real Postgres
 tests run **only** when `EVENTS_BASELINE_TEST_DATABASE_URL` is explicitly set to a dedicated disposable database;
-they do not use `DATABASE_URL` or the dummy URL in `test/setup-env.ts`. The integration fixture resets only the
+they do not use runtime `DATABASE_URL`. The integration fixture resets only the
 `events` schema in that disposable database. Never point the test variable at a deployed or shared app database.
 
 CI (`.github/workflows/ci.yml`, job `Migrations (Postgres)`) runs `pnpm db:migrate` against an empty Postgres,

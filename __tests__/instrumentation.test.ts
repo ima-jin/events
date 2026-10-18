@@ -1,7 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const { bootstrapSigningIdentityMock } = vi.hoisted(() => ({
+const { bootstrapSigningIdentityMock, getServerConfigMock, isClaimOnlyMock } = vi.hoisted(() => ({
   bootstrapSigningIdentityMock: vi.fn(),
+  getServerConfigMock: vi.fn(() => ({ databaseUrl: 'FAKE_TEST_DATABASE_ONLY' })),
+  isClaimOnlyMock: vi.fn(() => false),
+}));
+vi.mock('@/lib/vault-boot', () => ({
+  getServerConfig: getServerConfigMock,
+  isClaimOnly: isClaimOnlyMock,
 }));
 
 vi.mock('@/lib/signing-identity', () => ({
@@ -64,5 +70,25 @@ describe('register', () => {
     await register();
 
     expect(bootstrapSigningIdentityMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a direct Next startup that bypasses vault configuration', async () => {
+    vi.stubEnv('NEXT_RUNTIME', 'nodejs');
+    vi.stubEnv('IMAJIN_APP_PRIVATE_KEY', '');
+    vi.stubEnv('IMAJIN_APP_DID', 'did:imajin:app-under-test');
+    getServerConfigMock.mockImplementationOnce(() => { throw new Error('FAKE_CONFIG_UNAVAILABLE'); });
+    const { register } = await import('../instrumentation');
+    await expect(register()).rejects.toThrow('FAKE_CONFIG_UNAVAILABLE');
+    expect(bootstrapSigningIdentityMock).not.toHaveBeenCalled();
+  });
+
+  it('allows the explicit claim-only listener without database configuration', async () => {
+    vi.stubEnv('NEXT_RUNTIME', 'nodejs');
+    vi.stubEnv('IMAJIN_APP_PRIVATE_KEY', '');
+    vi.stubEnv('IMAJIN_APP_DID', 'did:imajin:app-under-test');
+    isClaimOnlyMock.mockReturnValueOnce(true);
+    const { register } = await import('../instrumentation');
+    await register();
+    expect(bootstrapSigningIdentityMock).toHaveBeenCalledOnce();
   });
 });

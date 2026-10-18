@@ -8,7 +8,6 @@ import { getClient } from '@/db';
 import { verifyTicketQrToken } from '@/lib/ticket-qr-token';
 
 const log = createLogger('events');
-const sql = getClient();
 
 interface CheckinWebhookParams {
   eventId: string;
@@ -19,6 +18,7 @@ interface CheckinWebhookParams {
 
 /** Fire the optional CHECKIN_WEBHOOK_URL notification. Failures are logged by the caller, never surfaced. */
 async function sendCheckinWebhook(webhookUrl: string, params: CheckinWebhookParams): Promise<void> {
+  const sql = getClient();
   const { eventId, ticketId, ownerDid, checkedInAt } = params;
   const [countRow] = await sql`
     SELECT COUNT(*) as count FROM events.tickets
@@ -65,6 +65,7 @@ export async function POST(
       return NextResponse.json({ error: 'Invalid or expired ticket QR token' }, { status: 400 });
     }
 
+    const sql = getClient();
     const [ticket] = await sql`
       SELECT id, status, used_at, owner_did FROM events.tickets
       WHERE id = ${ticketId} AND event_id = ${id}

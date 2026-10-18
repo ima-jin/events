@@ -203,16 +203,16 @@ describe('runner transaction safety', () => {
 });
 
 describe('CLI secret-safe errors and statuses', () => {
-  const env = { DATABASE_URL: 'postgres://sensitive:password@invalid/db' };
+  const env = { MIGRATIONS_TEST_DATABASE_URL: 'FAKE_TEST_DATABASE_ONLY', NODE_ENV: 'test' };
   const output = () => ({ log: vi.fn(), error: vi.fn() });
   it('does not echo arbitrary arguments, connection strings or driver errors', async () => {
     const logger = output();
-    expect(await cli([env.DATABASE_URL], env, undefined, logger)).toBe(2);
+    expect(await cli([env.MIGRATIONS_TEST_DATABASE_URL], env, undefined, logger)).toBe(2);
     expect(await cli([], {}, undefined, logger)).toBe(2);
     expect(await cli([], { ...env, APP_DB_SCHEMA: 'other' }, undefined, logger)).toBe(2);
-    const connect = () => { throw new Error(env.DATABASE_URL); };
+    const connect = () => { throw new Error(env.MIGRATIONS_TEST_DATABASE_URL); };
     expect(await cli([], env, connect, logger)).toBe(2);
-    expect(JSON.stringify(logger.error.mock.calls)).not.toContain('password');
+    expect(JSON.stringify(logger.error.mock.calls)).not.toContain(env.MIGRATIONS_TEST_DATABASE_URL);
   });
   it.each(['fresh', 'dry', 'baseline', 'recorded', 'mismatch', 'connection'])('reports %s safely and closes client', async (mode) => {
     const schema = fresh();
@@ -220,14 +220,14 @@ describe('CLI secret-safe errors and statuses', () => {
     if (mode === 'recorded') schema.__drizzle_migrations = trackingTable();
     if (mode === 'mismatch') delete schema.events;
     const client = catalogClient(schema, history, mode !== 'fresh');
-    if (mode === 'connection') client.unsafe.mockRejectedValue(new Error(env.DATABASE_URL));
-    client.end.mockRejectedValueOnce(new Error(env.DATABASE_URL));
+    if (mode === 'connection') client.unsafe.mockRejectedValue(new Error(env.MIGRATIONS_TEST_DATABASE_URL));
+    client.end.mockRejectedValueOnce(new Error(env.MIGRATIONS_TEST_DATABASE_URL));
     const logger = output();
     const result = await cli(mode === 'dry' ? ['--dry-run'] : [], env, () => client, logger);
     const expectedCode = { mismatch: 1, connection: 2 }[mode] ?? 0;
     expect(result).toBe(expectedCode);
     expect(client.end).toHaveBeenCalled();
-    expect(JSON.stringify(logger.error.mock.calls)).not.toContain('password');
+    expect(JSON.stringify(logger.error.mock.calls)).not.toContain(env.MIGRATIONS_TEST_DATABASE_URL);
   });
   it('keeps migration SQL destructive operations out of baseline runtime', () => {
     const source = readFileSync(new URL('../../lib/migrate-baseline-core.mjs', import.meta.url), 'utf8');

@@ -24,6 +24,11 @@ if (existsSync(envPath)) {
   }
 }
 
+// Generation needs no credential. Studio is confined to disposable test/CI databases;
+// deployed baseline/migration operations use the vault-aware programmatic runners.
+const testMode = process.env.CI === 'true' || process.env.NODE_ENV === 'test';
+const testDatabaseUrl = testMode ? process.env.MIGRATIONS_TEST_DATABASE_URL : undefined;
+
 const appSchemaName = process.env.APP_DB_SCHEMA;
 if (!appSchemaName) {
   throw new Error('APP_DB_SCHEMA is not set — see .env.example and docs/MIGRATIONS.md.');
@@ -33,9 +38,7 @@ export default defineConfig({
   schema: './src/db/schema.ts',
   out: './migrations',
   dialect: 'postgresql',
-  dbCredentials: {
-    url: process.env.DATABASE_URL!,
-  },
+  dbCredentials: testDatabaseUrl ? { url: testDatabaseUrl } : undefined,
   schemaFilter: [appSchemaName],
   // Keep drizzle's own migration-tracking table inside this app's schema —
   // the default is a `drizzle` schema, which would be state outside what the

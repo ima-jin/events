@@ -10,10 +10,9 @@ function eventsApp(target, port) {
     name,
     cwd,
     // Exec the listener, not an npm/pnpm wrapper that can orphan next-server.
-    script: 'node_modules/next/dist/bin/next',
-    args: `start -p ${port}`,
+    script: 'scripts/start.ts',
     interpreter: 'node',
-    node_args: `--env-file=${path.join(cwd, '.env.local')}`,
+    node_args: `--import=tsx --env-file=${path.join(cwd, '.env.local')}`,
     exec_mode: 'fork',
     env: { PORT: port, NODE_ENV: 'production' },
     out_file: path.join(logDir, `${name}-out.log`),
