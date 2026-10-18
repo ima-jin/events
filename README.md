@@ -1,3 +1,4 @@
+Operator-supplied credential adoption is tracked in [#61](https://github.com/ima-jin/events/issues/61).
 # imajin-events
 
 > Forked from [`ima-jin/imajin-app-template`](https://github.com/ima-jin/imajin-app-template). **Read
