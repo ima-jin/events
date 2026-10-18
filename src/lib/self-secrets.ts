@@ -19,7 +19,7 @@ export function warnIgnoredSelfSecretEnv(): void {
 export async function loadSelfSecrets(appDid: string): Promise<void> {
   const store = globalThis as SecretStore;
   delete store[SELF_SECRETS];
-  const values = await manifest.secrets.reduce<Promise<Record<SecretName, string>>>(
+  const values = await manifest.secrets.filter(({ kind }) => kind === 'random-32B').reduce<Promise<Record<SecretName, string>>>(
     async (pending, declaration) => {
       const loaded = await pending;
       const name = declaration.name as SecretName;
