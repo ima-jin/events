@@ -1,4 +1,5 @@
 import { createLogger } from '@ima-jin/logger';
+import { getPayAppToken, invalidatePayAppToken } from './pay-app-token';
 
 /**
  * Public kernel API client — the ONLY way this app reads or writes anything
@@ -6,7 +7,8 @@ import { createLogger } from '@ima-jin/logger';
  * chat). The kernel's Postgres schemas are never touched directly; see
  * docs/MIGRATIONS.md.
  *
- * Calls authenticate with this app's registration credentials:
+ * Legacy calls use registration headers; scoped helpers below use the app's
+ * existing service JWT without forwarding caller cookies:
  *   X-App-DID            — IMAJIN_APP_DID
  *   X-App-Authorization  — IMAJIN_APP_ATTESTATION_ID (service-level attestation)
  *
@@ -100,6 +102,44 @@ export async function kernelFetch<T>(path: string, options: KernelFetchOptions =
   }
 }
 
+/** Narrow transport for scoped app reads/private delivery, not a global credential. */
+async function scopedAppFetch<T>(
+  service: KernelService,
+  path: string,
+  body?: unknown,
+  refreshOnce = false,
+): Promise<T | null> {
+  const base = serviceUrl(service);
+  if (!base) return null;
+  try {
+    const serialized = body === undefined ? undefined : JSON.stringify(body);
+    const send = async () => fetch(`${base}${path}`, {
+      method: serialized === undefined ? 'GET' : 'POST',
+      headers: {
+        ...(serialized === undefined ? {} : { 'Content-Type': 'application/json' }),
+        Authorization: `Bearer ${await getPayAppToken()}`,
+      },
+      body: serialized,
+      cache: 'no-store',
+      redirect: 'error',
+      signal: AbortSignal.timeout(15_000),
+    });
+    let response = await send();
+    if (response.status === 401) {
+      await invalidatePayAppToken();
+      if (refreshOnce) response = await send();
+    }
+    if (!response.ok) {
+      log.warn({ service, status: response.status }, 'Scoped kernel call refused');
+      return null;
+    }
+    return await response.json() as T;
+  } catch {
+    log.warn({ service }, 'Scoped kernel call unavailable');
+    return null;
+  }
+}
+
 // ─── Profiles / identities ────────────────────────────────────────────────
 
 export interface ResolvedProfile {
@@ -115,7 +155,7 @@ const MAX_RESOLVE_BATCH = 200;
 /**
  * Batched DID → profile lookup via `POST /profile/api/resolve`. Handle and
  * display name are public; `email` is only returned when the kernel grants
- * this caller service scope (gap(kernel): registered-app email scope).
+ * this app the approved email scope AND a qualifying per-person relationship.
  */
 export async function resolveProfiles(dids: string[]): Promise<Map<string, ResolvedProfile>> {
   const result = new Map<string, ResolvedProfile>();
@@ -127,7 +167,7 @@ export async function resolveProfiles(dids: string[]): Promise<Map<string, Resol
   }
   const responses = await Promise.all(
     batches.map((dids) =>
-      kernelFetch<{ results?: ResolvedProfile[] }>('/profile/api/resolve', { method: 'POST', body: { dids } })
+      scopedAppFetch<{ results?: ResolvedProfile[] }>('profile', '/api/resolve', { dids }, true)
     )
   );
   for (const data of responses) {
@@ -165,42 +205,34 @@ interface PodMember {
 /**
  * True when `did` is an active member of the pod with one of `roles`.
  *
- * gap(kernel): `GET /connections/api/pods/{id}` is session-authenticated, so
- * this only resolves when the caller's own cookie can be forwarded. An
- * app-token-only caller fails closed (not an organizer) until the kernel
- * exposes an app-auth pod-membership route. See docs/KERNEL-GAPS.md.
+ * Requires app scope and the pod owner's live OAuth grant. No cookie is forwarded.
  */
 export async function isPodMember(
   podId: string,
   did: string,
   roles: readonly string[] = ORGANIZER_POD_ROLES,
-  callerCookie?: string | null
+  _callerCookie?: string | null
 ): Promise<boolean> {
-  const data = await kernelFetch<{ members?: PodMember[] }>(
-    `/connections/api/pods/${encodeURIComponent(podId)}`,
-    { headers: callerCookie ? { Cookie: callerCookie } : undefined }
+  const data = await scopedAppFetch<{ members?: PodMember[] }>(
+    'connections', `/api/apps/pods/${encodeURIComponent(podId)}/members`,
   );
-  return (data?.members ?? []).some((m) => m.did === did && roles.includes(m.role) && !m.removedAt);
+  return Array.isArray(data?.members)
+    && data.members.some((m) => m?.did === did && roles.includes(m.role) && !m.removedAt);
 }
 
-/**
- * Pod ids the caller belongs to (`GET /connections/api/pods`, caller-scoped).
- * gap(kernel): there is no route for "pods DID X belongs to" for a third
- * party, so this returns [] unless `callerCookie` belongs to `did` itself.
- */
-export async function listMemberPodIds(callerCookie?: string | null): Promise<string[]> {
-  if (!callerCookie) return [];
-  const data = await kernelFetch<{ pods?: { id: string }[] }>('/connections/api/pods', {
-    headers: { Cookie: callerCookie },
-  });
-  return (data?.pods ?? []).map((pod) => pod.id);
+/** Active direct memberships of the explicit DID, filtered by pod-owner consent. */
+export async function listMemberPodIds(did: string): Promise<string[]> {
+  const data = await scopedAppFetch<{ podIds?: string[] }>(
+    'connections', `/api/apps/pods?did=${encodeURIComponent(did)}`,
+  );
+  return Array.isArray(data?.podIds)
+    ? data.podIds.filter((id): id is string => typeof id === 'string')
+    : [];
 }
 
 // ─── Eligibility / contact backfill / onboarding ──────────────────────────
-// gap(kernel): these are gated by a kernel-internal API key today, so a
-// registered app may be refused. They are best-effort in the kernel version
-// too; here they call the documented route and degrade to a no-op when the
-// kernel refuses. See docs/KERNEL-GAPS.md.
+// gap(kernel): eligibility still lacks registered-app authority; contact and
+// onboarding use the scoped public contracts below. See docs/KERNEL-GAPS.md.
 
 /** Ask the kernel to (re)evaluate a DID's tier eligibility after check-in. */
 export async function evaluateEligibility(did: string): Promise<{ upgraded?: boolean } | null> {
@@ -212,23 +244,61 @@ export async function evaluateEligibility(did: string): Promise<{ upgraded?: boo
 
 /** Backfill a DID's contact email (NULL-guarded server-side — never overwrites). */
 export async function backfillContactEmail(did: string, email: string): Promise<boolean> {
-  const result = await kernelFetch<{ ok?: boolean }>(
-    `/auth/api/identity/${encodeURIComponent(did)}/contact`,
-    { method: 'POST', body: { email } }
+  const result = await scopedAppFetch<{ did: string; contactEmail: null; backfilled: boolean }>(
+    'auth', `/api/identity/${encodeURIComponent(did)}/contact`, { email }, true,
   );
   return result !== null;
 }
 
-/**
- * Mint a magic-link onboard token to embed in a buyer's ticket email.
- *
- * gap(kernel): the kernel version inserted a row into `auth.onboard_tokens`
- * directly. The public `POST /auth/api/onboard` is NOT a substitute — it
- * sends its own verification email and returns no token — so there is no
- * public way for a registered app to mint one. Always resolves to null; every
- * caller already treats a missing token as non-fatal (the email is sent
- * without the magic link). See docs/KERNEL-GAPS.md.
- */
-export function createOnboardToken(): Promise<string | null> {
-  return Promise.resolve(null);
+/** Kernel-private email for an eligible confirmed hosted checkout; never returns a credential. */
+export async function sendOrderOnboard(transactionId: string): Promise<boolean> {
+  if (!transactionId) return false;
+  const result = await scopedAppFetch<{ status?: string }>(
+    'auth', '/api/onboard/send', { transactionId }, true,
+  );
+  return result?.status === 'sent';
+}
+
+export interface OrderPayment {
+  transactionId: string;
+  sessionId: string;
+  metadata: Record<string, string>;
+}
+
+const PAYMENT_METADATA_KEYS = ['orderId', 'order_id', 'eventId', 'event_id', 'service', 'type'];
+
+function parseOrderPayment(value: unknown, requested: Set<string>): OrderPayment | null {
+  if (!value || typeof value !== 'object') return null;
+  const row = value as Record<string, unknown>;
+  if (typeof row.transactionId !== 'string' || !row.transactionId
+    || typeof row.sessionId !== 'string' || !requested.has(row.sessionId)) return null;
+  const metadata: Record<string, string> = {};
+  if (row.metadata && typeof row.metadata === 'object') {
+    const source = row.metadata as Record<string, unknown>;
+    for (const key of PAYMENT_METADATA_KEYS) {
+      const entry = source[key];
+      if (typeof entry === 'string' && entry.length <= 200) metadata[key] = entry;
+    }
+  }
+  return { transactionId: row.transactionId, sessionId: row.sessionId, metadata };
+}
+
+/** Best-effort descriptive payment enrichment, never proof of payment. */
+export async function lookupOrderPayments(sellerDid: string, sessionIds: (string | null)[]): Promise<OrderPayment[]> {
+  if (!sellerDid) return [];
+  const unique = [...new Set(sessionIds.filter((id): id is string => typeof id === 'string' && id.length > 0))];
+  const payments: OrderPayment[] = [];
+  for (let offset = 0; offset < unique.length; offset += 100) {
+    const batch = unique.slice(offset, offset + 100);
+    const data = await scopedAppFetch<{ transactions?: unknown[] }>(
+      'pay', '/api/transactions/lookup', { sellerDid, sessionIds: batch },
+    );
+    if (!Array.isArray(data?.transactions)) return [];
+    const requested = new Set(batch);
+    for (const value of data.transactions) {
+      const payment = parseOrderPayment(value, requested);
+      if (payment) payments.push(payment);
+    }
+  }
+  return payments;
 }
