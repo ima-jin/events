@@ -108,9 +108,11 @@ async function scopedAppFetch<T>(
   path: string,
   body?: unknown,
   refreshOnce = false,
+  orderId?: string,
 ): Promise<T | null> {
   const base = serviceUrl(service);
   if (!base) return null;
+  const context = orderId ? { service, orderId } : { service };
   try {
     const serialized = body === undefined ? undefined : JSON.stringify(body);
     const send = async () => fetch(`${base}${path}`, {
@@ -130,12 +132,19 @@ async function scopedAppFetch<T>(
       if (refreshOnce) response = await send();
     }
     if (!response.ok) {
-      log.warn({ service, status: response.status }, 'Scoped kernel call refused');
+      if (response.status === 429 && orderId) {
+        log.warn(
+          { ...context, status: 429, retryAfter: response.headers.get('Retry-After') },
+          'Private onboarding rate limited (claim retained; no retry)',
+        );
+      } else {
+        log.warn({ ...context, status: response.status }, 'Scoped kernel call refused');
+      }
       return null;
     }
     return await response.json() as T;
   } catch {
-    log.warn({ service }, 'Scoped kernel call unavailable');
+    log.warn(context, 'Scoped kernel call unavailable');
     return null;
   }
 }
@@ -257,10 +266,10 @@ export async function backfillContactEmail(did: string, email: string): Promise<
 }
 
 /** Kernel-private email for an eligible confirmed hosted checkout; never returns a credential. */
-export async function sendOrderOnboard(transactionId: string): Promise<boolean> {
+export async function sendOrderOnboard(transactionId: string, orderId?: string): Promise<boolean> {
   if (!transactionId) return false;
   const result = await scopedAppFetch<{ status?: string }>(
-    'auth', '/api/onboard/send', { transactionId }, true,
+    'auth', '/api/onboard/send', { transactionId }, true, orderId,
   );
   return result?.status === 'sent';
 }

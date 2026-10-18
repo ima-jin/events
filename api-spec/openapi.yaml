@@ -2660,13 +2660,14 @@ paths:
       operationId: listAttendingEvents
       summary: Upcoming events a DID attends, created or cohosts (profile page feed)
       description: >
-        Public. Invite-only events are included only for the profile owner's own events, or when
-        `viewer_did` also holds a ticket.
+        Public events are visible anonymously. Invite-only created/cohosted events require the
+        authenticated caller DID to equal the profile owner's DID; other invite-only events
+        require the authenticated caller to hold a ticket. `viewer_did` is ignored.
       x-public: true
       security: []
       parameters:
         - { name: did, in: path, required: true, schema: { type: string } }
-        - { name: viewer_did, in: query, schema: { type: string } }
+        - { name: viewer_did, in: query, deprecated: true, description: Ignored; never grants private access, schema: { type: string } }
       responses:
         "200":
           description: Upcoming events, soonest first

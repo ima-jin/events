@@ -125,7 +125,7 @@ describe('sendConfirmationEmails — receipt + bundle', () => {
   it('requests a separate private send while leaving both ordinary email CTAs unchanged', async () => {
     vi.mocked(claimOrderOnboard).mockResolvedValueOnce('tx_stored');
     await sendConfirmationEmails(makeEvent(), [makeTicket()], ORDER_ID);
-    expect(kernel.sendOrderOnboard).toHaveBeenCalledWith('tx_stored');
+    expect(kernel.sendOrderOnboard).toHaveBeenCalledWith('tx_stored', ORDER_ID);
     expect(publishMock).toHaveBeenCalledTimes(2);
     expect(payloadOf('ticket.confirmed').magicLink).toBe(MY_TICKETS);
     expect(payloadOf('ticket.receipt').registrationUrl).toBe(MY_TICKETS);
@@ -183,7 +183,7 @@ describe('sendConfirmationEmails — receipt + bundle', () => {
     expect(payloadOf('ticket.confirmed').magicLink).toBe(MY_TICKETS);
     expect(payloadOf('ticket.receipt').registrationUrl).toBe(MY_TICKETS);
     expect(kernel.sendOrderOnboard).toHaveBeenCalledTimes(1);
-    expect(kernel.sendOrderOnboard).toHaveBeenCalledWith('tx_stored');
+    expect(kernel.sendOrderOnboard).toHaveBeenCalledWith('tx_stored', ORDER_ID);
     expect(publishMock).toHaveBeenCalledTimes(2);
   });
 

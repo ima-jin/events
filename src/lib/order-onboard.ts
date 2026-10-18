@@ -9,7 +9,7 @@ export async function requestOrderOnboard(orderId: string | null): Promise<void>
   if (!orderId) return;
   try {
     const transactionId = await claimOrderOnboard(orderId);
-    if (transactionId) await sendOrderOnboard(transactionId);
+    if (transactionId) await sendOrderOnboard(transactionId, orderId);
   } catch {
     log.warn({ orderId }, 'Private onboarding unavailable (non-fatal)');
   }

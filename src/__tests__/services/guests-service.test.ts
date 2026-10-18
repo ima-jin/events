@@ -362,7 +362,7 @@ describe('listAttendingEvents', () => {
     mocks.listMemberPodIds.mockResolvedValue(['pod_1']);
     mocks.repo.listPodEvents.mockResolvedValue([attendingRow('e1'), attendingRow('e3', { startsAt: new Date('2026-11-01T00:00:00.000Z') })]);
 
-    const result = await listAttendingEvents(OWNER_DID, null, COOKIE);
+    const result = await listAttendingEvents(OWNER_DID, null);
 
     expect(mocks.listMemberPodIds).toHaveBeenCalledWith(OWNER_DID);
     expect(result.map((r) => r.eventId)).toEqual(['e3', 'e1', 'e2']);
@@ -377,17 +377,25 @@ describe('listAttendingEvents', () => {
     expect(result[0]).toMatchObject({ endDate: null, venue: null, imageUrl: null });
   });
 
-  it('hides invite-only events from a viewer without a ticket, but keeps the owner\'s own', async () => {
-    mocks.repo.listTicketedEvents.mockResolvedValue([attendingRow('priv_ticket', { accessMode: 'invite_only' })]);
-    mocks.repo.listCreatedEvents.mockResolvedValue([attendingRow('priv_created', { accessMode: 'invite_only' })]);
-    mocks.listMemberPodIds.mockResolvedValue(['pod_1']);
-    mocks.repo.listPodEvents.mockResolvedValue([attendingRow('priv_cohost', { accessMode: 'invite_only' })]);
+  it.each([null, 'did:imajin:other', OWNER_DID])(
+    'only exposes private created/cohosted events to the authenticated owner: %s',
+    async (viewerDid) => {
+      mocks.repo.listTicketedEvents.mockResolvedValue([attendingRow('priv_ticket', { accessMode: 'invite_only' })]);
+      mocks.listMemberPodIds.mockResolvedValue(['pod_1']);
+      mocks.repo.listCreatedEvents.mockResolvedValue([
+        attendingRow('priv_created', { accessMode: 'invite_only' }), attendingRow('public_created'),
+      ]);
+      mocks.repo.listPodEvents.mockResolvedValue([
+        attendingRow('priv_cohost', { accessMode: 'invite_only' }), attendingRow('public_cohost'),
+      ]);
+      const result = await listAttendingEvents(OWNER_DID, viewerDid);
 
-    const result = await listAttendingEvents(OWNER_DID, null);
-
-    expect(result.map((r) => r.eventId).sort()).toEqual(['priv_cohost', 'priv_created']);
-    expect(mocks.repo.listHeldEventIds).not.toHaveBeenCalled();
-  });
+      const expected = ['public_cohost', 'public_created'];
+      if (viewerDid === OWNER_DID) expected.push('priv_cohost', 'priv_created');
+      expect(result.map((r) => r.eventId).sort()).toEqual(expected.toSorted());
+      if (viewerDid === null) expect(mocks.repo.listHeldEventIds).not.toHaveBeenCalled();
+    },
+  );
 
   it('shows an invite-only event to a viewer who also holds a ticket', async () => {
     mocks.repo.listTicketedEvents.mockResolvedValue([
@@ -409,7 +417,7 @@ describe('listAttendingEvents', () => {
     mocks.repo.listPodEvents.mockImplementation(async (podIds: string[]) =>
       podIds.includes('owner_pod') ? [attendingRow('owner_cohost')] : [attendingRow('viewer_cohost')]);
 
-    const result = await listAttendingEvents(OWNER_DID, viewerDid, 'session=viewer');
+    const result = await listAttendingEvents(OWNER_DID, viewerDid);
 
     expect(mocks.listMemberPodIds).toHaveBeenCalledTimes(1);
     expect(mocks.listMemberPodIds).toHaveBeenCalledWith(OWNER_DID);
