@@ -1,5 +1,6 @@
 import { serviceUrl } from '@/lib/kernel';
 import { requestOrderOnboard } from '@/lib/order-onboard';
+import { withHostedOrderExpiry } from '@/lib/hosted-order-expiry';
 import type { Order } from '@/db/schema';
 /**
  * POST /api/webhook/payment
@@ -139,7 +140,7 @@ async function findWebhookOrder(sessionId: string): Promise<Order | undefined> {
     .from(orders)
     .where(eq(orders.stripeSessionId, sessionId))
     .limit(1);
-  return existingOrder;
+  return existingOrder ? withHostedOrderExpiry(existingOrder) : undefined;
 }
 
 async function loadWebhookEvent(eventId: string) {
@@ -348,7 +349,9 @@ async function handleCheckoutCompleted(payload: PaymentWebhookPayload) {
 
   // Idempotency: check if an order for this Stripe session already exists
   const hostedOrder = await findWebhookOrder(sessionId);
-  if (hostedOrder && hostedOrder.status !== 'pending') {
+  // Read-time expiry is not proof of nonpayment. Verified delayed completions
+  // still promote the stored pending row atomically, with all checks below.
+  if (hostedOrder && !['pending', 'expired'].includes(hostedOrder.status)) {
     log.info({ sessionId }, 'Duplicate webhook — order already exists for session');
     return;
   }

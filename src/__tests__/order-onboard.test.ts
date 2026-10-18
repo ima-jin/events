@@ -22,7 +22,7 @@ describe('private order onboarding', () => {
     await requestOrderOnboard('ord_local');
     expect(mocks.claimOrderOnboard).toHaveBeenCalledWith('ord_local');
     expect(mocks.sendOrderOnboard).toHaveBeenCalledTimes(1);
-    expect(mocks.sendOrderOnboard).toHaveBeenCalledWith('tx_stored');
+    expect(mocks.sendOrderOnboard).toHaveBeenCalledWith('tx_stored', 'ord_local');
   });
 
   it('does not call the kernel without an order', async () => {

@@ -106,6 +106,32 @@ describe('app pod membership', () => {
 });
 
 describe('kernel-private onboarding', () => {
+  it.each(['120', 'Wed, 21 Oct 2026 07:28:00 GMT', null])(
+    'warns distinctly with order id and Retry-After %s, without retrying a 429',
+    async (retryAfter) => {
+      const headers = retryAfter ? { 'Retry-After': retryAfter } : undefined;
+      fetchMock.mockResolvedValue(new Response('private response body', { status: 429, headers }));
+      expect(await sendOrderOnboard('tx_private', 'ord_local')).toBe(false);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith(
+        { service: 'auth', orderId: 'ord_local', status: 429, retryAfter },
+        'Private onboarding rate limited (claim retained; no retry)',
+      );
+      expect(JSON.stringify(warn.mock.calls)).not.toContain('private response body');
+      expect(JSON.stringify(warn.mock.calls)).not.toContain('tx_private');
+    },
+  );
+
+  it('logs non-rate-limit refusals separately with the order id', async () => {
+    fetchMock.mockResolvedValue(reply({ error: 'private details' }, 503));
+    expect(await sendOrderOnboard('tx_private', 'ord_local')).toBe(false);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(
+      { service: 'auth', orderId: 'ord_local', status: 503 }, 'Scoped kernel call refused',
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
   it('posts only the stored kernel transaction reference and returns status only', async () => {
     fetchMock.mockResolvedValue(reply({ status: 'sent' }));
     expect(await sendOrderOnboard('tx_1')).toBe(true);

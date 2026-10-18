@@ -1,11 +1,12 @@
 import { and, eq, sql } from 'drizzle-orm';
 import { db, events, orders, tickets, ticketTypes, type Event, type NewOrder, type Order } from '@/db';
 import type { TicketInsert } from '@/repositories/tickets-repository';
+import { withHostedOrderExpiry } from '@/lib/hosted-order-expiry';
 
 /** Order by id, or null when it does not exist. */
 export async function findOrderById(orderId: string): Promise<Order | null> {
   const [row] = await db.select().from(orders).where(eq(orders.id, orderId)).limit(1);
-  return row ?? null;
+  return row ? withHostedOrderExpiry(row) : null;
 }
 
 /** Insert an order row and return it as stored. */

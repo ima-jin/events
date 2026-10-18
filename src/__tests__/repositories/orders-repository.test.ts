@@ -99,6 +99,14 @@ describe('stored hosted checkout lifecycle', () => {
 });
 
 describe('findOrderById', () => {
+  it('returns stale pending hosted orders as expired without a database write', async () => {
+    const order = makeOrder({
+      status: 'pending', stripeSessionId: 'cs_stored', createdAt: new Date('2020-01-01'),
+    });
+    dbMock.queue([order]);
+    expect(await findOrderById(ORDER_ID)).toEqual({ ...order, status: 'expired' });
+    expect(dbMock.methods()).toEqual(['select', 'from', 'where', 'limit']);
+  });
   it('returns the order row', async () => {
     const order = makeOrder();
     dbMock.queue([order]);

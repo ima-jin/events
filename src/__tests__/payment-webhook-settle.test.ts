@@ -282,6 +282,31 @@ describe('POST /api/webhook/payment — kernel signatures', () => {
 });
 
 describe('POST /api/webhook/payment — BYO card rail (kernel #2766: the kernel already settled it)', () => {
+  it('fulfils a delayed verified payment even after read-time expiry, retaining its stored reference', async () => {
+    const stored = {
+      id: 'ord_saved', eventId: EVENT.id, paymentMethod: 'stripe', status: 'pending',
+      stripeSessionId: 'cs_1', createdAt: new Date('2020-01-01'),
+      amountTotal: 5000, currency: 'CAD', metadata: { kernelTransactionId: 'tx_saved' },
+    };
+    mocks.selectQueue[0] = [stored];
+    expect((await callRoute()).status).toBe(200);
+    expect(mocks.createOrderWithTickets).toHaveBeenCalledWith(expect.objectContaining({
+      hostedOrder: { ...stored, status: 'expired' },
+    }));
+    expect(stored.status).toBe('pending');
+    expect(mocks.requestOrderOnboard).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not let read-time expiry bypass payment validation', async () => {
+    mocks.selectQueue[0] = [{
+      id: 'ord_saved', eventId: EVENT.id, paymentMethod: 'stripe', status: 'pending',
+      stripeSessionId: 'cs_1', createdAt: new Date('2020-01-01'),
+      amountTotal: 5000, currency: 'CAD',
+    }];
+    expect((await callRoute({ ...PAYLOAD, amountTotal: 1 })).status).toBe(200);
+    expect(mocks.createOrderWithTickets).not.toHaveBeenCalled();
+    expect(mocks.requestOrderOnboard).not.toHaveBeenCalled();
+  });
   it('returns 500 on failed atomic fulfillment, then fulfills a freshly signed redelivery of the still-pending order', async () => {
     const stored = {
       id: 'ord_saved', eventId: EVENT.id, paymentMethod: 'stripe', status: 'pending',
