@@ -1,5 +1,5 @@
-Operator-supplied credential adoption is tracked in [#61](https://github.com/ima-jin/events/issues/61).
 # imajin-events
+Operator-supplied credential adoption is tracked in [#61](https://github.com/ima-jin/events/issues/61).
 
 > Forked from [`ima-jin/imajin-app-template`](https://github.com/ima-jin/imajin-app-template). **Read
 > [`AGENTS.md`](./AGENTS.md) first** — it defines the boundary this app must not cross.
@@ -42,23 +42,25 @@ Identity minting and cutover remain operator steps (ima-jin/imajin-ai#2518, #252
 2. **Register this app with the kernel** — see [`docs/REGISTRATION.md`](./docs/REGISTRATION.md).
    You'll get back this app's `appDid` and registry `id`.
 3. **Set env**: `cp .env.example .env.local`, then fill in `IMAJIN_APP_DID`,
-   `NEXT_PUBLIC_IMAJIN_APP_ID`, `APP_DB_SCHEMA`, `DATABASE_URL`, `IMAJIN_KERNEL_URL`,
-   then boot unclaimed and paste the operator's one-time code only at `/events/claim`.
-   No env edit or restart is needed to claim. This app refuses to start without `IMAJIN_APP_DID`
+   `NEXT_PUBLIC_IMAJIN_APP_ID`, `APP_DB_SCHEMA`, `IMAJIN_KERNEL_URL` (non-secret config only).
+   Use `pnpm claim` for isolated onboarding and paste the operator's one-time code only at `/events/claim`.
+   Stop that listener and restart normally after vault provisioning. This app refuses to start without `IMAJIN_APP_DID`
    set, or if a raw `IMAJIN_APP_PRIVATE_KEY` is present (see `instrumentation.ts`) — it fetches its
    own signing key at boot via `@ima-jin/auth-client`'s `loadAppSigningKey()` instead; see
    [`docs/REGISTRATION.md`](./docs/REGISTRATION.md).
-4. **Migrate this app's own database** (its own Postgres schema only — see
-   [`docs/MIGRATIONS.md`](./docs/MIGRATIONS.md)):
+4. **Prepare this app's own database** through the separately approved cutover procedure
+   (its own Postgres schema only — see [`docs/MIGRATIONS.md`](./docs/MIGRATIONS.md)).
+   Do not use the legacy env-based migration/deploy tooling for the vault-only release.
    ```bash
    pnpm install
-   pnpm db:migrate   # creates the `events` schema (APP_DB_SCHEMA) and all 8 events tables
    ```
 5. **Run it**:
    ```bash
    pnpm dev
    ```
-   `/api/health` responds immediately; other routes are gated until claimed. After claiming,
+   Normal startup loads `DATABASE_URL` from the vault before importing the server.
+   No credential belongs in `.env.local`; see the `/jin` operator steps in the registration runbook.
+   After claiming and restarting normally,
    `/api/spec` responds and `/api/me` returns your DID once
    you sign in through the header's "Sign in with Imajin" link.
 
@@ -133,7 +135,7 @@ and unavailable verification returns 503.
 
 Organizer messages require creator/co-host authorization and send events' own app-service
 token to notify with approved `notify:broadcast`. The published `@ima-jin/auth-client`
-**0.8.21** token provider is shared with pay calls. Optional reply-to email uses the public
+**0.8.24** token provider is shared with pay calls. Optional reply-to email uses the public
 profile resolver, never an internal contact credential. Token mint failures fail closed (503);
 notify rejection fails closed (502), without a legacy credential retry.
 The kernel operator completes signer provisioning through the approved vault/tool step and
@@ -188,7 +190,7 @@ Published `@ima-jin/*` packages (e.g. `@ima-jin/auth-client`, `@ima-jin/config`,
 npmjs.org, the default registry — no `.npmrc` scoping and no auth token needed to install them:
 
 ```bash
-pnpm add --save-exact @ima-jin/auth@0.8.18 @ima-jin/auth-client@0.8.21
+pnpm add --save-exact @ima-jin/auth@0.8.18 @ima-jin/auth-client@0.8.24
 ```
 
 ## Layout
@@ -216,9 +218,10 @@ This app never reads a raw private key from env. `instrumentation.ts` fails loud
 `IMAJIN_APP_PRIVATE_KEY` is set, and instead calls `@ima-jin/auth-client`'s `loadAppSigningKey()`:
 a one-time operator code, pasted only at `/events/claim`, bootstraps the local `0600`
 keystore (`IMAJIN_APP_KEYSTORE`).
-Without a keystore, the app boots unclaimed rather than crashing; the claim page
-activates the signing identity without a restart. Every later boot re-authenticates with the
-keystore, no operator action needed. See [`docs/REGISTRATION.md`](./docs/REGISTRATION.md#4-fetch-this-apps-own-signing-key-at-boot-7).
+Without a keystore, normal startup fails closed. Explicit `pnpm claim` starts only the
+browser onboarding surface; stop it and restart normally once provisioning is complete.
+Every later boot re-authenticates with the keystore, with no new approval needed.
+See [`docs/REGISTRATION.md`](./docs/REGISTRATION.md#4-fetch-this-apps-own-signing-key-at-boot-7).
 
 ## Mounting under a path prefix
 

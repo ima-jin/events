@@ -18,6 +18,10 @@ import { NextRequest } from 'next/server';
 import { GET as session } from '../../app/api/auth/session/route';
 
 const { cookieGet } = vi.hoisted(() => ({ cookieGet: vi.fn() }));
+vi.mock('@/lib/vault-boot', () => ({
+  getServerConfig: () => ({ databaseUrl: 'FAKE_TEST_DATABASE_ONLY' }),
+  isClaimOnly: () => false,
+}));
 vi.mock('next/headers', () => ({
   cookies: async () => ({ get: cookieGet }),
 }));
@@ -63,14 +67,14 @@ afterEach(() => {
 
 describe('declared app-keystore self-secrets', () => {
   it('boots with no env self-secrets and signs sessions and unchanged ticket-v1 QRs', async () => {
-    expect(manifest.secrets).toEqual([
+    expect(manifest.secrets.filter(({ kind }) => kind === 'random-32B')).toEqual([
       { name: 'SESSION_SECRET', kind: 'random-32B' },
       { name: 'TICKET_QR_SECRET', kind: 'random-32B' },
     ]);
     await register();
     expect(isAppClaimed()).toBe(true);
     expect(getSigningIdentity()).toEqual(identity);
-    for (const { name } of manifest.secrets) {
+    for (const { name } of manifest.secrets.filter(({ kind }) => kind === 'random-32B')) {
       expect(loadFromVault).toHaveBeenCalledWith({
         appDid: APP_DID, kernelUrl: 'https://kernel.test',
         keystorePath: '/fixture/events.dev.keystore.json',
@@ -205,7 +209,7 @@ describe('declared app-keystore self-secrets', () => {
     vi.stubEnv('TICKET_QR_SECRET', 'FAKE_IGNORED_ENV_QR');
     await register();
     expect(console.warn).toHaveBeenCalledTimes(2);
-    for (const { name } of manifest.secrets) {
+    for (const { name } of manifest.secrets.filter(({ kind }) => kind === 'random-32B')) {
       expect(console.warn).toHaveBeenCalledWith(
         `${name} is ignored; it is issued by the kernel vault. Delete it from the env file.`,
       );
@@ -220,6 +224,15 @@ describe('declared app-keystore self-secrets', () => {
   it('does not warn when self-secret env entries are absent', () => {
     warnIgnoredSelfSecretEnv();
     expect(console.warn).not.toHaveBeenCalled();
+  });
+
+  it('warns by name only when an obsolete operator-supplied env entry exists', () => {
+    vi.stubEnv('DATABASE_URL', 'FAKE_IGNORED_DATABASE_ONLY');
+    warnIgnoredSelfSecretEnv();
+    expect(console.warn).toHaveBeenCalledWith(
+      'DATABASE_URL is ignored; it is loaded from the kernel vault. Delete it from the env file.',
+    );
+    expect(JSON.stringify(vi.mocked(console.warn).mock.calls)).not.toContain('FAKE_IGNORED_DATABASE_ONLY');
   });
 
   it('keeps the unclaimed browser gate without fetching anything from the vault', async () => {

@@ -102,10 +102,8 @@ jobs:
     name: Test + build
     runs-on: ubuntu-latest
     env:
-      # `next build` imports every route module to collect page data; src/db/schema.ts
-      # and src/lib/auth.ts read these at import time. Non-secret placeholders only.
+      # Build-time route discovery requires schema/public config, never credentials.
       APP_DB_SCHEMA: events
-      DATABASE_URL: postgres://build:build@localhost:5432/events_build
       NEXT_PUBLIC_APP_URL: http://localhost:3000
     steps:
       - uses: actions/checkout@v4
@@ -169,6 +167,12 @@ jobs:
           else
             echo "No build script — skipping."
           fi
+
+      - name: Verify compiled vault boot with an isolated synthetic kernel
+        if: steps.detect.outputs.has_app == 'true'
+        env:
+          EVENTS_BOOT_INTEGRATION: '1'
+        run: pnpm exec vitest run scripts/__tests__/boot-process.test.ts
 
       - name: Lint (optional)
         if: steps.detect.outputs.has_app == 'true'

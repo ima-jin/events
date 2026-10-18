@@ -17,13 +17,19 @@ Concretely, for this app:
   `auth`, `profile`, …) or another app's schema. Every interaction with kernel-owned data goes
   through the kernel's public HTTP API (`IMAJIN_AUTH_URL`), authenticated the same way any
   other caller would be — see `docs/REGISTRATION.md` and `AGENTS.md` §2.
-- `DATABASE_URL` in this app's own `.env.local` points at this app's own Postgres database (or
+- Runtime `DATABASE_URL` is operator-supplied through the kernel vault, never `.env.local`.
+  It points at this app's own Postgres database (or
   a database this app has been granted a role scoped to `APP_DB_SCHEMA` in) — never the
   kernel's database.
 - `APP_DB_SCHEMA` is set once, at registration time, and never changed afterwards. Renaming it
   would orphan every existing migration's tracking state.
 
 ## Workflow
+The commands below describe the legacy maintenance tooling, not authorization to use it
+with deployed credentials. This app-only vault adoption does not port database maintenance,
+soak or rollback tools. Their env-based credential handoff must be reviewed separately
+under imajin-ai#2241 / #2516 before cutover. Never populate a server env file, shell or
+command with a real database credential to make those tools work.
 
 ```bash
 pnpm db:generate   # diff src/db/schema.ts against migrations/ and write new SQL
@@ -101,7 +107,7 @@ expressions; resolve a mismatch manually rather than bypassing validation.
 
 `pnpm exec vitest run scripts/__tests__/baseline` runs unit tests without connecting to a database. Real Postgres
 tests run **only** when `EVENTS_BASELINE_TEST_DATABASE_URL` is explicitly set to a dedicated disposable database;
-they do not use `DATABASE_URL` or the dummy URL in `test/setup-env.ts`. The integration fixture resets only the
+they do not use runtime `DATABASE_URL`. The integration fixture resets only the
 `events` schema in that disposable database. Never point the test variable at a deployed or shared app database.
 
 CI (`.github/workflows/ci.yml`, job `Migrations (Postgres)`) runs `pnpm db:migrate` against an empty Postgres,

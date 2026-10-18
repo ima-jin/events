@@ -1,4 +1,9 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { startClaimServer, startVaultServer } from '../src/lib/vault-boot';
+// The SDK also exports Next header helpers, which capture this global at import.
+// Establish Node's async context without importing any Next/server module early.
+(globalThis as typeof globalThis & { AsyncLocalStorage?: typeof AsyncLocalStorage })
+  .AsyncLocalStorage ??= AsyncLocalStorage;
 
 async function main(): Promise<void> {
   const claimOnly = process.argv.includes('--claim-only');

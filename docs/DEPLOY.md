@@ -1,4 +1,10 @@
 # Deploying events (dev + prod)
+**Vault-only release (#61): do not execute the legacy deploy/soak/rollback commands below.**
+Normal startup now runs `scripts/start.ts` with `--import=tsx` and requires the operator-supplied
+vault credential before importing Next. The legacy maintenance steps below still expect an
+env-based database handoff and the old listener definition. Adapt and rehearse them only in
+the separately coordinated cutover (imajin-ai#2241 / #2516); do not put a credential in
+`.env.local` or a shell to bypass that boundary. This PR performs no deployment.
 
 Refs ima-jin/imajin-ai#2518; this change prepares deployment only. Ryan mints the app identity through
 the kernel claim flow; dev/prod cutover remains in #2529/#2516.

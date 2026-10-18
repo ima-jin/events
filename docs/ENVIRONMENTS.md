@@ -1,6 +1,6 @@
 # Environments — events
 
-All example assignments are **blank**. Populate only the host's untracked `.env.local` and
+All example assignments are **blank**. Populate only non-secret configuration in the host's untracked `.env.local` and
 remove unused blank optional entries (some SDK fallbacks distinguish unset from empty).
 `chmod 600 .env.local`. Never commit credentials or signing keys.
 
@@ -26,7 +26,6 @@ Validate privately with `node scripts/check-env.mjs dev` (or `prod`).
 
 | Variable | When | Contract |
 |---|---|---|
-| `DATABASE_URL` | runtime + migration | Existing target database, role restricted to schema `events`; never kernel-table grants. Secret. |
 | `APP_DB_SCHEMA` | build + runtime + migration | Exactly `events`; immutable. |
 | `IMAJIN_KERNEL_URL` | runtime | Target kernel base above, no path. Claim/bootstrap and app-service tokens. |
 | `IMAJIN_AUTH_URL` | runtime | Same kernel base; SDK sign-in redirect. |
@@ -45,9 +44,10 @@ contract variables before loading `.env.local` for build/migration/pm2.
 
 ## Identity and conditional integrations
 
-Without a keystore, `check-env` only warns and the app boots unclaimed.
-Approve on `/jin`, then paste the one-time code only at `/events/claim` after boot;
-the app goes live without an env edit or restart.
+Without a keystore, `check-env` warns. Normal `pnpm start` / `pnpm dev` fails closed.
+Use explicit `pnpm claim` for browser-only onboarding, then stop that isolated listener
+and restart normally after vault provisioning. Claim-only mode returns 503 for ordinary
+routes and health, even after the claim; it never opens the app database.
 
 | Variable | When | Contract |
 |---|---|---|
@@ -104,6 +104,8 @@ See [DEPLOY.md](./DEPLOY.md#kernel-signed-callbacks) for rollout and trust requi
 | `APP_LOG_LEVEL` | runtime | Persisted logger threshold; inert because persistence must be off. |
 
 ## Forbidden / framework-managed names (documented, never populated)
+- `DATABASE_URL`: vault-only operator-supplied credential, never a server env entry.
+  The database role must be confined to `events`; see [REGISTRATION.md](./REGISTRATION.md).
 
 - `IMAJIN_APP_PRIVATE_KEY`: forbidden by instrumentation. The claim SDK fetches the signing
   key into memory; no raw key env, homemade keys or log output.

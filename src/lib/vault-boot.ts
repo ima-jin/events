@@ -1,32 +1,36 @@
-import { createVaultBoot, type VaultBoot } from '@ima-jin/auth-client';
+import type { VaultBoot } from '@ima-jin/auth-client';
 
 export interface ServerConfig {
   databaseUrl: string;
 }
 
 const BOOT = Symbol.for('imajin.events.vaultBoot');
-const CLAIM_ONLY = Symbol.for('imajin.events.claimOnly');
 interface BootStore {
-  [BOOT]?: VaultBoot<ServerConfig>;
-  [CLAIM_ONLY]?: boolean;
+  [BOOT]?: { boot?: VaultBoot<ServerConfig>; claimOnly: boolean };
 }
 const store = globalThis as BootStore;
 
 /** The same SDK boundary is visible to instrumentation and separately bundled routes. */
 export function getServerConfig(): Readonly<ServerConfig> {
-  if (!store[BOOT]) throw new Error('Events vault configuration unavailable');
-  return store[BOOT].getConfig();
+  const boot = store[BOOT]?.boot;
+  if (!boot) throw new Error('Events vault configuration unavailable');
+  return boot.getConfig();
 }
 
 export function isClaimOnly(): boolean {
-  return store[CLAIM_ONLY] === true;
+  return store[BOOT]?.claimOnly === true;
 }
 
 /** Never import application/server modules outside this callback. No env fallback. */
 export async function startVaultServer<Result>(
   start: () => Promise<Result>,
 ): Promise<Result> {
-  if (store[BOOT] || store[CLAIM_ONLY]) throw new Error('Events startup already attempted');
+  if (store[BOOT]) throw new Error('Events startup already attempted');
+  const state: NonNullable<BootStore[typeof BOOT]> = { claimOnly: false };
+  store[BOOT] = state;
+  // Native ESM avoids the SDK's ESM-only transitive dependencies being required
+  // through its CommonJS entrypoint by a plain Node/tsx launcher.
+  const { createVaultBoot } = await import('@ima-jin/auth-client');
   const boot = createVaultBoot<ServerConfig>({
     vault: {
       appDid: process.env.IMAJIN_APP_DID,
@@ -42,13 +46,13 @@ export async function startVaultServer<Result>(
       return { databaseUrl };
     },
   });
-  store[BOOT] = boot;
+  state.boot = boot;
   return boot.start(start);
 }
 
 /** Explicit onboarding mode: it never loads DB credentials or opens ordinary routes. */
 export async function startClaimServer<Result>(start: () => Promise<Result>): Promise<Result> {
-  if (store[BOOT] || store[CLAIM_ONLY]) throw new Error('Events startup already attempted');
-  store[CLAIM_ONLY] = true;
+  if (store[BOOT]) throw new Error('Events startup already attempted');
+  store[BOOT] = { claimOnly: true };
   return start();
 }

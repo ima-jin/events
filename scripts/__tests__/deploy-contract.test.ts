@@ -16,7 +16,6 @@ function validEnv(target = 'dev'): Record<string, string> {
   const host = target === 'dev' ? 'dev-jin.imajin.ai' : 'jin.imajin.ai';
   const base = `https://${host}`;
   return {
-    DATABASE_URL: 'postgres://fixture/fixture',
     APP_DB_SCHEMA: 'events',
     IMAJIN_KERNEL_URL: base,
     IMAJIN_AUTH_URL: base,
@@ -108,7 +107,7 @@ describe('blank-valued env contract', () => {
     const docs = read('docs/ENVIRONMENTS.md');
     for (const name of ENV_NAMES) expect(docs, name).toContain(`\`${name}\``);
     const deployedNames = ENV_NAMES.filter((name: string) =>
-      !['PORT', 'NODE_ENV', 'NEXT_RUNTIME', 'IMAJIN_APP_PRIVATE_KEY'].includes(name));
+      !['PORT', 'NODE_ENV', 'NEXT_RUNTIME', 'IMAJIN_APP_PRIVATE_KEY', 'DATABASE_URL'].includes(name));
     for (const file of ['.env.dev.example', '.env.prod.example']) {
       expect(Object.keys(parseEnv(read(file))).sort()).toEqual([...deployedNames].sort());
     }
@@ -257,9 +256,7 @@ describe('deploy environment guard', () => {
       expect(result.stderr).toContain("warning: NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY is ignored; the seller's key comes from the kernel. Delete it from the env file.");
       expect(result.stderr).not.toMatch(/^error:/m);
       expect(result.stdout).toContain('Environment validated');
-      for (const secret of [env.DATABASE_URL, env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY]) {
-        expect(result.stdout + result.stderr).not.toContain(secret);
-      }
+      expect(result.stdout + result.stderr).not.toContain(env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -267,7 +264,7 @@ describe('deploy environment guard', () => {
 
   it('reports missing fields and invalid target', () => {
     expect(validateEnvironment({}, 'other')).toEqual(['target must be dev or prod']);
-    expect(validateEnvironment({}, 'dev', () => false).join('\n')).toContain('DATABASE_URL: required');
+    expect(validateEnvironment({}, 'dev', () => false).join('\n')).toContain('APP_DB_SCHEMA: required');
   });
 
   it('accepts vault-only self-secrets and ignores stale env placeholders', () => {
@@ -285,7 +282,7 @@ describe('deploy environment guard', () => {
     }
   });
 
-  it.each(['IMAJIN_APP_PRIVATE_KEY', 'AUTH_INTERNAL_API_KEY', 'PROFILE_INTERNAL_API_KEY',
+  it.each(['DATABASE_URL', 'IMAJIN_APP_PRIVATE_KEY', 'AUTH_INTERNAL_API_KEY', 'PROFILE_INTERNAL_API_KEY',
     'ENABLE_REQUEST_LOG', 'ENABLE_APP_LOG', 'LOG_DB_TRANSPORT', 'PORT', 'NODE_ENV', 'NEXT_RUNTIME'])(
     'refuses %s without leaking its value', (name) => {
       const problems = validateEnvironment({ ...validEnv(), [name]: 'never-print-fixture' }, 'dev');
@@ -328,7 +325,7 @@ describe('deploy environment guard', () => {
       expect(checkFile('dev', file)).toHaveLength(2);
       const rejected = cli('dev', file);
       expect(rejected.status).toBe(1);
-      expect(rejected.stdout + rejected.stderr).not.toContain(env.DATABASE_URL);
+      expect(rejected.stdout + rejected.stderr).not.toContain(keystore);
       expect(cli('dev', file, 'extra').status).toBe(2);
       expect(cli('dev', join(dir, 'missing')).status).toBe(2);
     } finally {
@@ -351,7 +348,7 @@ describe('standalone pm2 and deploy contract', () => {
     expect(deploy).toContain('imajin-ai#2800 / #2798');
     const { dependencies } = JSON.parse(read('package.json'));
     expect(dependencies['@ima-jin/auth']).toBe('0.8.18');
-    expect(dependencies['@ima-jin/auth-client']).toBe('0.8.21');
+    expect(dependencies['@ima-jin/auth-client']).toBe('0.8.24');
   });
   it('documents fresh vault issuance and QR invalidation at cutover without reissue', () => {
     const deploy = read('docs/DEPLOY.md');
@@ -372,9 +369,9 @@ describe('standalone pm2 and deploy contract', () => {
     for (const [index, target] of ['dev', 'prod'].entries()) {
       const app = apps[index];
       expect(app.cwd).toBe(join(homedir(), target, 'events'));
-      expect(app.script).toBe('node_modules/next/dist/bin/next');
-      expect(app.args).toBe(`start -p ${target === 'dev' ? 3006 : 7006}`);
-      expect(app.node_args).toBe(`--env-file=${join(app.cwd, '.env.local')}`);
+      expect(app.script).toBe('scripts/start.ts');
+      expect(app.env.PORT).toBe(target === 'dev' ? 3006 : 7006);
+      expect(app.node_args).toBe(`--import=tsx --env-file=${join(app.cwd, '.env.local')}`);
       expect(app.env.NODE_ENV).toBe('production');
       expect(app.cwd).not.toContain('imajin-ai/apps');
     }

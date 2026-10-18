@@ -11,7 +11,6 @@ import { eventUrl, buildPublicUrlAbsolute } from '@ima-jin/config';
 
 export const dynamic = 'force-dynamic';
 
-const sql = getClient();
 
 interface MessageFilter {
   type: 'everyone' | 'ticket_type' | 'registration_complete' | 'registration_incomplete';
@@ -27,6 +26,7 @@ async function authorizeOrganizer(request: NextRequest, eventId: string): Promis
 }
 
 async function queryRecipients(eventId: string, filter?: MessageFilter) {
+  const sql = getClient();
   if (filter) {
     switch (filter.type) {
       case 'ticket_type':
@@ -152,6 +152,7 @@ export async function POST(
   }
 
   // Fetch event details for context
+  const sql = getClient();
   const [event] = await sql`
     SELECT title, image_url, starts_at FROM events.events WHERE id = ${id}
   `;

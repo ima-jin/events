@@ -4,10 +4,10 @@
   "private": true,
   "packageManager": "pnpm@9.15.0",
   "scripts": {
-    "dev": "node --import tsx scripts/start.ts --dev",
+    "dev": "node --env-file-if-exists=.env.local --import tsx scripts/start.ts --dev",
     "build": "next build",
-    "start": "node --import tsx scripts/start.ts",
-    "claim": "node --import tsx scripts/start.ts --claim-only",
+    "start": "node --env-file-if-exists=.env.local --import tsx scripts/start.ts",
+    "claim": "node --env-file-if-exists=.env.local --import tsx scripts/start.ts --claim-only",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

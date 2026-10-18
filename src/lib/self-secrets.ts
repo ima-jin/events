@@ -7,10 +7,12 @@ interface SecretStore {
   [SELF_SECRETS]?: Readonly<Record<SecretName, string>>;
 }
 
+
 export function warnIgnoredSelfSecretEnv(): void {
-  for (const { name } of manifest.secrets) {
+  for (const { name, kind } of manifest.secrets) {
     if (process.env[name]) {
-      console.warn(`${name} is ignored; it is issued by the kernel vault. Delete it from the env file.`);
+      const source = kind === 'operator-supplied' ? 'loaded from' : 'issued by';
+      console.warn(`${name} is ignored; it is ${source} the kernel vault. Delete it from the env file.`);
     }
   }
 }
