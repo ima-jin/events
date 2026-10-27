@@ -332,7 +332,7 @@ describe('standalone pm2 and deploy contract', () => {
     expect(deploy).toContain('imajin-ai#2800 / #2798');
     const { dependencies } = JSON.parse(read('package.json'));
     expect(dependencies['@ima-jin/auth']).toBe('0.8.18');
-    expect(dependencies['@ima-jin/auth-client']).toBe('0.8.24');
+    expect(dependencies['@ima-jin/auth-client']).toBe('0.8.27');
   });
   it('documents fresh vault issuance and QR invalidation at cutover without reissue', () => {
     const deploy = read('docs/DEPLOY.md');
