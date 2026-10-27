@@ -1,5 +1,6 @@
 # imajin-events
 Operator-supplied credential adoption is tracked in [#61](https://github.com/ima-jin/events/issues/61).
+Deploy the per-app session cookie bump (#75) together with the auth-widget basePath fix (#76); app sessions reset once, while kernel sessions remain intact.
 
 > Forked from [`ima-jin/imajin-app-template`](https://github.com/ima-jin/imajin-app-template). **Read
 > [`AGENTS.md`](./AGENTS.md) first** — it defines the boundary this app must not cross.
