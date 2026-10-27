@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import type { SessionUser } from '@ima-jin/auth-client';
+import { withBasePath } from '@/lib/base-path';
 
 type SessionState = { status: 'loading' } | { status: 'ready'; user: SessionUser | null };
 
@@ -11,7 +12,7 @@ export function ImajinAuthStatus() {
   useEffect(() => {
     let cancelled = false;
 
-    fetch('/api/auth/session')
+    fetch(withBasePath('/api/auth/session'))
       .then((response) => response.json())
       .then((user: SessionUser | null) => {
         if (!cancelled) {
@@ -59,7 +60,7 @@ function SignedInStatus({ user }: Readonly<{ user: SessionUser }>) {
   return (
     <div className="flex items-center gap-3">
       <span className="text-sm text-gray-100">{user.displayName}</span>
-      <form action="/api/auth/logout" method="POST">
+      <form action={withBasePath('/api/auth/logout')} method="POST">
         <button
           type="submit"
           className="text-xs text-gray-500 transition-colors hover:text-gray-300"
