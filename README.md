@@ -137,7 +137,7 @@ and unavailable verification returns 503.
 
 Organizer messages require creator/co-host authorization and send events' own app-service
 token to notify with approved `notify:broadcast`. The published `@ima-jin/auth-client`
-**0.8.24** token provider is shared with pay calls. Optional reply-to email uses the public
+**0.8.27** token provider is shared with pay calls. Optional reply-to email uses the public
 profile resolver, never an internal contact credential. Token mint failures fail closed (503);
 notify rejection fails closed (502), without a legacy credential retry.
 The kernel operator completes signer provisioning through the approved vault/tool step and
@@ -192,7 +192,7 @@ Published `@ima-jin/*` packages (e.g. `@ima-jin/auth-client`, `@ima-jin/config`,
 npmjs.org, the default registry — no `.npmrc` scoping and no auth token needed to install them:
 
 ```bash
-pnpm add --save-exact @ima-jin/auth@0.8.18 @ima-jin/auth-client@0.8.24
+pnpm add --save-exact @ima-jin/auth@0.8.18 @ima-jin/auth-client@0.8.27
 ```
 
 ## Layout
