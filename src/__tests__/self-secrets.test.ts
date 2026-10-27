@@ -1,4 +1,4 @@
-import { createHmac } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createSessionToken, verifySessionToken, loadFromVault, loadAppSigningKey, readKeystore,
@@ -15,7 +15,6 @@ import {
 import { createTicketQrToken, verifyTicketQrToken } from '@/lib/ticket-qr-token';
 import { POST } from '../../app/api/claim/route';
 import { NextRequest } from 'next/server';
-import { GET as session } from '../../app/api/auth/session/route';
 
 const { cookieGet } = vi.hoisted(() => ({ cookieGet: vi.fn() }));
 vi.mock('@/lib/vault-boot', () => ({
@@ -92,11 +91,17 @@ describe('declared app-keystore self-secrets', () => {
 
   it('serves the signed-in session endpoint using a vault-signed cookie', async () => {
     await register();
-    cookieGet.mockReturnValue({ value: await createSessionToken(user, authConfig) });
+    // Route config captures appDid at import time, after runtime env has been configured.
+    vi.resetModules();
+    const { authConfig: sessionConfig } = await import('@/lib/auth-config');
+    const { GET: session } = await import('../../app/api/auth/session/route');
+    cookieGet.mockReturnValue({ value: await createSessionToken(user, sessionConfig) });
     const response = await session();
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject(user);
-    expect(cookieGet).toHaveBeenCalledWith('imajin_session');
+    expect(cookieGet.mock.calls).toEqual([
+      [`imajin_app_session_${createHash('sha256').update(APP_DID).digest('hex')}`],
+    ]);
   });
 
   it('ignores conflicting env credentials on success and never writes vault values into env', async () => {
